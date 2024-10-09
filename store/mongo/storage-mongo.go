@@ -1,0 +1,844 @@
+package mongo
+
+import (
+	"context"
+	"encoding/json"
+	stderrors "errors"
+	"fmt"
+	"reflect"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/bsoncodec"
+	"go.mongodb.org/mongo-driver/bson/bsonrw"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/fields"
+	"xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/log"
+	libreflect "xiaoshiai.cn/common/reflect"
+	"xiaoshiai.cn/common/store"
+)
+
+type MongoDBOptions struct {
+	Address    string `json:"address,omitempty"`
+	Username   string `json:"username,omitempty"`
+	Password   string `json:"password,omitempty"`
+	Database   string `json:"database,omitempty"`
+	ReplicaSet string `json:"replicaSet,omitempty"`
+	Direct     bool   `json:"direct,omitempty"`
+}
+
+func NewDefaultMongoOptions() *MongoDBOptions {
+	return &MongoDBOptions{
+		Address:    "localhost:27017",
+		Username:   "",
+		Password:   "",
+		Database:   "mcp",
+		ReplicaSet: "",
+		Direct:     false,
+	}
+}
+
+var _ store.Store = &MongoStorage{}
+
+var GlobalBsonRegistry = bson.NewRegistry()
+
+func init() {
+	quantityType := reflect.TypeOf(resource.Quantity{})
+	GlobalBsonRegistry.RegisterTypeEncoder(quantityType, BsonQuantityCodec{})
+	GlobalBsonRegistry.RegisterTypeDecoder(quantityType, BsonQuantityCodec{})
+
+	timeType := reflect.TypeOf(store.Time{})
+	GlobalBsonRegistry.RegisterTypeEncoder(timeType, BsonTimeCodec{})
+	GlobalBsonRegistry.RegisterTypeDecoder(timeType, BsonTimeCodec{})
+}
+
+var (
+	_ bsoncodec.ValueEncoder = BsonQuantityCodec{}
+	_ bsoncodec.ValueDecoder = BsonQuantityCodec{}
+)
+
+type BsonTimeCodec struct{}
+
+// DecodeValue implements bsoncodec.ValueDecoder.
+func (b BsonTimeCodec) DecodeValue(ctx bsoncodec.DecodeContext, vr bsonrw.ValueReader, v reflect.Value) error {
+	t, err := vr.ReadDateTime()
+	if err != nil {
+		return err
+	}
+	nano := t
+	tim := store.Time{Time: time.Unix(0, nano).Truncate(time.Second)}
+	v.Set(reflect.ValueOf(tim))
+	return nil
+}
+
+// EncodeValue implements bsoncodec.ValueEncoder.
+func (BsonTimeCodec) EncodeValue(ctx bsoncodec.EncodeContext, vw bsonrw.ValueWriter, v reflect.Value) error {
+	t, ok := v.Interface().(store.Time)
+	if !ok {
+		return stderrors.New("invalid time")
+	}
+	nano := t.Truncate(time.Millisecond).UnixNano()
+	return vw.WriteDateTime(nano)
+}
+
+type BsonQuantityCodec struct{}
+
+// DecodeValue implements bsoncodec.ValueDecoder.
+func (b BsonQuantityCodec) DecodeValue(ctx bsoncodec.DecodeContext, vr bsonrw.ValueReader, v reflect.Value) error {
+	str, err := vr.ReadString()
+	if err != nil {
+		return err
+	}
+	quantity, err := resource.ParseQuantity(str)
+	if err != nil {
+		return err
+	}
+	v.Set(reflect.ValueOf(quantity))
+	return nil
+}
+
+// EncodeValue implements bsoncodec.ValueEncoder.
+func (BsonQuantityCodec) EncodeValue(ctx bsoncodec.EncodeContext, vw bsonrw.ValueWriter, v reflect.Value) error {
+	quantity, ok := v.Interface().(resource.Quantity)
+	if !ok {
+		return stderrors.New("invalid quantity")
+	}
+	vw.WriteString(quantity.String())
+	return nil
+}
+
+func NewMongoStorage(ctx context.Context, scheme *ObjectScheme, options *MongoDBOptions) (*MongoStorage, error) {
+	mongoBsonOptions := &mongooptions.BSONOptions{UseJSONStructTags: true, OmitZeroStruct: true}
+	mongoBsonRegistry := GlobalBsonRegistry
+
+	db, err := NewMongoDB(ctx, mongoBsonOptions, mongoBsonRegistry, options)
+	if err != nil {
+		return nil, err
+	}
+	core := &MongoStorageCore{
+		db:             db,
+		scheme:         scheme,
+		bsonRegistry:   mongoBsonRegistry,
+		bsonOptions:    mongoBsonOptions,
+		collections:    map[string]*mongo.Collection{},
+		collectionLock: sync.RWMutex{},
+		logger:         log.FromContext(ctx).WithName("mongo-storage"),
+	}
+	if err := core.initCollections(ctx); err != nil {
+		return nil, err
+	}
+	storage := &MongoStorage{core: core}
+	return storage, nil
+}
+
+func NewMongoDB(ctx context.Context,
+	bsonOptions *mongooptions.BSONOptions,
+	bsonRegistry *bsoncodec.Registry,
+	opts *MongoDBOptions,
+) (*mongo.Database, error) {
+	connectopt := mongooptions.Client().
+		SetConnectTimeout(time.Second * 10).
+		SetHosts([]string{opts.Address}).
+		SetBSONOptions(bsonOptions).
+		SetRegistry(bsonRegistry).SetReplicaSet(opts.ReplicaSet)
+
+	if opts.Username != "" && opts.Password != "" {
+		connectopt.SetAuth(mongooptions.Credential{Username: opts.Username, Password: opts.Password})
+	}
+	if opts.Direct {
+		connectopt.SetDirect(true)
+	}
+	cli, err := mongo.Connect(ctx, connectopt)
+	if err != nil {
+		return nil, errors.NewInternalError(err)
+	}
+	if err := cli.Ping(ctx, nil); err != nil {
+		return nil, errors.NewInternalError(err)
+	}
+	return cli.Database(opts.Database), nil
+}
+
+var setUpdateTimestampQuery = bson.E{Key: "$currentDate", Value: bson.D{{Key: "updationTimestamp", Value: true}}}
+
+type MongoStorageCore struct {
+	scheme             *ObjectScheme
+	db                 *mongo.Database
+	bsonRegistry       *bsoncodec.Registry
+	bsonOptions        *mongooptions.BSONOptions
+	collections        map[string]*mongo.Collection
+	collectionLock     sync.RWMutex
+	setUpdateTimestamp bool
+	logger             log.Logger
+}
+
+func (m *MongoStorageCore) initCollections(ctx context.Context) error {
+	for _, resource := range m.scheme.Registered() {
+		defination, err := m.scheme.GetDefination(resource)
+		if err != nil {
+			return err
+		}
+		col := m.db.Collection(resource)
+		indexes := []mongo.IndexModel{}
+		// scopes keys
+		scopesKeys := defination.ScopeKeys
+		// unique indexes
+		for _, uniq := range defination.Uniques {
+			// unique index is under scopes
+			uniq = append(uniq, scopesKeys...)
+			indexes = append(indexes, mongo.IndexModel{
+				Keys:    listToBsonD(uniq),
+				Options: mongooptions.Index().SetName(strings.Join(uniq, "_")).SetUnique(true),
+			})
+		}
+		// normal indexes
+		for _, index := range defination.Indexes {
+			// indexes is under scopes
+			index = append(index, scopesKeys...)
+			indexes = append(indexes, mongo.IndexModel{
+				Keys:    listToBsonD(index),
+				Options: mongooptions.Index().SetName(strings.Join(index, "_")),
+			})
+		}
+		m.logger.V(5).Info("init indexes", "collection", col.Name(), "indexes", indexes)
+		if _, err := col.Indexes().CreateMany(ctx, indexes); err != nil {
+			return err
+		}
+		// https://www.mongodb.com/docs/manual/reference/command/collMod
+		cmd := bson.D{
+			{Key: "collMod", Value: col.Name()},
+			{Key: "changeStreamPreAndPostImages", Value: bson.M{"enabled": true}},
+		}
+		m.logger.V(5).Info("init collection", "collection", col.Name(), "cmd", cmd)
+		if err := m.db.RunCommand(ctx, cmd).Err(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var commonFindOneAndUpdateOptions = mongooptions.FindOneAndUpdate().SetReturnDocument(mongooptions.After)
+
+var _ store.Store = &MongoStorage{}
+
+type MongoStorage struct {
+	core   *MongoStorageCore
+	scopes []store.Scope
+}
+
+// Scheme implements Storage.
+func (m *MongoStorage) Scheme() *ObjectScheme {
+	return m.core.scheme
+}
+
+// Scope implements Storage.
+func (m *MongoStorage) Scope(scopes ...store.Scope) store.Store {
+	if len(scopes) == 0 {
+		return m
+	}
+	return &MongoStorage{core: m.core, scopes: append(m.scopes, scopes...)}
+}
+
+// Count implements Storage.
+func (m *MongoStorage) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
+	options := store.CountOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	var count int
+	err := m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		filter = conditionsmatch(filter, FieldsSelectorToReqirements(options.FieldSelector))
+		m.core.logger.V(5).Info("count", "collection", col.Name(), "filter", filter)
+		doccount, err := col.CountDocuments(ctx, filter)
+		if err != nil {
+			return warpMongoError(err, col, obj)
+		}
+		count = int(doccount)
+		return nil
+	})
+	return count, err
+}
+
+// Create implements Storage.
+func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...store.CreateOption) error {
+	return m.on(ctx, into, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		into.SetCreationTimestamp(store.Now())
+		// into.SetCreator(api.AuthenticateFromContext(ctx).User.Name)
+		into.SetUID(uuid.NewString())
+		data, err := m.mergeConditionOnChange(into, []string{"status"})
+		if err != nil {
+			return err
+		}
+		data = m.beforeSave(data)
+		m.core.logger.V(5).Info("create", "collection", col.Name(), "data", data)
+		result, err := col.InsertOne(ctx, data)
+		if err != nil {
+			return warpMongoError(err, col, into)
+		}
+		switch id := result.InsertedID.(type) {
+		case string:
+		case primitive.ObjectID:
+			_ = id
+		}
+		return nil
+	})
+}
+
+func (m *MongoStorage) beforeSave(data bson.D) bson.D {
+	// remove "resource" field
+	for i, d := range data {
+		if d.Key == "resource" {
+			data = append(data[:i], data[i+1:]...)
+			break
+		}
+	}
+	return data
+}
+
+func (m *MongoStorage) mergeConditionOnChange(into any, exludes []string) (bson.D, error) {
+	data, err := FlattenData(into, 1, exludes, nil)
+	if err != nil {
+		return nil, errors.NewBadRequest("invalid object")
+	}
+	// add condition to new object
+loop:
+	for _, cond := range m.scopes {
+		// set field
+		for i, d := range data {
+			if d.Key == cond.Resource {
+				// if field is not empty and not equal to condition value, return error
+				if !reflect.ValueOf(d.Value).IsZero() && !reflect.DeepEqual(d.Value, cond.Name) {
+					return nil, errors.NewBadRequest(fmt.Sprintf("conflict condition and object field: %s", cond.Resource))
+				}
+				// set field to condition value
+				data[i].Value = cond.Name
+				continue loop
+			}
+		}
+		// set new field
+		data = append(data, bson.E{Key: cond.Resource, Value: cond.Name})
+	}
+	return data, nil
+}
+
+// Delete implements Storage.
+func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
+	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		m.core.logger.V(5).Info("delete", "collection", col.Name(), "filter", filter)
+		if err := col.FindOneAndDelete(ctx, filter).Decode(obj); err != nil {
+			return warpMongoError(err, col, obj)
+		}
+		return nil
+	})
+}
+
+// DeleteAllOf implements Storage.
+// func (m *MongoStorage) DeleteAllOf(ctx context.Context, obj store.ObjectList, opts ...store.DeleteAllOfOption) error {
+// 	options := store.DeleteAllOfOptions{}
+// 	for _, opt := range opts {
+// 		opt(&options)
+// 	}
+// 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+// 		filter = conditionsmatch(filter, options.Cond)
+// 		m.core.logger.V(5).Info("delete all", "collection", col.Name(), "filter", filter)
+// 		if _, err := col.DeleteMany(ctx, filter); err != nil {
+// 			return warpMongoError(err, col, nil)
+// 		}
+// 		return nil
+// 	})
+// }
+
+// Get implements Storage.
+func (m *MongoStorage) Get(ctx context.Context, name string, obj store.Object, opts ...store.GetOption) error {
+	options := store.GetOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	obj.SetName(name)
+	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		filter = append(filter, bson.E{Key: "name", Value: name})
+		findopt := mongooptions.FindOne()
+		m.core.logger.V(5).Info("get", "collection", col.Name(), "filter", filter)
+		if err := col.FindOne(ctx, filter, findopt).Decode(obj); err != nil {
+			return warpMongoError(err, col, obj)
+		}
+		return nil
+	})
+}
+
+// Update implements Storage.
+func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
+	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		// inoder not to update creation time or creator
+		fields, err := m.mergeConditionOnChange(obj, []string{"creator", "creationTimestamp", "status"})
+		if err != nil {
+			return err
+		}
+		fields = m.beforeSave(fields)
+		update := bson.D{{Key: "$set", Value: fields}}
+		if m.core.setUpdateTimestamp {
+			update = append(update, setUpdateTimestampQuery)
+		}
+		m.core.logger.V(5).Info("update", "collection", col.Name(), "filter", filter, "update", update)
+		if err := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions).Decode(obj); err != nil {
+			return warpMongoError(err, col, obj)
+		}
+		return nil
+	})
+}
+
+// Patch implements Storage.
+func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
+	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		update, err := patchToMongoUpdate(patch, []string{"status"}, nil)
+		if err != nil {
+			return err
+		}
+		if m.core.setUpdateTimestamp {
+			update = append(update, setUpdateTimestampQuery)
+		}
+		m.core.logger.V(5).Info("patch", "collection", col.Name(), "filter", filter, "update", update)
+		result := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions)
+		if err := result.Decode(obj); err != nil {
+			return warpMongoError(err, col, obj)
+		}
+		return nil
+	})
+}
+
+// List implements Storage.
+func (m *MongoStorage) List(ctx context.Context, list store.ObjectList, opts ...store.ListOption) error {
+	options := store.ListOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	list.SetPage(options.Page)
+	list.SetSize(options.Size)
+
+	// if projection is empty, set projection from list object
+	// currently, we don't use this feature
+	return m.on(ctx, list, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		pipeline := listPipeline(filter, nil, options, nil)
+		m.core.logger.V(5).Info("list", "collection", col.Name(), "pipeline", pipeline)
+		cur, err := col.Aggregate(ctx, pipeline)
+		if err != nil {
+			return errors.NewInternalError(err)
+		}
+		defer cur.Close(ctx)
+		if cur.Next(ctx) {
+			if err := cur.Decode(list); err != nil {
+				return errors.NewInternalError(err)
+			}
+		}
+		// set empty list if no items instead of nil
+		setEmptyItemsIfNil(list)
+
+		// set resource for each item
+		store.ForEachItem(list, func(item store.Object) error {
+			item.SetResource(col.Name())
+			return nil
+		})
+		return nil
+	})
+}
+
+func setEmptyItemsIfNil(list store.ObjectList) {
+	items, err := store.GetItemsPtr(list)
+	if err != nil {
+		return
+	}
+	v := reflect.ValueOf(items)
+	v = reflect.Indirect(v)
+	if v.Len() == 0 {
+		v.Set(reflect.MakeSlice(v.Type(), 0, 0))
+	}
+}
+
+func listProjectionFromList(list store.ObjectList) []string {
+	itemsPointer, err := store.GetItemsPtr(list)
+	if err != nil {
+		return nil
+	}
+	t := reflect.TypeOf(itemsPointer)
+	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Slice {
+		t = t.Elem()
+	}
+	fields := []string{}
+	flattenTypeFields("", t, 1, func(name string) error {
+		fields = append(fields, strings.TrimPrefix(name, "."))
+		return nil
+	})
+	return fields
+}
+
+func listPipeline(match bson.D, pre []any, opts store.ListOptions, post []any) bson.A {
+	if search := opts.Search; search != "" {
+		match = append(match, bson.E{Key: "name", Value: bson.M{"$regex": search, "$options": "i"}})
+	}
+	match = conditionsmatch(match, FieldsSelectorToReqirements(opts.FieldSelector))
+	pipeline := bson.A{}
+	// pre conditions
+	pipeline = append(pipeline, pre...)
+	// filter
+	pipeline = append(pipeline, bson.M{"$match": match})
+	// sort
+	sortstage := sortstage(opts.Sort)
+	if len(sortstage) > 0 {
+		pipeline = append(pipeline, bson.M{"$sort": sortstage})
+	}
+	// projection
+	// if len(opts.Projection) > 0 {
+	// 	pipeline = append(pipeline, bson.M{"$project": listToBsonD(opts.Projection)})
+	// }
+	pipeline = append(pipeline, post...)
+	// pagination
+	group := bson.M{
+		"_id":   nil,
+		"items": bson.M{"$push": "$$ROOT"},
+	}
+	if opts.Size > 0 {
+		group["total"] = bson.M{"$sum": 1}
+	}
+	pipeline = append(pipeline, bson.M{"$group": group})
+	if opts.Size > 0 {
+		if opts.Page == 0 || opts.Page == 1 {
+			project := bson.M{
+				"items": bson.M{"$slice": bson.A{"$items", 0, opts.Size}},
+				"total": 1,
+			}
+			pipeline = append(pipeline, bson.M{"$project": project})
+		} else {
+			project := bson.M{
+				"items": bson.M{"$slice": bson.A{"$items", (opts.Page - 1) * opts.Size, opts.Size}},
+				"total": 1,
+			}
+			pipeline = append(pipeline, bson.M{"$project": project})
+		}
+	}
+	return pipeline
+}
+
+func sortstage(sort string) bson.D {
+	sorts := bson.D{}
+	for _, s := range strings.Split(sort, ",") {
+		order := 1
+		if len(s) > 0 && s[len(s)-1] == '-' {
+			s, order = s[:len(s)-1], -1
+		}
+		if s == "" {
+			continue
+		}
+		if s == "time" {
+			s = "modified"
+		}
+		sorts = append(sorts, bson.E{Key: s, Value: order})
+	}
+	return sorts
+}
+
+func pipelinesort(pipeline bson.A, sort string) bson.A {
+	sorts := bson.D{}
+	for _, s := range strings.Split(sort, ",") {
+		order := 1
+		if len(s) > 0 && s[len(s)-1] == '-' {
+			s, order = s[:len(s)-1], -1
+		}
+		if s == "" {
+			continue
+		}
+		if s == "time" {
+			s = "modified"
+		}
+		sorts = append(sorts, bson.E{Key: s, Value: order})
+	}
+	if len(sorts) > 0 {
+		pipeline = append(pipeline, bson.M{"$sort": sorts})
+	}
+	return pipeline
+}
+
+func scopesmatch(match bson.D, scopes []store.Scope) bson.D {
+	conds := []store.Requirement{}
+	for _, scope := range scopes {
+		conds = append(conds, store.RequirementEqual(scope.Resource, scope.Name))
+	}
+	return conditionsmatch(match, conds)
+}
+
+func conditionsmatch(match bson.D, conds store.Requirements) bson.D {
+	for _, cond := range conds {
+		switch cond.Operator {
+		case store.OperatorEquals:
+			// if equals condition is empty, match with empty string or nil
+			if len(cond.Values) == 1 && cond.Values[0] == "" {
+				match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$in": bson.A{"", nil}}})
+			} else {
+				match = append(match, bson.E{Key: cond.Key, Value: cond.Values[0]})
+			}
+		case store.OperatorNotEquals:
+			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$ne": cond.Values[0]}})
+		case store.OperatorIn:
+			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$in": cond.Values}})
+		case store.OperatorNotIn:
+			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$nin": cond.Values}})
+		case store.OperatorExists:
+			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$ne": nil}})
+		case store.OperatorNotExists:
+			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$eq": nil}})
+		case store.OperatorGreaterThan:
+			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$gt": cond.Values[0]}})
+		case store.OperatorLessThan:
+			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$lt": cond.Values[0]}})
+		case store.OperatorContains:
+			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$all": cond.Values}})
+		}
+	}
+	return match
+}
+
+func patchToMongoUpdate(patch store.Patch, excludes []string, includes []string) (bson.D, error) {
+	data, err := patch.Data(nil)
+	if err != nil {
+		return nil, err
+	}
+	patchtype := patch.Type()
+	switch patchtype {
+	case store.PatchTypeMergePatch:
+		patchmap := map[string]any{}
+		if err := json.Unmarshal(data, &patchmap); err != nil {
+			return nil, errors.NewBadRequest("invalid patch data")
+		}
+		update, err := MergePatchToBsonUpdate(patchmap, excludes, includes)
+		if err != nil {
+			return nil, errors.NewBadRequest(fmt.Sprintf("invalid patch data: %v", err))
+		}
+		return update, nil
+	case store.PatchTypeJSONPatch:
+		patchlist := []map[string]any{}
+		if err := json.Unmarshal(data, &patchlist); err != nil {
+			return nil, errors.NewBadRequest("invalid patch data")
+		}
+		update, err := JsonPatchToBsonUpdate(patchlist, excludes, includes)
+		if err != nil {
+			return nil, errors.NewBadRequest(fmt.Sprintf("invalid patch data: %v", err))
+		}
+		return update, nil
+	default:
+		return nil, errors.NewBadRequest(fmt.Sprintf("invalid patch type: %s", patchtype))
+	}
+}
+
+func warpMongoError(err error, col *mongo.Collection, obj store.Object) error {
+	if obj == nil {
+		obj = &store.ObjectMeta{}
+	}
+	if err == nil {
+		return nil
+	}
+	if stderrors.Is(err, mongo.ErrNoDocuments) {
+		return errors.NewNotFound(col.Name(), obj.GetName())
+	}
+	if mongo.IsDuplicateKeyError(err) {
+		return errors.NewAlreadyExists(col.Name(), obj.GetName())
+	}
+	return errors.NewInternalError(err)
+}
+
+// Status implements Storage.
+func (m *MongoStorage) Status() store.StatusStorage {
+	return &MongoStorageStatus{MongoStorage: m}
+}
+
+type MongoStorageStatus struct {
+	*MongoStorage
+}
+
+// Patch implements StatusStorage.
+func (m *MongoStorageStatus) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
+	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		update, err := patchToMongoUpdate(patch, nil, []string{"status"})
+		if err != nil {
+			return err
+		}
+		if m.core.setUpdateTimestamp {
+			update = append(update, setUpdateTimestampQuery)
+		}
+		m.core.logger.V(5).Info("patch status", "collection", col.Name(), "filter", filter, "update", update)
+		if err := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions).Decode(obj); err != nil {
+			return warpMongoError(err, col, obj)
+		}
+		return nil
+	})
+}
+
+// Update implements StatusStorage.
+func (m *MongoStorageStatus) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
+	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		// inoder not to update creation time or creator
+		// we need convert obj to bson.D
+		fields, err := FlattenData(obj, 1, nil, []string{"status"})
+		if err != nil {
+			return errors.NewBadRequest("invalid object")
+		}
+		update := bson.D{{Key: "$set", Value: fields}}
+		if m.core.setUpdateTimestamp {
+			update = append(update, setUpdateTimestampQuery)
+		}
+		m.core.logger.V(5).Info("update status", "collection", col.Name(), "filter", filter, "update", update)
+		if err := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions).Decode(obj); err != nil {
+			return warpMongoError(err, col, obj)
+		}
+		return nil
+	})
+}
+
+func (m *MongoStorage) on(ctx context.Context, into any, fn func(ctx context.Context, col *mongo.Collection, filter bson.D) error) error {
+	if into == nil {
+		return errors.NewBadRequest("object is nil")
+	}
+	colname, err := m.getCollectionName(into)
+	if err != nil {
+		return err
+	}
+
+	m.core.collectionLock.RLock()
+	collection, ok := m.core.collections[colname]
+	m.core.collectionLock.RUnlock()
+	if !ok {
+		m.core.collectionLock.Lock()
+		defer m.core.collectionLock.Unlock()
+		if collection, ok = m.core.collections[colname]; !ok {
+			collection = m.core.db.Collection(colname)
+			m.core.collections[colname] = collection
+		}
+	}
+	filter := scopesmatch(bson.D{}, m.scopes)
+	return fn(ctx, collection, filter)
+}
+
+func (m *MongoStorage) getCollectionName(into any) (string, error) {
+	return store.GetResource(into)
+}
+
+func listToBsonD(list []string) bson.D {
+	d := bson.D{}
+	for _, s := range list {
+		d = append(d, bson.E{Key: s, Value: 1})
+	}
+	return d
+}
+
+var jsonPatchUnescape = strings.NewReplacer("~1", "/", "~0", "~")
+
+func matchFieldFunc(list []string, s string) bool {
+	return slices.ContainsFunc(list, func(l string) bool {
+		return l == s || strings.HasPrefix(s+".", l)
+	})
+}
+
+func JsonPatchToBsonUpdate(patches []map[string]any, excludes []string, includes []string) (bson.D, error) {
+	update := bson.D{}
+
+	for _, patch := range patches {
+		pathval, opval, value := patch["path"], patch["op"], patch["value"]
+		path, ok := pathval.(string)
+		if !ok || path == "" {
+			return nil, fmt.Errorf("invalid patch path: %v", pathval)
+		}
+		op, ok := opval.(string)
+		if !ok || op == "" {
+			return nil, fmt.Errorf("invalid patch op: %v", opval)
+		}
+		if path[0] == '/' {
+			path = path[1:]
+		}
+		bsonpath := jsonPatchUnescape.Replace(path)
+
+		// filter fields
+		if matchFieldFunc(excludes, bsonpath) ||
+			len(includes) > 0 && !matchFieldFunc(includes, bsonpath) {
+			continue
+		}
+		switch op {
+		case "add":
+			lastElement := path
+			if index := strings.LastIndex(path, "/"); index > 0 {
+				lastElement = path[index+1:]
+			}
+			if _, err := strconv.ParseInt(lastElement, 10, 64); err == nil {
+				// is array operation
+				update = append(update, bson.E{Key: "$push", Value: bson.D{{Key: bsonpath, Value: bson.D{{Key: "$each", Value: bson.A{value}}}}}})
+				continue
+			}
+			if lastElement == "-" {
+				// append array
+				update = append(update, bson.E{Key: "$push", Value: bson.D{{Key: bsonpath, Value: value}}})
+				continue
+			}
+			update = append(update, bson.E{Key: "$set", Value: bson.D{{Key: bsonpath, Value: value}}})
+		case "remove":
+			update = append(update, bson.E{Key: "$unset", Value: bson.D{{Key: bsonpath, Value: ""}}})
+		case "replace":
+			update = append(update, bson.E{Key: "$set", Value: bson.D{{Key: bsonpath, Value: value}}})
+		default:
+			return nil, fmt.Errorf("invalid patch op: %v", op)
+		}
+	}
+	return update, nil
+}
+
+// MergePatchToBsonUpdate converts a map to a bson.D for use in a merge patch.
+// e.g. {"a": 1, "b": {"c": 2}} -> bson.D{{"a", 1}, {"b.c", 2}}
+func MergePatchToBsonUpdate(data map[string]any, excludes []string, includes []string) (bson.D, error) {
+	d, err := FlattenData(data, -1, excludes, includes)
+	if err != nil {
+		return nil, err
+	}
+	return bson.D{{Key: "$set", Value: d}}, nil
+}
+
+func FlattenData(data any, depth int, excludes []string, includes []string) (bson.D, error) {
+	into := bson.D{}
+	err := libreflect.FlattenStruct("", depth, reflect.ValueOf(data), func(name string, v reflect.Value) error {
+		name = strings.TrimPrefix(name, ".")
+		if matchFieldFunc(excludes, name) || len(includes) > 0 && !matchFieldFunc(includes, name) {
+			return nil
+		}
+		// case of any type but nil value
+		if !v.IsValid() {
+			into = append(into, bson.E{Key: name})
+		} else {
+			into = append(into, bson.E{Key: name, Value: v.Interface()})
+		}
+		return nil
+	})
+	return into, err
+}
+
+func FieldsSelectorToReqirements(sel fields.Selector) store.Requirements {
+	if sel == nil {
+		return nil
+	}
+	conds := store.Requirements{}
+	for _, req := range sel.Requirements() {
+		conds = append(conds, store.Requirement{
+			Key:      req.Field,
+			Operator: store.Operator(req.Operator),
+			Values:   []string{req.Value},
+		})
+	}
+	return conds
+}
