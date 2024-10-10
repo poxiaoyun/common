@@ -295,7 +295,7 @@ func (o *OCIArtifacts) UploadHelmChart(ctx context.Context, image string, expect
 		return err
 	}
 	if expectedChartName != chart.Name() {
-		return fmt.Errorf("chart %s cannot be uploaded as %s,consider renaming the chart", chart.Name(), expectedChartName)
+		return fmt.Errorf("chart name must be %s", expectedChartName)
 	}
 	if chart.Metadata.Version == "" {
 		return fmt.Errorf("chart version is empty")
