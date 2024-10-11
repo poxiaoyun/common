@@ -15,6 +15,10 @@ func RandomPassword(size int) string {
 	return RandomFromCandidates(size, candidates)
 }
 
+func RandomHex(size int) string {
+	return RandomFromCandidates(size, "0123456789abcdef") // 16 characters
+}
+
 func RandomFromCandidates(size int, candidates string) string {
 	password := make([]byte, size)
 	for i := 0; i < size; i++ {

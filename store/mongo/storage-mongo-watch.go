@@ -57,7 +57,7 @@ func (m *MongoStorage) Watch(ctx context.Context, obj store.ObjectList, opts ...
 	}
 	var watcher store.Watcher
 	err = m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = conditionsmatch(filter, FieldsSelectorToReqirements(options.FieldSelector))
+		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
 		newwatcher, err := NewMongoWatcher(ctx, col, m.core.bsonOptions, m.core.bsonRegistry, newObjFunc, filter)
 		if err != nil {
 			return err

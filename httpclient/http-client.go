@@ -23,6 +23,10 @@ type Client struct {
 	OnResponse   func(req *http.Request, resp *http.Response) error
 }
 
+func NewClient(server string) *Client {
+	return &Client{Server: server}
+}
+
 func (c *Client) fullurl(reqpath string, queries url.Values) (*url.URL, error) {
 	u, err := url.Parse(c.Server)
 	if err != nil {
@@ -104,23 +108,19 @@ func (c *Client) GetWebSocket(ctx context.Context, reqpath string, queries url.V
 }
 
 func (c *Client) Get(ctx context.Context, path string, queries url.Values, decodeinto any) error {
-	_, err := c.Do(ctx, Get(path).Queries(queries).Return(decodeinto))
-	return err
+	return c.Send(ctx, Get(path).Queries(queries).Return(decodeinto))
 }
 
 func (c *Client) Post(ctx context.Context, path string, data any) error {
-	_, err := c.Do(ctx, Post(path).Body(data))
-	return err
+	return c.Send(ctx, Post(path).Body(data))
 }
 
 func (c *Client) Put(ctx context.Context, path string, queries url.Values, data any) error {
-	_, err := c.Do(ctx, NewRequest(http.MethodPut, path).Queries(queries).Body(data))
-	return err
+	return c.Send(ctx, NewRequest(http.MethodPut, path).Queries(queries).Body(data))
 }
 
 func (c *Client) Delete(ctx context.Context, path string) error {
-	_, err := c.Do(ctx, NewRequest(http.MethodDelete, path))
-	return err
+	return c.Send(ctx, NewRequest(http.MethodDelete, path))
 }
 
 type RequestBuilder struct {
@@ -162,6 +162,14 @@ func (r *RequestBuilder) Queries(queries url.Values) *RequestBuilder {
 	return r
 }
 
+func (r *RequestBuilder) Cookie(key, value string) *RequestBuilder {
+	if r.headers == nil {
+		r.headers = http.Header{}
+	}
+	r.headers.Add("Cookie", key+"="+value)
+	return r
+}
+
 func (r *RequestBuilder) Header(key, value string) *RequestBuilder {
 	if r.headers == nil {
 		r.headers = http.Header{}
@@ -188,6 +196,11 @@ func (r *RequestBuilder) Body(data any) *RequestBuilder {
 func (r *RequestBuilder) Return(decodeinto any) *RequestBuilder {
 	r.decodeto = decodeinto
 	return r
+}
+
+func (c *Client) Send(ctx context.Context, r *RequestBuilder) error {
+	_, err := c.Do(ctx, r)
+	return err
 }
 
 func (c *Client) Do(ctx context.Context, r *RequestBuilder) (*http.Response, error) {

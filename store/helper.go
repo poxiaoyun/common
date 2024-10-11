@@ -9,13 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/labels"
 	"xiaoshiai.cn/common/errors"
 )
-
-func MatchLabelSelector(obj Object, reqs labels.Selector) bool {
-	return true
-}
 
 func ObjectIdentity(obj Object) string {
 	key := ""

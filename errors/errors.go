@@ -133,6 +133,10 @@ func NewResourceExpired(resource, msaage string) *Status {
 	return &Status{Status: StatusFailure, Code: http.StatusGone, Reason: StatusReasonResourceExpired, Message: message}
 }
 
+func NewCustomError(code int, reason StatusReason, message string) *Status {
+	return &Status{Status: StatusFailure, Code: int32(code), Reason: reason, Message: message}
+}
+
 func IsNotFound(err error) bool {
 	return ReasonForError(err) == StatusReasonNotFound
 }

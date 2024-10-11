@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
+	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
 	genericregistry "k8s.io/apiserver/pkg/registry/generic/registry"
 	"k8s.io/apiserver/pkg/registry/rest"
@@ -130,15 +131,15 @@ func (c *generic) Count(ctx context.Context, obj store.Object, opts ...store.Cou
 	for _, opt := range opts {
 		opt(&options)
 	}
+	preficate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
+	if err != nil {
+		return 0, err
+	}
 	count := 0
 	if err := c.core.on(ctx, obj, func(ctx context.Context, db *db) error {
 		key := getlistkey(c.scopes, db.resource.String())
-
+		listopts := storage.ListOptions{Recursive: true, Predicate: preficate}
 		list := &unstructured.UnstructuredList{}
-		listopts := storage.ListOptions{
-			Recursive: true,
-			Predicate: ConvertPredicate(options.LabelSelector, options.FieldSelector),
-		}
 		if err := db.storage.GetList(ctx, key, listopts, list); err != nil {
 			return err
 		}
@@ -243,17 +244,17 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 	for _, opt := range opts {
 		opt(&options)
 	}
+	preficate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
+	if err != nil {
+		return err
+	}
 	v, newItemFunc, err := store.NewItemFuncFromList(list)
 	if err != nil {
 		return err
 	}
 	return c.core.on(ctx, list, func(ctx context.Context, db *db) error {
 		keyprefix := getlistkey(c.scopes, db.resource.String())
-
-		listopts := storage.ListOptions{
-			Recursive: true,
-			Predicate: ConvertPredicate(options.LabelSelector, options.FieldSelector),
-		}
+		listopts := storage.ListOptions{Recursive: true, Predicate: preficate}
 		if options.ResourceVersion != 0 {
 			listopts.ResourceVersion = strconv.FormatInt(options.ResourceVersion, 10)
 		}
@@ -294,14 +295,51 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 	})
 }
 
-func ConvertPredicate(l labels.Selector, f fields.Selector) storage.SelectionPredicate {
-	if l == nil {
-		l = labels.Everything()
+func ConvertPredicate(l store.Requirements, f store.Requirements) (storage.SelectionPredicate, error) {
+	labelssel := labels.Everything()
+	fieldsel := fields.Everything()
+	if l != nil {
+		newlabelssel, err := requirementsToLabelsSelector(l)
+		if err != nil {
+			return storage.SelectionPredicate{}, err
+		}
+		labelssel = newlabelssel
 	}
-	if f == nil {
-		f = fields.Everything()
+	if f != nil {
+		newfieldsel, err := requirementsToFieldsSelector(f)
+		if err != nil {
+			return storage.SelectionPredicate{}, err
+		}
+		fieldsel = newfieldsel
 	}
-	return storage.SelectionPredicate{Label: l, Field: f}
+	return storage.SelectionPredicate{Label: labelssel, Field: fieldsel}, nil
+}
+
+func requirementsToLabelsSelector(reqs store.Requirements) (labels.Selector, error) {
+	selector := labels.Everything()
+	for _, req := range reqs {
+		labelreq, err := labels.NewRequirement(req.Key, req.Operator, req.Values)
+		if err != nil {
+			return nil, err
+		}
+		selector = selector.Add(*labelreq)
+	}
+	return selector, nil
+}
+
+func requirementsToFieldsSelector(reqs store.Requirements) (fields.Selector, error) {
+	selectors := make([]fields.Selector, 0, len(reqs))
+	for _, req := range reqs {
+		switch req.Operator {
+		case selection.Equals, selection.DoubleEquals:
+			selectors = append(selectors, fields.OneTermEqualSelector(req.Key, req.Values[0]))
+		case selection.NotEquals:
+			selectors = append(selectors, fields.OneTermNotEqualSelector(req.Key, req.Values[0]))
+		default:
+			return nil, fmt.Errorf("unsupported field selector operator: %s", req.Operator)
+		}
+	}
+	return fields.AndSelectors(selectors...), nil
 }
 
 // Patch implements store.Store.

@@ -29,19 +29,19 @@ type (
 		// ascending creation timestamp.
 		// name is alias for metadata.name
 		// time is alias for metadata.creationTimestamp
-		Sort            string
-		ResourceVersion int64
-		LabelSelector   labels.Selector
-		FieldSelector   fields.Selector
+		Sort              string
+		ResourceVersion   int64
+		LabelRequirements Requirements
+		FieldRequirements Requirements
 		//  IncludeSubScopes is a flag to include resources in subscopes of current scope.
 		IncludeSubScopes bool
 	}
 	ListOption func(*ListOptions)
 
 	CountOptions struct {
-		LabelSelector    labels.Selector
-		FieldSelector    fields.Selector
-		IncludeSubScopes bool
+		LabelRequirements Requirements
+		FieldRequirements Requirements
+		IncludeSubScopes  bool
 	}
 	CountOption func(*CountOptions)
 
@@ -64,29 +64,41 @@ type (
 	PatchOption  func(*PatchOptions)
 
 	WatchOptions struct {
-		LabelSelector    labels.Selector
-		FieldSelector    fields.Selector
-		ResourceVersion  int64
-		IncludeSubScopes bool
+		LabelRequirements Requirements
+		FieldRequirements Requirements
+		ResourceVersion   int64
+		IncludeSubScopes  bool
 	}
 	WatchOption func(*WatchOptions)
 )
 
-func WithCountFieldSelector(selector fields.Selector) CountOption {
+func WithCountFieldRequirementsFromSelector(selector fields.Selector) CountOption {
 	return func(o *CountOptions) {
-		o.FieldSelector = selector
+		o.FieldRequirements = append(o.FieldRequirements, FieldsSelectorToReqirements(selector)...)
 	}
 }
 
-func WithFieldSelector(sel fields.Selector) ListOption {
-	return func(o *ListOptions) {
-		o.FieldSelector = sel
+func WithCountFieldRequirementsFromSet(kvs map[string]string) CountOption {
+	return func(o *CountOptions) {
+		o.FieldRequirements = append(o.FieldRequirements, RequirementsFromMap(kvs)...)
 	}
 }
 
-func WithFieldSelectorFromSet(kvs map[string]string) ListOption {
+func WithFieldRequirementsFromSelector(selector fields.Selector) ListOption {
 	return func(o *ListOptions) {
-		o.FieldSelector = fields.SelectorFromSet(fields.Set(kvs))
+		o.FieldRequirements = append(o.FieldRequirements, FieldsSelectorToReqirements(selector)...)
+	}
+}
+
+func WithFieldRequirementsFromSet(kvs map[string]string) ListOption {
+	return func(o *ListOptions) {
+		o.FieldRequirements = append(o.FieldRequirements, RequirementsFromMap(kvs)...)
+	}
+}
+
+func WithFieldRequirements(reqs ...Requirement) ListOption {
+	return func(o *ListOptions) {
+		o.FieldRequirements = append(o.FieldRequirements, reqs...)
 	}
 }
 
@@ -111,13 +123,19 @@ func WithSearch(search string) ListOption {
 
 func WithMatchLabels(kvs map[string]string) ListOption {
 	return func(o *ListOptions) {
-		o.LabelSelector = labels.SelectorFromSet(labels.Set(kvs))
+		o.LabelRequirements = append(o.LabelRequirements, RequirementsFromMap(kvs)...)
 	}
 }
 
-func WithLabelSelector(selector labels.Selector) ListOption {
+func WithLabelRequirementsFromSelector(selector labels.Selector) ListOption {
 	return func(o *ListOptions) {
-		o.LabelSelector = selector
+		o.LabelRequirements = append(o.LabelRequirements, LabelsSelectorToReqirements(selector)...)
+	}
+}
+
+func WithLabelRequirements(reqs ...Requirement) ListOption {
+	return func(o *ListOptions) {
+		o.LabelRequirements = append(o.LabelRequirements, reqs...)
 	}
 }
 
@@ -135,44 +153,6 @@ const (
 	DeletePropagationBackground DeletionPropagation = "Background"
 	DeletePropagationForeground DeletionPropagation = "Foreground"
 	DeletePropagationOrphan     DeletionPropagation = "Orphan"
-)
-
-type Requirements []Requirement
-
-func RequirementEqual(key string, value string) Requirement {
-	return Requirement{
-		Key:      key,
-		Operator: OperatorEquals,
-		Values:   []string{value},
-	}
-}
-
-func NewRequirement(key string, operator Operator, values ...string) Requirement {
-	return Requirement{
-		Key:      key,
-		Operator: operator,
-		Values:   values,
-	}
-}
-
-type Requirement struct {
-	Key      string
-	Operator Operator
-	Values   []string
-}
-
-type Operator string
-
-const (
-	OperatorEquals      Operator = Operator("=")
-	OperatorNotEquals   Operator = Operator("!=")
-	OperatorIn          Operator = Operator("in")
-	OperatorNotIn       Operator = Operator("notin")
-	OperatorExists      Operator = Operator("exists")
-	OperatorNotExists   Operator = Operator("!")
-	OperatorGreaterThan Operator = Operator("gt")
-	OperatorLessThan    Operator = Operator("lt")
-	OperatorContains    Operator = Operator("contains")
 )
 
 type PatchType string

@@ -6,6 +6,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,7 +21,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/selection"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	libreflect "xiaoshiai.cn/common/reflect"
@@ -41,7 +42,7 @@ func NewDefaultMongoOptions() *MongoDBOptions {
 		Address:    "localhost:27017",
 		Username:   "",
 		Password:   "",
-		Database:   "mcp",
+		Database:   "default",
 		ReplicaSet: "",
 		Direct:     false,
 	}
@@ -255,7 +256,7 @@ func (m *MongoStorage) Count(ctx context.Context, obj store.Object, opts ...stor
 	}
 	var count int
 	err := m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = conditionsmatch(filter, FieldsSelectorToReqirements(options.FieldSelector))
+		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
 		m.core.logger.V(5).Info("count", "collection", col.Name(), "filter", filter)
 		doccount, err := col.CountDocuments(ctx, filter)
 		if err != nil {
@@ -271,7 +272,6 @@ func (m *MongoStorage) Count(ctx context.Context, obj store.Object, opts ...stor
 func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...store.CreateOption) error {
 	return m.on(ctx, into, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		into.SetCreationTimestamp(store.Now())
-		// into.SetCreator(api.AuthenticateFromContext(ctx).User.Name)
 		into.SetUID(uuid.NewString())
 		data, err := m.mergeConditionOnChange(into, []string{"status"})
 		if err != nil {
@@ -486,7 +486,7 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, post []any) b
 	if search := opts.Search; search != "" {
 		match = append(match, bson.E{Key: "name", Value: bson.M{"$regex": search, "$options": "i"}})
 	}
-	match = conditionsmatch(match, FieldsSelectorToReqirements(opts.FieldSelector))
+	match = conditionsmatch(match, SelectorToReqirements(opts.LabelRequirements, opts.FieldRequirements))
 	pipeline := bson.A{}
 	// pre conditions
 	pipeline = append(pipeline, pre...)
@@ -497,10 +497,6 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, post []any) b
 	if len(sortstage) > 0 {
 		pipeline = append(pipeline, bson.M{"$sort": sortstage})
 	}
-	// projection
-	// if len(opts.Projection) > 0 {
-	// 	pipeline = append(pipeline, bson.M{"$project": listToBsonD(opts.Projection)})
-	// }
 	pipeline = append(pipeline, post...)
 	// pagination
 	group := bson.M{
@@ -569,42 +565,73 @@ func pipelinesort(pipeline bson.A, sort string) bson.A {
 }
 
 func scopesmatch(match bson.D, scopes []store.Scope) bson.D {
-	conds := []store.Requirement{}
+	conds := store.Requirements{}
 	for _, scope := range scopes {
-		conds = append(conds, store.RequirementEqual(scope.Resource, scope.Name))
+		conds = append(conds, store.Requirement{Operator: selection.Equals, Key: scope.Resource, Values: []string{scope.Name}})
 	}
 	return conditionsmatch(match, conds)
 }
 
 func conditionsmatch(match bson.D, conds store.Requirements) bson.D {
 	for _, cond := range conds {
+		key, values := cond.Key, cond.Values
 		switch cond.Operator {
-		case store.OperatorEquals:
-			// if equals condition is empty, match with empty string or nil
-			if len(cond.Values) == 1 && cond.Values[0] == "" {
-				match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$in": bson.A{"", nil}}})
+		case selection.Equals:
+			if len(values) == 0 {
+				match = append(match, bson.E{Key: key, Value: nil})
+			} else if values[0] == "" {
+				match = append(match, bson.E{Key: key, Value: ""})
 			} else {
-				match = append(match, bson.E{Key: cond.Key, Value: cond.Values[0]})
+				match = append(match, bson.E{Key: key, Value: values[0]})
 			}
-		case store.OperatorNotEquals:
-			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$ne": cond.Values[0]}})
-		case store.OperatorIn:
-			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$in": cond.Values}})
-		case store.OperatorNotIn:
-			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$nin": cond.Values}})
-		case store.OperatorExists:
-			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$ne": nil}})
-		case store.OperatorNotExists:
-			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$eq": nil}})
-		case store.OperatorGreaterThan:
-			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$gt": cond.Values[0]}})
-		case store.OperatorLessThan:
-			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$lt": cond.Values[0]}})
-		case store.OperatorContains:
-			match = append(match, bson.E{Key: cond.Key, Value: bson.M{"$all": cond.Values}})
+		case selection.NotEquals:
+			match = append(match, bson.E{Key: key, Value: bson.M{"$ne": values[0]}})
+		case selection.In:
+			// https://www.mongodb.com/docs/manual/reference/operator/query/in/
+			// { field: { $in: [<value1>, <value2>, ... <valueN> ] } }
+			match = append(match, bson.E{Key: key, Value: bson.M{"$in": values}})
+		case selection.NotIn:
+			// https://www.mongodb.com/docs/manual/reference/operator/query/nin/
+			// { field: { $nin: [ <value1>, <value2> ... <valueN> ] } }
+			match = append(match, bson.E{Key: key, Value: bson.M{"$nin": values}})
+		case selection.Exists:
+			match = append(match, bson.E{Key: key, Value: bson.M{"$ne": nil}})
+		case selection.DoesNotExist:
+			match = append(match, bson.E{Key: key, Value: bson.M{"$exists": false}})
+		case selection.GreaterThan:
+			match = append(match, bson.E{Key: key, Value: bson.M{"$gt": autoConvertString(values[0])}})
+		case selection.LessThan:
+			match = append(match, bson.E{Key: key, Value: bson.M{"$lt": autoConvertString(values[0])}})
 		}
 	}
 	return match
+}
+
+var (
+	rfc3339regex  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$`)
+	isnumberRegex = regexp.MustCompile(`^\d+$`)
+	isboolRegex   = regexp.MustCompile(`^(true|false)$`)
+)
+
+// autoConvertString convert string to any type
+// it usefull for convert string to time.Time and compare
+func autoConvertString(s string) any {
+	if isboolRegex.MatchString(s) {
+		if b, err := strconv.ParseBool(s); err == nil {
+			return b
+		}
+	}
+	if rfc3339regex.MatchString(s) {
+		if tim, err := time.Parse(time.RFC3339, s); err == nil {
+			return tim
+		}
+	}
+	if isnumberRegex.MatchString(s) {
+		if i, err := strconv.Atoi(s); err == nil {
+			return i
+		}
+	}
+	return s
 }
 
 func patchToMongoUpdate(patch store.Patch, excludes []string, includes []string) (bson.D, error) {
@@ -828,17 +855,13 @@ func FlattenData(data any, depth int, excludes []string, includes []string) (bso
 	return into, err
 }
 
-func FieldsSelectorToReqirements(sel fields.Selector) store.Requirements {
-	if sel == nil {
-		return nil
+func SelectorToReqirements(labels store.Requirements, fields store.Requirements) store.Requirements {
+	return append(labelsSelectorToReqirements(labels), fields...)
+}
+
+func labelsSelectorToReqirements(sel store.Requirements) store.Requirements {
+	for i := range sel {
+		sel[i].Key = "labels." + sel[i].Key
 	}
-	conds := store.Requirements{}
-	for _, req := range sel.Requirements() {
-		conds = append(conds, store.Requirement{
-			Key:      req.Field,
-			Operator: store.Operator(req.Operator),
-			Values:   []string{req.Value},
-		})
-	}
-	return conds
+	return sel
 }

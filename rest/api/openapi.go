@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 	"path"
+	"reflect"
 
 	"github.com/go-openapi/spec"
 	"xiaoshiai.cn/common/rest/openapi"
@@ -142,7 +143,7 @@ func buildRouteOperation(route Route, builder *openapi.Builder) *spec.Operation 
 					StatusCodeResponses: func() map[int]spec.Response {
 						responses := map[int]spec.Response{}
 						for _, resp := range route.Responses {
-							responses[resp.Code] = spec.Response{
+							response := spec.Response{
 								ResponseProps: spec.ResponseProps{
 									Description: resp.Description,
 									Schema:      builder.Build(resp.Body),
@@ -155,6 +156,10 @@ func buildRouteOperation(route Route, builder *openapi.Builder) *spec.Operation 
 									}(),
 								},
 							}
+							if resp.Body != nil && !reflect.ValueOf(resp.Body).IsZero() {
+								response.Schema.Example = resp.Body
+							}
+							responses[resp.Code] = response
 						}
 						if len(responses) == 0 {
 							responses[200] = spec.Response{ResponseProps: spec.ResponseProps{Description: "OK"}}

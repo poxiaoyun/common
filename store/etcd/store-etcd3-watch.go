@@ -10,8 +10,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	grpccodes "google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
@@ -43,8 +41,8 @@ func (e *EtcdStore) Watch(ctx context.Context, obj store.ObjectList, opts ...sto
 	ctx, cancel := context.WithCancel(ctx)
 	w := &etcdWatcher{
 		core:              e.core,
-		labelSelector:     options.LabelSelector,
-		fieldSelector:     options.FieldSelector,
+		labelSelector:     options.LabelRequirements,
+		fieldSelector:     options.FieldRequirements,
 		newItemFunc:       newItemFunc,
 		resource:          resource,
 		key:               e.core.getlistkey(e.scopes, resource),
@@ -61,8 +59,8 @@ func (e *EtcdStore) Watch(ctx context.Context, obj store.ObjectList, opts ...sto
 
 type etcdWatcher struct {
 	core          *etcdStoreCore
-	labelSelector labels.Selector
-	fieldSelector fields.Selector
+	labelSelector store.Requirements
+	fieldSelector store.Requirements
 	newItemFunc   func() store.Object
 	cancel        func()
 
@@ -263,7 +261,7 @@ func (w *etcdWatcher) parseEvent(e *etcdEvent) (*store.WatchEvent, error) {
 	obj.SetResourceVersion(e.rev)
 
 	// filter by label selector
-	if !store.MatchLabelSelector(obj, w.labelSelector) {
+	if !store.MatchLabelReqirements(obj, w.labelSelector) {
 		return nil, nil
 	}
 

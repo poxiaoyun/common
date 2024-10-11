@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -430,9 +429,6 @@ func (u *Unstructured) MarshalJSON() ([]byte, error) {
 	return json.Marshal(u.Object)
 }
 
-func MatchUnstructuredFieldSelector(obj *Unstructured, reqs fields.Selector) bool {
-	return true
-}
 
 func CompareUnstructuredField(a, b *Unstructured, sorts []sortBy) int {
 	for _, sort := range sorts {

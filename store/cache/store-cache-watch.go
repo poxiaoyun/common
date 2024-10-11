@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
@@ -34,12 +32,12 @@ func (g *CacheStore) Watch(ctx context.Context, list store.ObjectList, opts ...s
 	if err != nil {
 		return nil, err
 	}
-	return g.core.resource(resource).watch(ctx, g.scopes, newItemFunc, options.LabelSelector, options.FieldSelector)
+	return g.core.resource(resource).watch(ctx, g.scopes, newItemFunc, options.LabelRequirements, options.FieldRequirements)
 }
 
 func (c *cachedResource) watch(ctx context.Context,
 	scopes []store.Scope, newfunc func() store.Object,
-	labelselector labels.Selector, fieldselector fields.Selector,
+	labelselector, fieldselector store.Requirements,
 ) (store.Watcher, error) {
 	if err := c.waitSync(ctx); err != nil {
 		return nil, err
@@ -78,8 +76,8 @@ type cachedWatcher struct {
 	parent *cachedResource
 	cancel context.CancelFunc
 
-	fieldSelector fields.Selector
-	labelSelector labels.Selector
+	fieldSelector store.Requirements
+	labelSelector store.Requirements
 	scopes        []store.Scope
 
 	latestRev  int64
@@ -100,10 +98,10 @@ func (c *cachedWatcher) send(ctx context.Context, kind store.WatchEventType, obj
 	if !store.ScopesEquals(obj.GetScopes(), c.scopes) {
 		return
 	}
-	if !store.MatchLabelSelector(obj, c.labelSelector) {
+	if !store.MatchLabelReqirements(obj, c.labelSelector) {
 		return
 	}
-	if !store.MatchUnstructuredFieldSelector(obj, c.fieldSelector) {
+	if !store.MatchUnstructuredFieldRequirments(obj, c.fieldSelector) {
 		return
 	}
 	// decode

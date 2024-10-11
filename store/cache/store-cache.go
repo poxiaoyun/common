@@ -11,8 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
@@ -52,7 +50,7 @@ func (c *CacheStore) Count(ctx context.Context, obj store.Object, opts ...store.
 	// filter
 	items, _, err := c.core.
 		resource(resource).
-		list(ctx, c.scopes, options.LabelSelector, options.FieldSelector)
+		list(ctx, c.scopes, options.LabelRequirements, options.FieldRequirements)
 	if err != nil {
 		return 0, err
 	}
@@ -127,7 +125,7 @@ func (g *CacheStore) List(ctx context.Context, list store.ObjectList, opts ...st
 	// filter
 	items, rev, err := g.core.
 		resource(resource).
-		list(ctx, g.scopes, options.LabelSelector, options.FieldSelector)
+		list(ctx, g.scopes, options.LabelRequirements, options.FieldRequirements)
 	if err != nil {
 		return err
 	}
@@ -249,13 +247,13 @@ func (c *cachedResource) get(ctx context.Context, scopes []store.Scope, name str
 }
 
 func (c *cachedResource) list(ctx context.Context, scopes []store.Scope,
-	labelselector labels.Selector, fieldselector fields.Selector,
+	labelselector, fieldselector store.Requirements,
 ) ([]*store.Unstructured, int64, error) {
 	return c.listPrefix(ctx, c.getlistkey(scopes), labelselector, fieldselector)
 }
 
 func (c *cachedResource) listPrefix(ctx context.Context, prefix string,
-	labelselector labels.Selector, fieldselector fields.Selector,
+	labelselector, fieldselector store.Requirements,
 ) ([]*store.Unstructured, int64, error) {
 	if err := c.waitSync(ctx); err != nil {
 		return nil, 0, err
@@ -263,10 +261,10 @@ func (c *cachedResource) listPrefix(ctx context.Context, prefix string,
 	objs, rev := c.kvs.list(prefix)
 	items := []*store.Unstructured{}
 	for _, obj := range objs {
-		if !store.MatchLabelSelector(obj, labelselector) {
+		if !store.MatchLabelReqirements(obj, labelselector) {
 			continue
 		}
-		if !store.MatchUnstructuredFieldSelector(obj, fieldselector) {
+		if !store.MatchUnstructuredFieldRequirments(obj, fieldselector) {
 			continue
 		}
 		items = append(items, obj)

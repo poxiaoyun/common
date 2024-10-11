@@ -277,7 +277,9 @@ func (a *SimpleAuditor) OnResponse(w http.ResponseWriter, r *http.Request, audit
 			}
 		}
 	}
-	auditlog.Subject = AuthenticateFromContext(r.Context()).User.Name
+	if username := AuthenticateFromContext(r.Context()).User.Name; username != "" {
+		auditlog.Subject = username
+	}
 	auditlog.EndTime = time.Now()
 	auditlog.Response.Header = HttpHeaderToMap(w.Header())
 }

@@ -27,6 +27,10 @@ func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store
 	for _, opt := range opts {
 		opt(options)
 	}
+	preficate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
+	if err != nil {
+		return nil, err
+	}
 	if err := c.core.validateObject(obj); err != nil {
 		return nil, err
 	}
@@ -39,10 +43,7 @@ func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store
 		return nil, err
 	}
 	prefix := getlistkey(c.scopes, resource)
-	storageOptions := storage.ListOptions{
-		Predicate: ConvertPredicate(options.LabelSelector, options.FieldSelector),
-		Recursive: true,
-	}
+	storageOptions := storage.ListOptions{Predicate: preficate, Recursive: true}
 	// allow watch bookmarks to enabled watchlist
 	if true {
 		storageOptions.SendInitialEvents = ptr.To(true)
