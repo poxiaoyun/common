@@ -36,15 +36,16 @@ func (o ListTagOptions) ToQuery() url.Values {
 
 func (c *Client) ListTags(ctx context.Context, project, repository string, reference string, o ListTagOptions) ([]Tag, error) {
 	var tags []Tag
-	err := c.cli.Get(ctx, fmt.Sprintf("/projects/%s/repositories/%s/artifacts/%s/tags",
-		project, repository, reference), o.ToQuery(), &tags)
-	if err != nil {
+	if err := c.cli.
+		Get(fmt.Sprintf("/projects/%s/repositories/%s/artifacts/%s/tags", project, repository, reference)).
+		Queries(o.ToQuery()).
+		Return(&tags).
+		Send(ctx); err != nil {
 		return nil, err
 	}
 	return tags, nil
 }
 
 func (c *Client) DeleteTag(ctx context.Context, project, repository string, reference string, tag string) error {
-	return c.cli.Delete(ctx, fmt.Sprintf("/projects/%s/repositories/%s/artifacts/%s/tags/%s",
-		project, repository, reference, tag))
+	return c.cli.Delete(fmt.Sprintf("/projects/%s/repositories/%s/artifacts/%s/tags/%s", project, repository, reference, tag)).Send(ctx)
 }

@@ -5,8 +5,6 @@ import (
 	"net/url"
 	"strconv"
 	"time"
-
-	"xiaoshiai.cn/common/httpclient"
 )
 
 type ListArtifactOptions struct {
@@ -93,8 +91,11 @@ type ReferencePlatform struct {
 
 func (c *Client) ListArtifacts(ctx context.Context, project string, repository string, options ListArtifactOptions) ([]Artifacrt, int, error) {
 	var artifacts []Artifacrt
-	req := httpclient.Get("/projects/" + project + "/repositories/" + repository + "/artifacts").Queries(options.ToQuery()).Return(&artifacts)
-	resp, err := c.cli.Do(ctx, req)
+	resp, err := c.cli.
+		Get("/projects/" + project + "/repositories/" + repository + "/artifacts").
+		Queries(options.ToQuery()).
+		Return(&artifacts).
+		Do(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -104,13 +105,15 @@ func (c *Client) ListArtifacts(ctx context.Context, project string, repository s
 
 func (c *Client) GetArtifact(ctx context.Context, project string, repository string, reference string, options GetArtifactOptions) (*Artifacrt, error) {
 	var artifact Artifacrt
-	err := c.cli.Get(ctx, "/projects/"+project+"/repositories/"+repository+"/artifacts/"+reference, nil, &artifact)
-	if err != nil {
+	if err := c.cli.
+		Get("/projects/" + project + "/repositories/" + repository + "/artifacts/" + reference).
+		Return(&artifact).
+		Send(ctx); err != nil {
 		return nil, err
 	}
 	return &artifact, nil
 }
 
 func (c *Client) DeleteArtifact(ctx context.Context, project string, repository string, reference string) error {
-	return c.cli.Delete(ctx, "/projects/"+project+"/repositories/"+repository+"/artifacts/"+reference)
+	return c.cli.Delete("/projects/" + project + "/repositories/" + repository + "/artifacts/" + reference).Send(ctx)
 }

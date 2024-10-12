@@ -54,6 +54,10 @@ func (s *Status) Error() string {
 	return s.Message
 }
 
+func NewOK() *Status {
+	return &Status{Status: StatusSuccess, Code: http.StatusOK, Reason: StatusReasonUnknown, Message: "OK"}
+}
+
 func NewAlreadyExists(resource, name string) *Status {
 	message := fmt.Sprintf("%s %q already exists", resource, name)
 	return &Status{Status: StatusFailure, Code: http.StatusConflict, Reason: StatusReasonAlreadyExists, Message: message}

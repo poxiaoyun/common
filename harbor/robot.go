@@ -3,10 +3,7 @@ package harbor
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"net/url"
-
-	"xiaoshiai.cn/common/httpclient"
 )
 
 type ListRobotOptions struct {
@@ -108,25 +105,19 @@ type CreateRobot struct {
 
 func (c *Client) CreateRobotAccount(ctx context.Context, robot CreateRobot) (*Robot, error) {
 	var r Robot
-	req := httpclient.Post("/robots").Body(robot).Return(&r)
-	if _, err := c.cli.Do(ctx, req); err != nil {
+	if err := c.cli.Post("robots").JSON(robot).Return(&r).Send(ctx); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
 func (c *Client) UpdateRobotAccount(ctx context.Context, robot *Robot) error {
-	req := httpclient.NewRequest(http.MethodPut, fmt.Sprintf("/robots/%d", robot.ID)).Body(robot)
-	if _, err := c.cli.Do(ctx, req); err != nil {
-		return err
-	}
-	return nil
+	return c.cli.Put(fmt.Sprintf("/robots/%d", robot.ID)).JSON(robot).Send(ctx)
 }
 
 func (c *Client) ListRobotAccounts(ctx context.Context, o ListRobotOptions) ([]Robot, error) {
 	var robots []Robot
-	err := c.cli.Get(ctx, "/robots", o.ToQuery(), &robots)
-	if err != nil {
+	if err := c.cli.Get("/robots").Queries(o.ToQuery()).Return(&robots).Send(ctx); err != nil {
 		return nil, err
 	}
 	return robots, nil
@@ -134,8 +125,7 @@ func (c *Client) ListRobotAccounts(ctx context.Context, o ListRobotOptions) ([]R
 
 func (c *Client) ListProjectRobotAccounts(ctx context.Context, project string, o ListRobotOptions) ([]Robot, error) {
 	var robots []Robot
-	err := c.cli.Get(ctx, fmt.Sprintf("/projects/%s/robots", project), o.ToQuery(), &robots)
-	if err != nil {
+	if err := c.cli.Get("/projects/" + project + "/robots").Queries(o.ToQuery()).Return(&robots).Send(ctx); err != nil {
 		return nil, err
 	}
 	return robots, nil
@@ -144,11 +134,7 @@ func (c *Client) ListProjectRobotAccounts(ctx context.Context, project string, o
 // https://github.com/goharbor/harbor/issues/10672
 func (c *Client) CreateProjectRobotAccount(ctx context.Context, project string, robot CreateRobot) (*Robot, error) {
 	var r Robot
-	req := httpclient.
-		Post(fmt.Sprintf("/projects/%s/robots", project)).
-		Body(robot).
-		Return(&r)
-	if _, err := c.cli.Do(ctx, req); err != nil {
+	if err := c.cli.Post("/projects/" + project + "/robots").JSON(robot).Return(&r).Send(ctx); err != nil {
 		return nil, err
 	}
 	return &r, nil
@@ -156,13 +142,12 @@ func (c *Client) CreateProjectRobotAccount(ctx context.Context, project string, 
 
 func (c *Client) GetProjectRobotAccount(ctx context.Context, project string, id int) (*Robot, error) {
 	var r Robot
-	err := c.cli.Get(ctx, fmt.Sprintf("/projects/%s/robots/%d", project, id), nil, &r)
-	if err != nil {
+	if err := c.cli.Get(fmt.Sprintf("/projects/%s/robots/%d", project, id)).Return(&r).Send(ctx); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
 func (c *Client) DeleteProjectRobotAccount(ctx context.Context, project string, id int) error {
-	return c.cli.Delete(ctx, fmt.Sprintf("/projects/%s/robots/%d", project, id))
+	return c.cli.Delete(fmt.Sprintf("/projects/%s/robots/%d", project, id)).Send(ctx)
 }

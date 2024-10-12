@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-
-	"xiaoshiai.cn/common/httpclient"
+	"net/http"
 )
 
 const (
@@ -19,8 +18,8 @@ const (
 const MaxAdditionSize = 1 << 20 // 1MB
 
 func (c *Client) GetAddition(ctx context.Context, project, repository, reference, addtion string) ([]byte, error) {
-	req := httpclient.Get(fmt.Sprintf("/projects/%s/repositories/%s/artifacts/%s/additions/%s", project, repository, reference, addtion))
-	resp, err := c.cli.DoRaw(ctx, req)
+	resp, err := c.cli.Request(http.MethodGet, fmt.Sprintf("/projects/%s/repositories/%s/artifacts/%s/additions/%s", project, repository, reference, addtion)).
+		Do(ctx)
 	if err != nil {
 		return nil, err
 	}

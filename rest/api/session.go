@@ -25,4 +25,5 @@ func (d SessionFilter) Process(w http.ResponseWriter, r *http.Request, next http
 	if val := GetCookie(r, d.SessionKey); val == "" {
 		SetCookie(w, d.SessionKey, d.NewSession(), time.Time{})
 	}
+	next.ServeHTTP(w, r)
 }

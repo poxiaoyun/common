@@ -16,12 +16,12 @@ type SystemInfo struct {
 
 func (c *Client) SystemInfo(ctx context.Context) (*SystemInfo, error) {
 	var info SystemInfo
-	if err := c.cli.Get(ctx, "/systeminfo", nil, &info); err != nil {
+	if err := c.cli.Get("/systeminfo").Return(&info).Send(ctx); err != nil {
 		return nil, err
 	}
 	return &info, nil
 }
 
 func (c *Client) Ping(ctx context.Context) error {
-	return c.cli.Get(ctx, "/ping", nil, nil)
+	return c.cli.Get("/ping").Send(ctx)
 }

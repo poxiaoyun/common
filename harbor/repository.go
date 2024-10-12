@@ -3,11 +3,10 @@ package harbor
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"time"
-
-	"xiaoshiai.cn/common/httpclient"
 )
 
 type ListRepositoryOptions struct {
@@ -34,8 +33,7 @@ func (c *Client) ListRepositories(ctx context.Context, project string,
 	options ListRepositoryOptions,
 ) ([]Repository, int, error) {
 	var repositories []Repository
-	req := httpclient.Get(fmt.Sprintf("/projects/%s/repositories", project)).Queries(options.ToQuery()).Return(&repositories)
-	resp, err := c.cli.Do(ctx, req)
+	resp, err := c.cli.Request(http.MethodGet, fmt.Sprintf("/projects/%s/repositories", project)).Queries(options.ToQuery()).Return(&repositories).Do(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -45,7 +43,7 @@ func (c *Client) ListRepositories(ctx context.Context, project string,
 
 func (c *Client) GetRepository(ctx context.Context, project, repository string) (*Repository, error) {
 	var repo Repository
-	err := c.cli.Get(ctx, fmt.Sprintf("/projects/%s/repositories/%s", project, repository), nil, &repo)
+	err := c.cli.Get(fmt.Sprintf("/projects/%s/repositories/%s", project, repository)).Return(&repo).Send(ctx)
 	if err != nil {
 		return nil, err
 	}

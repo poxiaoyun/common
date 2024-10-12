@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"net/http"
+
+	"xiaoshiai.cn/common/errors"
 )
 
 type ResponseStatusOnly int32
@@ -24,6 +26,8 @@ func On(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context) (an
 	switch val := obj.(type) {
 	case nil:
 		// no action
+	case *errors.Status:
+		Raw(w, int(val.Code), val, nil)
 	case ResponseStatusOnly:
 		w.WriteHeader(int(val))
 	default:

@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-
-	"xiaoshiai.cn/common/httpclient"
 )
 
 type Project struct {
@@ -46,7 +44,7 @@ func (o ListProjectOptions) ToQuery() url.Values {
 
 func (c *Client) ListProjects(ctx context.Context, options ListProjectOptions) ([]Project, error) {
 	var projects []Project
-	if err := c.cli.Get(ctx, "/projects", options.ToQuery(), &projects); err != nil {
+	if err := c.cli.Get("/projects").Queries(options.ToQuery()).Return(&projects).Send(ctx); err != nil {
 		return nil, err
 	}
 	return projects, nil
@@ -54,16 +52,14 @@ func (c *Client) ListProjects(ctx context.Context, options ListProjectOptions) (
 
 func (c *Client) GetProject(ctx context.Context, nameOrID string) (*Project, error) {
 	var project Project
-	if err := c.cli.Get(ctx, "/projects/"+string(nameOrID), nil, &project); err != nil {
+	if err := c.cli.Get("/projects/" + string(nameOrID)).Return(&project).Send(ctx); err != nil {
 		return nil, err
 	}
 	return &project, nil
 }
 
 func (c *Client) HeadProject(ctx context.Context, name string) (bool, error) {
-	resp, err := c.cli.DoRaw(
-		ctx, httpclient.NewRequest(http.MethodHead, "/projects").Query("project_name", name),
-	)
+	resp, err := c.cli.Request(http.MethodHead, "/projects").Query("project_name", name).Do(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -77,13 +73,13 @@ type ApplyProject struct {
 }
 
 func (c *Client) CreateProject(ctx context.Context, project ApplyProject) error {
-	return c.cli.Post(ctx, "/projects", project)
+	return c.cli.Post("/projects").JSON(project).Send(ctx)
 }
 
 func (c *Client) UpdateProject(ctx context.Context, project ApplyProject) error {
-	return c.cli.Put(ctx, "/projects/"+string(project.Name), nil, project)
+	return c.cli.Put("/projects/" + string(project.Name)).JSON(project).Send(ctx)
 }
 
 func (c *Client) DeleteProject(ctx context.Context, name string) error {
-	return c.cli.Delete(ctx, "/projects/"+string(name))
+	return c.cli.Delete("/projects/" + string(name)).Send(ctx)
 }
