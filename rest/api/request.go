@@ -70,6 +70,21 @@ func GetListOptions(r *http.Request) ListOptions {
 	}
 }
 
+func ParseSort(sort string) (field, order string) {
+	if sort == "" {
+		return "", "asc"
+	}
+	lastrune := sort[len(sort)-1]
+	switch lastrune {
+	case '+':
+		return sort[:len(sort)-1], "asc"
+	case '-':
+		return sort[:len(sort)-1], "desc"
+	default:
+		return sort, "asc"
+	}
+}
+
 func HeaderOrQuery[T any](r *http.Request, key string, defaultValue T) T {
 	if val := r.Header.Get(key); val == "" {
 		return ValueOrDefault(r.URL.Query().Get(key), defaultValue)

@@ -98,6 +98,14 @@ func NewMultiFormData(data map[string]string) (io.Reader, string) {
 	return body, writer.FormDataContentType()
 }
 
+func NewFormURLEncoded(data map[string]string) (io.Reader, string) {
+	form := url.Values{}
+	for k, v := range data {
+		form.Add(k, v)
+	}
+	return bytes.NewBufferString(form.Encode()), "application/x-www-form-urlencoded"
+}
+
 func MergeURL(server, reqpath string, queries url.Values) (*url.URL, error) {
 	if server == "" {
 		return nil, errors.NewBadRequest("empty base address on http request")
@@ -143,6 +151,13 @@ func DefaultDecodeFunc(resp *http.Response, into any) error {
 		_, err := io.Copy(into, resp.Body)
 		return err
 	default:
-		return json.NewDecoder(resp.Body).Decode(into)
+		jsondata, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(jsondata, into); err != nil {
+			return fmt.Errorf("unexpected response: %s", string(jsondata))
+		}
+		return nil
 	}
 }

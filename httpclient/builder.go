@@ -108,6 +108,10 @@ func (r *Builder) MultiFormData(data map[string]string) *Builder {
 	return r.Body(NewMultiFormData(data))
 }
 
+func (r *Builder) FormURLEncoded(data map[string]string) *Builder {
+	return r.Body(NewFormURLEncoded(data))
+}
+
 func (r *Builder) JSON(data any) *Builder {
 	jsondata, err := json.Marshal(data)
 	if err != nil {
