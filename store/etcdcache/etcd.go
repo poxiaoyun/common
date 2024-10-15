@@ -260,9 +260,21 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 		}
 
 		unslist := &unstructured.UnstructuredList{}
-		if err := db.storage.GetList(ctx, keyprefix, listopts, unslist); err != nil {
-			err = storeerr.InterpretListError(err, db.resource)
-			return err
+		const MaxRetry = 3
+		for retries := 0; ; retries++ {
+			if err := db.storage.GetList(ctx, keyprefix, listopts, unslist); err != nil {
+				// is retryable
+				if retries < MaxRetry && apierrors.IsTooManyRequests(err) {
+					if delay, ok := apierrors.SuggestsClientDelay(err); ok {
+						time.Sleep(time.Duration(delay) * time.Second)
+						continue
+					}
+				}
+				err = storeerr.InterpretListError(err, db.resource)
+				return err
+			} else {
+				break
+			}
 		}
 		// filter
 		filtered := unslist.Items

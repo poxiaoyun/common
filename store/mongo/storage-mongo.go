@@ -87,8 +87,8 @@ func (BsonTimeCodec) EncodeValue(ctx bsoncodec.EncodeContext, vw bsonrw.ValueWri
 	if !ok {
 		return stderrors.New("invalid time")
 	}
-	nano := t.Truncate(time.Millisecond).UnixNano()
-	return vw.WriteDateTime(nano)
+	tim := t.Truncate(time.Second)
+	return vw.WriteDateTime(int64(primitive.NewDateTimeFromTime(tim)))
 }
 
 type BsonQuantityCodec struct{}
@@ -312,19 +312,20 @@ func (m *MongoStorage) mergeConditionOnChange(into any, exludes []string) (bson.
 loop:
 	for _, cond := range m.scopes {
 		// set field
+		condkey, condvalue := strings.TrimSuffix(cond.Resource, "s"), cond.Name
 		for i, d := range data {
-			if d.Key == cond.Resource {
+			if d.Key == condkey {
 				// if field is not empty and not equal to condition value, return error
-				if !reflect.ValueOf(d.Value).IsZero() && !reflect.DeepEqual(d.Value, cond.Name) {
-					return nil, errors.NewBadRequest(fmt.Sprintf("conflict condition and object field: %s", cond.Resource))
+				if !reflect.ValueOf(d.Value).IsZero() && !reflect.DeepEqual(d.Value, condvalue) {
+					return nil, errors.NewBadRequest(fmt.Sprintf("conflict condition and object field: %s", condkey))
 				}
 				// set field to condition value
-				data[i].Value = cond.Name
+				data[i].Value = condvalue
 				continue loop
 			}
 		}
 		// set new field
-		data = append(data, bson.E{Key: cond.Resource, Value: cond.Name})
+		data = append(data, bson.E{Key: condkey, Value: condvalue})
 	}
 	return data, nil
 }

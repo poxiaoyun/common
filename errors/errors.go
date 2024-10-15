@@ -173,3 +173,7 @@ func IgnoreAlreadyExists(err error) error {
 	}
 	return err
 }
+
+func IsUnauthorized(err error) bool {
+	return ReasonForError(err) == StatusReasonUnauthorized
+}
