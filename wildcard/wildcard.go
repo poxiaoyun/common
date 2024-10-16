@@ -1,5 +1,3 @@
- 
-
 package wildcard
 
 import (
@@ -12,6 +10,10 @@ const (
 	wildcard    = "*"  // match this section
 	wildcardAll = "**" // match this section and all following sections
 )
+
+func Match(expr string, perm string) bool {
+	return WildcardMatchSections(expr, perm)
+}
 
 // acting like: https://shiro.apache.org/permissions.html#WildcardPermissions
 // but extended to support ** to match all following sections

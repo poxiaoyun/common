@@ -40,7 +40,7 @@ type MongoDBOptions struct {
 func NewDefaultMongoOptions() *MongoDBOptions {
 	return &MongoDBOptions{
 		Address:    "localhost:27017",
-		Username:   "",
+		Username:   "admin",
 		Password:   "",
 		Database:   "default",
 		ReplicaSet: "",
@@ -75,8 +75,7 @@ func (b BsonTimeCodec) DecodeValue(ctx bsoncodec.DecodeContext, vr bsonrw.ValueR
 	if err != nil {
 		return err
 	}
-	nano := t
-	tim := store.Time{Time: time.Unix(0, nano).Truncate(time.Second)}
+	tim := store.Time{Time: primitive.DateTime(t).Time()}
 	v.Set(reflect.ValueOf(tim))
 	return nil
 }
@@ -87,7 +86,7 @@ func (BsonTimeCodec) EncodeValue(ctx bsoncodec.EncodeContext, vw bsonrw.ValueWri
 	if !ok {
 		return stderrors.New("invalid time")
 	}
-	tim := t.Truncate(time.Second)
+	tim := t.Truncate(time.Millisecond)
 	return vw.WriteDateTime(int64(primitive.NewDateTimeFromTime(tim)))
 }
 

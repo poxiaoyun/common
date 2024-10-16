@@ -20,14 +20,17 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/felixge/httpsnoop"
+	"github.com/google/uuid"
 	"golang.org/x/exp/slices"
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/wildcard"
 )
 
 type Auditor interface {
@@ -54,15 +57,6 @@ func NewAuditFilter(auditor Auditor, sink AuditSink) Filter {
 		next.ServeHTTP(ww, r)
 		auditor.OnResponse(ww, r, auditlog)
 		_ = sink.Save(auditlog)
-	})
-}
-
-func NewCompleteAuditLogSubjectFilter() Filter {
-	return FilterFunc(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if auditlog := AuditLogFromContext(r.Context()); auditlog != nil {
-			auditlog.Subject = AuthenticateFromContext(r.Context()).User.Name
-		}
-		next.ServeHTTP(w, r)
 	})
 }
 
@@ -137,22 +131,23 @@ func (c *CachedAuditSink) Save(log *AuditLog) error {
 
 const MB = 1 << 20
 
-type SimpleAuditor struct {
-	RecordReadBody                bool     // Record read actions
-	RecordRequestBodyContentTypes []string // Record only for these content types
-	MaxBodySize                   int      // Max body size to record,0 means disable
-	WhiteList                     []string // White list
+type AuditOptions struct {
+	RecordMethods             []string
+	RecordRequestContentTypes []string
+	RecordRequestBody         bool
+	RecordResponseBody        bool
+	MaxRecordBodySize         int
+	WhiteList                 []string // list of paths to exclude from audit, allow wildcard
 }
 
-func NewSimpleAuditor() *SimpleAuditor {
-	return &SimpleAuditor{
-		RecordReadBody: false,
-		RecordRequestBodyContentTypes: []string{
-			"application/json",
-			"application/xml",
-			"application/x-www-form-urlencoded",
-		},
-		MaxBodySize: 1 * MB,
+func NewDefaultAuditOptions() *AuditOptions {
+	return &AuditOptions{
+		RecordMethods:             []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
+		RecordRequestContentTypes: []string{"application/json", "application/xml", "application/x-www-form-urlencoded"},
+		RecordRequestBody:         true,
+		RecordResponseBody:        true,
+		MaxRecordBodySize:         1 * MB,
+		WhiteList:                 []string{},
 	}
 }
 
@@ -189,6 +184,7 @@ type AuditResponse struct {
 type AuditExtraMetadata map[string]string
 
 type AuditLog struct {
+	RequestID string `json:"requestID,omitempty"` // request id
 	// request
 	Request  AuditRequest  `json:"request,omitempty"`
 	Response AuditResponse `json:"response,omitempty"`
@@ -218,8 +214,63 @@ func AuditLogFromContext(ctx context.Context) *AuditLog {
 	return GetContextValue[*AuditLog](ctx, "audit-log")
 }
 
+// AddAuditLogExtra adds extra metadata to the audit log.
+func AddAuditLogExtra(r *http.Request, key string, value string) {
+	if log := AuditLogFromContext(r.Context()); log != nil {
+		if log.Extra == nil {
+			log.Extra = make(AuditExtraMetadata)
+		}
+		log.Extra[key] = value
+	}
+}
+
+const RequestIDHeader = "X-Request-ID"
+
+func NewSimpleAuditFilter(sink AuditSink, options *AuditOptions) *SimpleAuditor {
+	return &SimpleAuditor{Sink: sink, Options: options}
+}
+
+type SimpleAuditor struct {
+	Sink    AuditSink
+	Options *AuditOptions
+}
+
+func (a *SimpleAuditor) Process(w http.ResponseWriter, r *http.Request, next http.Handler) {
+	uid := r.Header.Get(RequestIDHeader)
+	if uid == "" {
+		uid = uuid.NewString()
+		r.Header.Set(RequestIDHeader, uid)
+	}
+	if !slices.Contains(a.Options.RecordMethods, r.Method) {
+		next.ServeHTTP(w, r)
+		return
+	}
+	for _, path := range a.Options.WhiteList {
+		if wildcard.Match(path, r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+	}
+	ww, auditlog := a.OnRequest(w, r)
+	if auditlog == nil {
+		next.ServeHTTP(ww, r)
+		return
+	}
+	if ww == nil {
+		ww = w
+	}
+	// save audit log to context
+	r = r.WithContext(WithAuditLog(r.Context(), auditlog))
+	next.ServeHTTP(ww, r)
+	a.OnResponse(ww, r, auditlog)
+	if err := a.Sink.Save(auditlog); err != nil {
+		log.FromContext(r.Context()).Error(err, "save audit log")
+	}
+}
+
 func (a *SimpleAuditor) OnRequest(w http.ResponseWriter, r *http.Request) (http.ResponseWriter, *AuditLog) {
 	auditlog := &AuditLog{
+		RequestID: r.Header.Get(RequestIDHeader),
 		Request: AuditRequest{
 			HttpVersion: r.Proto,
 			Method:      r.Method,
@@ -229,15 +280,21 @@ func (a *SimpleAuditor) OnRequest(w http.ResponseWriter, r *http.Request) (http.
 		},
 		StartTime: time.Now(),
 	}
-	respcachesize := 0
+	if a.Options.RecordRequestBody {
+		auditlog.Request.Body = ReadBodySafely(r, a.Options.RecordRequestContentTypes, a.Options.MaxRecordBodySize)
+	}
+
 	var responseBodyCache *bytes.Buffer
-	if a.RecordReadBody || r.Method != http.MethodGet {
-		auditlog.Request.Body = ReadBodySafely(r, a.RecordRequestBodyContentTypes, a.MaxBodySize)
-		respcachesize = a.MaxBodySize
+	respcachesize := 0
+	if a.Options.RecordResponseBody {
+		respcachesize = a.Options.MaxRecordBodySize
 	}
 	w = httpsnoop.Wrap(w, httpsnoop.Hooks{
 		WriteHeader: func(whf httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
 			return func(code int) {
+				if code == 0 {
+					code = http.StatusOK
+				}
 				auditlog.Response.StatusCode = code
 				whf(code)
 			}
@@ -250,9 +307,16 @@ func (a *SimpleAuditor) OnRequest(w http.ResponseWriter, r *http.Request) (http.
 		},
 		Write: func(wf httpsnoop.WriteFunc) httpsnoop.WriteFunc {
 			return func(p []byte) (int, error) {
+				// Write before WriteHeader
+				if auditlog.Response.StatusCode == 0 {
+					auditlog.Response.StatusCode = http.StatusOK
+				}
 				if respcachesize > 0 {
 					if responseBodyCache == nil {
 						responseBodyCache = bytes.NewBuffer(nil)
+					}
+					if len(p) > respcachesize {
+						p = p[:respcachesize]
 					}
 					n, _ := responseBodyCache.Write(p)
 					respcachesize -= n
@@ -265,16 +329,11 @@ func (a *SimpleAuditor) OnRequest(w http.ResponseWriter, r *http.Request) (http.
 }
 
 func (a *SimpleAuditor) OnResponse(w http.ResponseWriter, r *http.Request, auditlog *AuditLog) {
-	if auditlog == nil {
-		return
-	}
-	if auditlog := AuditLogFromContext(r.Context()); auditlog != nil {
-		if attr := AttributesFromContext(r.Context()); attr != nil {
-			auditlog.Action = attr.Action
-			if size := len(attr.Resources); size > 0 {
-				parents, last := attr.Resources[:size-1], attr.Resources[size-1]
-				auditlog.Parents, auditlog.ResourceType, auditlog.ResourceName = parents, last.Resource, last.Name
-			}
+	if attr := AttributesFromContext(r.Context()); attr != nil {
+		auditlog.Action = attr.Action
+		if size := len(attr.Resources); size > 0 {
+			parents, last := attr.Resources[:size-1], attr.Resources[size-1]
+			auditlog.Parents, auditlog.ResourceType, auditlog.ResourceName = parents, last.Resource, last.Name
 		}
 	}
 	if username := AuthenticateFromContext(r.Context()).User.Name; username != "" {
@@ -282,6 +341,11 @@ func (a *SimpleAuditor) OnResponse(w http.ResponseWriter, r *http.Request, audit
 	}
 	auditlog.EndTime = time.Now()
 	auditlog.Response.Header = HttpHeaderToMap(w.Header())
+
+	// if not call WriteHeader, set status code to 200
+	if code := auditlog.Response.StatusCode; code == 0 {
+		auditlog.Response.StatusCode = http.StatusOK
+	}
 }
 
 func ExtractClientIP(r *http.Request) string {
@@ -305,12 +369,11 @@ func HttpHeaderToMap(header http.Header) map[string]string {
 
 func ReadBodySafely(req *http.Request, allowsContentType []string, maxReadSize int) []byte {
 	contenttype, contentlen := req.Header.Get("Content-Type"), req.ContentLength
-	if contenttype == "" || contentlen == 0 {
+	if contenttype == "" || contentlen == 0 || maxReadSize <= 0 {
 		return nil
 	}
-	allowed := slices.ContainsFunc(allowsContentType, func(s string) bool {
-		return strings.HasPrefix(contenttype, s)
-	})
+	mediatype, _, _ := mime.ParseMediaType(contenttype)
+	allowed := slices.Contains(allowsContentType, mediatype)
 	if !allowed {
 		return nil
 	}

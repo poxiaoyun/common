@@ -20,7 +20,7 @@ type LeaderElection interface {
 }
 
 type Lease struct {
-	store.ObjectMeta     `json:"metadata,omitempty"`
+	store.ObjectMeta     `json:",inline"`
 	HolderIdentity       string     `json:"holderIdentity"`
 	LeaseDurationSeconds int        `json:"leaseDurationSeconds"`
 	AcquireTime          store.Time `json:"acquireTime"`

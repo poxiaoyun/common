@@ -20,6 +20,14 @@ func (f SourceFunc[K]) Run(ctx context.Context, queue TypedQueue[K]) error {
 }
 
 func NewStoreSource(storage store.Store, example store.Object) *StoreSource {
+	return NewCustomStoreSource(storage, example, func(ctx context.Context, kind store.WatchEventType, obj store.Object) ([]ScopedKey, error) {
+		return []ScopedKey{
+			{Name: obj.GetName(), Resource: obj.GetResource(), Scopes: obj.GetScopes()},
+		}, nil
+	})
+}
+
+func NewCustomStoreSource(storage store.Store, example store.Object, keyfunc KeyFunc) *StoreSource {
 	resource, err := store.GetResource(example)
 	if err != nil {
 		panic(err)
@@ -27,20 +35,16 @@ func NewStoreSource(storage store.Store, example store.Object) *StoreSource {
 	return &StoreSource{
 		Store:    storage,
 		Resource: resource,
-		KeyFunc: func(obj store.Object) ScopedKey {
-			return ScopedKey{
-				Name:     obj.GetName(),
-				Resource: obj.GetResource(),
-				Scopes:   obj.GetScopes(),
-			}
-		},
+		KeyFunc:  keyfunc,
 	}
 }
+
+type KeyFunc func(ctx context.Context, kind store.WatchEventType, obj store.Object) ([]ScopedKey, error)
 
 type StoreSource struct {
 	store.Store
 	Resource string
-	KeyFunc  func(obj store.Object) ScopedKey
+	KeyFunc  KeyFunc
 }
 
 func (s *StoreSource) Run(ctx context.Context, queue TypedQueue[*ScopedKey]) error {
@@ -50,8 +54,14 @@ func (s *StoreSource) Run(ctx context.Context, queue TypedQueue[*ScopedKey]) err
 	return RunListWatchContext(ctx, s.Store, s.Resource, EventHandlerFunc[*store.Unstructured](func(ctx context.Context, kind store.WatchEventType, obj *store.Unstructured) error {
 		logger.Info("event", "kind", kind, "name", obj.GetName())
 
-		key := s.KeyFunc(obj)
-		queue.Add(&key)
+		keys, err := s.KeyFunc(ctx, kind, obj)
+		if err != nil {
+			logger.Error(err, "key error")
+			return nil
+		}
+		for i := range keys {
+			queue.Add(&keys[i])
+		}
 		return nil
 	}))
 }

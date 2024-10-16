@@ -12,6 +12,49 @@ import (
 	"xiaoshiai.cn/common/errors"
 )
 
+type ObjectReference struct {
+	Name   string  `json:"name,omitempty"`
+	Scopes []Scope `json:"scopes,omitempty"`
+}
+
+func ObjectReferenceFrom(obj Object) ObjectReference {
+	return ObjectReference{
+		Name:   obj.GetName(),
+		Scopes: obj.GetScopes(),
+	}
+}
+
+func (r ObjectReference) String() string {
+	key := ""
+	for _, scope := range r.Scopes {
+		key += "/" + scope.Resource + "/" + scope.Name
+	}
+	key += "/" + r.Name
+	return key
+}
+
+type ResourcedObjectReference struct {
+	ObjectReference `json:",inline"`
+	Resource        string `json:"resource,omitempty"`
+}
+
+func (r ResourcedObjectReference) String() string {
+	key := ""
+	for _, scope := range r.Scopes {
+		key += "/" + scope.Resource + "/" + scope.Name
+	}
+	key += "/" + r.Resource
+	key += "/" + r.Name
+	return key
+}
+
+func ResourcedObjectReferenceFrom(obj Object) ResourcedObjectReference {
+	return ResourcedObjectReference{
+		ObjectReference: ObjectReferenceFrom(obj),
+		Resource:        obj.GetResource(),
+	}
+}
+
 func ObjectIdentity(obj Object) string {
 	key := ""
 	for _, scope := range obj.GetScopes() {
