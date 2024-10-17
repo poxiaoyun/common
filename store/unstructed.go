@@ -21,6 +21,16 @@ type Unstructured struct {
 	Object map[string]any
 }
 
+// GetVersion implements Object.
+func (u *Unstructured) GetAPIVersion() string {
+	return GetNestedString(u.Object, "apiVersion")
+}
+
+// SetVersion implements Object.
+func (u *Unstructured) SetAPIVersion(ver string) {
+	SetNestedField(u.Object, ver, "apiVersion")
+}
+
 // GetAlias implements Object.
 func (u *Unstructured) GetAlias() string {
 	return GetNestedString(u.Object, "alias")
@@ -428,7 +438,6 @@ func (u *Unstructured) UnmarshalJSON(data []byte) error {
 func (u *Unstructured) MarshalJSON() ([]byte, error) {
 	return json.Marshal(u.Object)
 }
-
 
 func CompareUnstructuredField(a, b *Unstructured, sorts []sortBy) int {
 	for _, sort := range sorts {

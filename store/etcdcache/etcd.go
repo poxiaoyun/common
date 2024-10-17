@@ -538,6 +538,8 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 			if err != nil {
 				return nil, nil, err
 			}
+			// resource can not be changed
+			newuns.GetObjectKind().SetGroupVersionKind(current.GetObjectKind().GroupVersionKind())
 			// restore ignored fields
 			if ignoreStatus {
 				// keep status field

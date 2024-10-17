@@ -21,6 +21,7 @@ type Object interface {
 
 	GetResource() string
 	SetResource(string)
+
 	GetScopes() []Scope
 	SetScopes([]Scope)
 	GetResourceVersion() int64
@@ -86,6 +87,7 @@ var _ Object = &ObjectMeta{}
 type ObjectMeta struct {
 	Name              string            `json:"name,omitempty" validate:"name"`
 	UID               string            `json:"uid,omitempty"`
+	APIVersion        string            `json:"apiVersion,omitempty"`
 	Scopes            []Scope           `json:"scopes,omitempty"`
 	Resource          string            `json:"resource,omitempty"`
 	ResourceVersion   int64             `json:"resourceVersion,omitempty"`
@@ -97,6 +99,16 @@ type ObjectMeta struct {
 	OwnerReferences   []OwnerReference  `json:"ownerReferences,omitempty"`
 	Description       string            `json:"description,omitempty"`
 	Alias             string            `json:"alias,omitempty"`
+}
+
+// GetVersion implements Object.
+func (o *ObjectMeta) GetAPIVersion() string {
+	return o.APIVersion
+}
+
+// SetVersion implements Object.
+func (o *ObjectMeta) SetAPIVersion(version string) {
+	o.APIVersion = version
 }
 
 // GetAlias implements Object.
