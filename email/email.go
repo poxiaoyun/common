@@ -13,8 +13,8 @@ import (
 )
 
 type EmailAddress struct {
-	Name  string
-	Email string
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
 }
 
 // String returns the email address in the format "Name <email>"

@@ -186,9 +186,7 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 
 // Delete implements store.Store.
 func (c *generic) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
-	options := store.DeleteOptions{
-		PropagationPolicy: ptr.To(store.DeletePropagationForeground),
-	}
+	options := store.DeleteOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
@@ -198,23 +196,19 @@ func (c *generic) Delete(ctx context.Context, obj store.Object, opts ...store.De
 	}
 	updatefunc := func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error) {
 		// update finalizers
+		nogcFinalizers := slices.DeleteFunc(current.GetFinalizers(), func(finalizer string) bool {
+			return finalizer == store.FinalizerDeleteDependents || finalizer == store.FinalizerOrphanDependents
+		})
+		var gcFinalizers []string
 		if options.PropagationPolicy != nil {
-			gcFinalizers := []string{}
 			switch *options.PropagationPolicy {
 			case store.DeletePropagationForeground:
 				gcFinalizers = append(gcFinalizers, store.FinalizerDeleteDependents)
 			}
-			nogcFinalizers := slices.DeleteFunc(current.GetFinalizers(), func(finalizer string) bool {
-				return finalizer == store.FinalizerDeleteDependents
-			})
-			finalizers := append(nogcFinalizers, gcFinalizers...)
-			current.SetFinalizers(finalizers)
-			unstructured.SetNestedStringSlice(current.Object, finalizers, "finalizers")
 		}
+		current.SetFinalizers(append(nogcFinalizers, gcFinalizers...))
 		if current.GetDeletionTimestamp() == nil {
-			now := metav1.Now()
-			current.SetDeletionTimestamp(ptr.To(now))
-			unstructured.SetNestedField(current.Object, now.Format(time.RFC3339), "deletionTimestamp")
+			current.SetDeletionTimestamp(ptr.To(metav1.Now()))
 		}
 		return current, nil
 	}
