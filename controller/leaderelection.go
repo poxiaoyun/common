@@ -200,7 +200,11 @@ func (le *StorageLeaderElectionLock) tryAcquireOrRenew(ctx context.Context) bool
 	}
 
 	// 3. Record obtained, check the Identity & Time
-	le.setObservedRecord(oldLeaderElectionRecord)
+	// only use the expire time to check if the lease is valid
+	// in case of the clock is not monotonic
+	if le.getObservedRecord().ResourceVersion != oldLeaderElectionRecord.ResourceVersion {
+		le.setObservedRecord(oldLeaderElectionRecord)
+	}
 	if len(oldLeaderElectionRecord.HolderIdentity) > 0 && le.isLeaseValid(now) && !le.IsLeader() {
 		klog.V(4).Infof("lock is held by %v and has not yet expired", oldLeaderElectionRecord.HolderIdentity)
 		return false
