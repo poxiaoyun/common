@@ -61,6 +61,8 @@ type ObjectList interface {
 // +k8s:openapi-gen=true
 type Time = metav1.Time
 
+type Duration = metav1.Duration
+
 func Now() Time {
 	return Time(metav1.Now())
 }
