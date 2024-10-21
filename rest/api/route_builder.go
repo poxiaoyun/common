@@ -25,7 +25,7 @@ type Route struct {
 	OperationName  string
 	Path           string
 	Method         string
-	Deprecated     bool
+	IsDeprecated   bool
 	Handler        http.Handler
 	Filters        Filters
 	Tags           []string
@@ -108,6 +108,11 @@ func (n Route) Doc(summary string) Route {
 
 func (n Route) Operation(operation string) Route {
 	n.OperationName = operation
+	return n
+}
+
+func (n Route) Deprecated() Route {
+	n.IsDeprecated = true
 	return n
 }
 

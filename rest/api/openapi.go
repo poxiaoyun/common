@@ -114,7 +114,7 @@ func buildRouteOperation(route Route, builder *openapi.Builder) *spec.Operation 
 			Description: route.Summary,
 			Consumes:    route.Consumes,
 			Produces:    route.Produces,
-			Deprecated:  route.Deprecated,
+			Deprecated:  route.IsDeprecated,
 			Parameters: func() []spec.Parameter {
 				var parameters []spec.Parameter
 				for _, param := range route.Params {
