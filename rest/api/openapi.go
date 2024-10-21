@@ -131,8 +131,9 @@ func buildRouteOperation(route Route, builder *openapi.Builder) *spec.Operation 
 							Pattern: param.PatternExpr,
 						},
 						SimpleSchema: spec.SimpleSchema{
-							Type:    param.Type,
+							Type:    param.DataType,
 							Default: param.Default,
+							Format:  param.DataFormat,
 						},
 					})
 				}

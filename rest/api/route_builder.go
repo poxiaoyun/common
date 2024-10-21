@@ -170,7 +170,8 @@ const (
 type Param struct {
 	Name          string
 	Kind          ParamKind
-	Type          string
+	DataType      string
+	DataFormat    string
 	Enum          []any
 	Default       any
 	IsOptional    bool
@@ -189,11 +190,11 @@ func FormParam(name string, description string) Param {
 }
 
 func PathParam(name string, description string) Param {
-	return Param{Kind: ParamKindPath, Type: "string", Name: name, Description: description}
+	return Param{Kind: ParamKindPath, DataType: "string", Name: name, Description: description}
 }
 
 func QueryParam(name string, description string) Param {
-	return Param{Kind: ParamKindQuery, Type: "string", Name: name, Description: description}
+	return Param{Kind: ParamKindQuery, DataType: "string", Name: name, Description: description}
 }
 
 func (p Param) Optional() Param {
@@ -206,8 +207,8 @@ func (p Param) Desc(desc string) Param {
 	return p
 }
 
-func (p Param) DataType(t string) Param {
-	p.Type = t
+func (p Param) Type(t string) Param {
+	p.DataType = t
 	return p
 }
 
@@ -223,6 +224,11 @@ func (p Param) Def(def string) Param {
 
 func (p Param) Pattern(pattern string) Param {
 	p.PatternExpr = pattern
+	return p
+}
+
+func (p Param) Format(format string) Param {
+	p.DataFormat = format
 	return p
 }
 

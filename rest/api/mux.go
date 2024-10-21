@@ -144,9 +144,9 @@ func completePathParam(route *Route, sections []matcher.Section) {
 					continue
 				}
 				param := Param{
-					Name: elem.VarName,
-					Kind: ParamKindPath,
-					Type: "string",
+					Name:     elem.VarName,
+					Kind:     ParamKindPath,
+					DataType: "string",
 				}
 				if elem.Validate != nil {
 					param.PatternExpr = elem.Validate.String()
