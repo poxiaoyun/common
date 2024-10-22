@@ -120,7 +120,8 @@ func (h *TypedController[T]) Name() string {
 }
 
 func (h *TypedController[T]) Run(ctx context.Context) error {
-	log := log.FromContext(ctx).WithValues("name", h.name)
+	ctx = log.NewContext(ctx, log.FromContext(ctx).WithName(h.name))
+	log := log.FromContext(ctx)
 	if h.options.LeaderElection != nil {
 		return h.options.LeaderElection.OnLeader(ctx, h.name, 30*time.Second, func(ctx context.Context) error {
 			log.Info("starting controller on leader")
@@ -173,8 +174,7 @@ func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], sy
 						queue.Done(val)
 						return
 					}
-					thisctx := log.NewContext(ctx, logger)
-					if err := syncfunc(thisctx, val); err != nil {
+					if err := syncfunc(ctx, val); err != nil {
 						logger.Error(err, "sync error")
 						// requeue
 						retry := ReQueueError{}

@@ -18,7 +18,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -27,27 +29,28 @@ import (
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/engine"
+	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/releaseutil"
+	"helm.sh/helm/v3/pkg/time"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-
 	"sigs.k8s.io/yaml"
 )
 
 type Options struct {
 	Config    *rest.Config
 	IsUpgrade bool
+	DebugOut  io.Writer // DebugOut is used to write debug information when templating
 }
 
-func Template(ctx context.Context, name, namespace string, chart *chart.Chart, values map[string]any, options Options) ([]byte, error) {
+func Template(ctx context.Context, name, namespace string, chart *chart.Chart, values map[string]any, options Options) (*release.Release, error) {
 	rlsopt := chartutil.ReleaseOptions{
 		Name:      name,
 		Namespace: namespace,
 		IsInstall: !options.IsUpgrade,
 	}
-
 	var dc discovery.DiscoveryInterface
 	if options.Config != nil {
 		cs, err := kubernetes.NewForConfig(options.Config)
@@ -56,7 +59,6 @@ func Template(ctx context.Context, name, namespace string, chart *chart.Chart, v
 		}
 		dc = memory.NewMemCacheClient(cs)
 	}
-
 	caps := chartutil.DefaultCapabilities
 	if dc != nil {
 		kubeVersion, err := dc.ServerVersion()
@@ -74,43 +76,71 @@ func Template(ctx context.Context, name, namespace string, chart *chart.Chart, v
 			Minor:   kubeVersion.Minor,
 		}
 	}
-
-	if err := chartutil.ProcessDependencies(chart, values); err != nil {
+	if chartkubeversion := chart.Metadata.KubeVersion; chartkubeversion != "" {
+		if !chartutil.IsCompatibleRange(chartkubeversion, caps.KubeVersion.String()) {
+			return nil, fmt.Errorf("chart requires kubeVersion: %s which is incompatible with Kubernetes %s", chartkubeversion, caps.KubeVersion.String())
+		}
+	}
+	if err := chartutil.ProcessDependenciesWithMerge(chart, values); err != nil {
 		return nil, err
 	}
+	// render the chart
 	valuesToRender, err := chartutil.ToRenderValues(chart, values, rlsopt, caps)
 	if err != nil {
 		return nil, err
 	}
-
-	var renderdFiles map[string]string
-	if options.Config != nil {
-		renderdFiles, err = engine.RenderWithClient(chart, valuesToRender, options.Config)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		renderdFiles, err = engine.Render(chart, valuesToRender)
-		if err != nil {
-			return nil, err
-		}
+	eng := engine.Engine{}
+	if restconfig := options.Config; restconfig != nil {
+		eng = engine.New(restconfig)
 	}
-
-	for k := range renderdFiles {
-		if strings.HasSuffix(k, "NOTES.txt") {
-			delete(renderdFiles, k)
-		}
-	}
-
-	_, manifests, err := releaseutil.SortManifests(renderdFiles, caps.APIVersions, releaseutil.InstallOrder)
+	eng.EnableDNS = true
+	renderdFiles, err := eng.Render(chart, valuesToRender)
 	if err != nil {
-		out := os.Stderr
-		for file, val := range renderdFiles {
-			fmt.Fprintf(out, "---\n# Source: %s\n%s\n", file, val)
-		}
-		fmt.Fprintln(out, "---")
 		return nil, err
 	}
+	// parse results
+	ts := time.Now()
+	rls := &release.Release{
+		Name:      name,
+		Namespace: namespace,
+		Chart:     chart,
+		Config:    values,
+		Info: &release.Info{
+			FirstDeployed: ts,
+			LastDeployed:  ts,
+			Status:        release.StatusUnknown,
+		},
+		Version: 1,
+	}
+	// parse notes
+	const notesFileSuffix = "NOTES.txt"
+	var notesBuffer bytes.Buffer
+	for filename, filecontent := range renderdFiles {
+		if !strings.HasSuffix(filename, notesFileSuffix) {
+			continue
+		}
+		if filename == path.Join(chart.Name(), "templates", notesFileSuffix) {
+			// If buffer contains data, add newline before adding more
+			if notesBuffer.Len() > 0 {
+				notesBuffer.WriteString("\n")
+			}
+			notesBuffer.WriteString(filecontent)
+		}
+		delete(renderdFiles, filename)
+	}
+	rls.Info.Notes = notesBuffer.String()
+	hs, manifests, err := releaseutil.SortManifests(renderdFiles, caps.APIVersions, releaseutil.InstallOrder)
+	if err != nil {
+		if out := options.DebugOut; out != nil {
+			for file, val := range renderdFiles {
+				fmt.Fprintf(out, "---\n# Source: %s\n%s\n", file, val)
+			}
+			fmt.Fprintln(out, "---")
+		}
+		return nil, err
+	}
+	rls.Hooks = hs
+
 	out := bytes.NewBuffer(nil)
 	for _, crd := range chart.CRDObjects() {
 		fmt.Fprintf(out, "---\n# Source: %s\n%s\n", crd.Name, string(crd.File.Data[:]))
@@ -118,7 +148,8 @@ func Template(ctx context.Context, name, namespace string, chart *chart.Chart, v
 	for _, m := range manifests {
 		fmt.Fprintf(out, "---\n# Source: %s\n%s\n", m.Name, m.Content)
 	}
-	return out.Bytes(), nil
+	rls.Manifest = out.String()
+	return rls, nil
 }
 
 const chartFileName = "Chart.yaml"

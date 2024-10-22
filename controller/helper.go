@@ -8,7 +8,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kubeyaml "k8s.io/apimachinery/pkg/util/yaml"
-	"xiaoshiai.cn/common/store"
 )
 
 func SplitYAMLPartialObject(data []byte) ([]*metav1.PartialObjectMetadata, error) {
@@ -47,25 +46,6 @@ func SplitYAML(data []byte) ([]unstructured.Unstructured, error) {
 			continue // skip empty object
 		}
 		objs = append(objs, *u)
-	}
-	return objs, nil
-}
-
-func SplitYAMLStoreUnstructured(data []byte) ([]*store.Unstructured, error) {
-	d := kubeyaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), ReadCache)
-	var objs []*store.Unstructured
-	for {
-		u := &store.Unstructured{}
-		if err := d.Decode(u); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return objs, fmt.Errorf("failed to unmarshal manifest: %v", err)
-		}
-		if u.Object == nil || len(u.Object) == 0 {
-			continue // skip empty object
-		}
-		objs = append(objs, u)
 	}
 	return objs, nil
 }

@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -60,9 +61,10 @@ func TemplateChart(ctx context.Context, rlsname, namespace string, chart *chart.
 }
 
 type ApplyChartOptions struct {
-	FileOverrides map[string][]byte
-	Values        map[string]any
-	Auth          AuthOptions
+	FileOverrides  map[string][]byte
+	Values         map[string]any
+	Auth           AuthOptions
+	PostRenderFunc PostRenderFunc
 }
 
 func ApplyChartFromImage(ctx context.Context, cfg *rest.Config, image, version string,
@@ -137,6 +139,8 @@ func ApplyChart(ctx context.Context,
 		install := action.NewInstall(helmcfg)
 		install.ReleaseName, install.Namespace = rlsname, rlsnamespace
 		install.CreateNamespace = true
+		install.PostRenderer = options.PostRenderFunc
+		install.EnableDNS = true
 		rls, err := install.RunWithContext(ctx, chart, values)
 		if err != nil {
 			return nil, false, err
@@ -154,11 +158,9 @@ func ApplyChart(ctx context.Context,
 	client := action.NewUpgrade(helmcfg)
 	client.Namespace = rlsnamespace
 	client.ResetValues = true
-	// client.MaxHistory = 5  // there is a bug,do not use it.
-
-	const historiesLimit = 2
-	// removeHistories(ctx, helmcfg.Releases, rlsname, historiesLimit)
-
+	client.PostRenderer = options.PostRenderFunc
+	client.EnableDNS = true
+	client.MaxHistory = 5
 	rls, err := client.RunWithContext(ctx, rlsname, chart, values)
 	if err != nil {
 		return nil, false, err
@@ -249,4 +251,10 @@ func RemoveChart(ctx context.Context, cfg *rest.Config, rlsname, namespace strin
 		return nil, err
 	}
 	return uninstalledRelease.Release, nil
+}
+
+type PostRenderFunc func(renderedManifests *bytes.Buffer) (modifiedManifests *bytes.Buffer, err error)
+
+func (f PostRenderFunc) Run(renderedManifests *bytes.Buffer) (modifiedManifests *bytes.Buffer, err error) {
+	return f(renderedManifests)
 }
