@@ -243,14 +243,15 @@ func (p Param) Multiple() Param {
 }
 
 type Group struct {
-	Path      string
-	Filters   Filters
-	Tags      []string
-	Params    []Param // common params apply to all routes in the group
-	Routes    []Route
-	SubGroups []Group // sub groups
-	Consumes  []string
-	Produces  []string
+	Path        string
+	IsDeprcated bool
+	Filters     Filters
+	Tags        []string
+	Params      []Param // common params apply to all routes in the group
+	Routes      []Route
+	SubGroups   []Group // sub groups
+	Consumes    []string
+	Produces    []string
 }
 
 func NewGroup(path string) Group {
@@ -289,6 +290,11 @@ func (g Group) Param(params ...Param) Group {
 	return g
 }
 
+func (g Group) Deprecated() Group {
+	g.IsDeprcated = true
+	return g
+}
+
 func (g Group) Filter(filters ...Filter) Group {
 	g.Filters = append(g.Filters, filters...)
 	return g
@@ -316,6 +322,9 @@ func buildRoutes(items map[string]map[string]Route, merged Group, group Group) {
 		route.Consumes = append(group.Consumes, route.Consumes...)
 		route.Produces = append(group.Produces, route.Produces...)
 		route.Filters = append(merged.Filters, route.Filters...)
+		if !route.IsDeprecated && group.IsDeprcated {
+			route.IsDeprecated = true
+		}
 		pathmethods, ok := items[route.Path]
 		if !ok {
 			pathmethods = map[string]Route{}
