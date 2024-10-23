@@ -15,6 +15,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
@@ -24,7 +25,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
-	genericregistry "k8s.io/apiserver/pkg/registry/generic/registry"
 	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/apiserver/pkg/storage"
 	cacherstorage "k8s.io/apiserver/pkg/storage/cacher"
@@ -543,7 +543,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 			if deletionTimestamp != nil {
 				newuns.SetDeletionTimestamp(deletionTimestamp)
 			}
-			if genericregistry.ShouldDeleteDuringUpdate(ctx, key, newuns, current) {
+			if ShouldDeleteDuringUpdate(ctx, key, newuns, current) {
 				return newuns, nil, errShouldDelete
 			}
 			return newuns, nil, nil
@@ -570,6 +570,17 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 		ConvertFromUnstructured(out, obj)
 		return nil
 	})
+}
+
+func ShouldDeleteDuringUpdate(ctx context.Context, key string, obj, existing runtime.Object) bool {
+	newMeta, err := meta.Accessor(obj)
+	if err != nil {
+		return false
+	}
+	if len(newMeta.GetFinalizers()) > 0 {
+		return false
+	}
+	return true
 }
 
 func (e *core) validateObject(obj any) error {
