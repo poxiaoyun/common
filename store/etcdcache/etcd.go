@@ -580,6 +580,9 @@ func ShouldDeleteDuringUpdate(ctx context.Context, key string, obj, existing run
 	if len(newMeta.GetFinalizers()) > 0 {
 		return false
 	}
+	if newMeta.GetDeletionTimestamp() == nil {
+		return false
+	}
 	return true
 }
 
