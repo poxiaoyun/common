@@ -34,8 +34,9 @@ func (r ObjectReference) String() string {
 }
 
 type ResourcedObjectReference struct {
-	ObjectReference `json:",inline"`
-	Resource        string `json:"resource,omitempty"`
+	Name     string  `json:"name,omitempty"`
+	Scopes   []Scope `json:"scopes,omitempty"`
+	Resource string  `json:"resource,omitempty"`
 }
 
 func (r ResourcedObjectReference) String() string {
@@ -50,8 +51,9 @@ func (r ResourcedObjectReference) String() string {
 
 func ResourcedObjectReferenceFrom(obj Object) ResourcedObjectReference {
 	return ResourcedObjectReference{
-		ObjectReference: ObjectReferenceFrom(obj),
-		Resource:        obj.GetResource(),
+		Name:     obj.GetName(),
+		Scopes:   obj.GetScopes(),
+		Resource: obj.GetResource(),
 	}
 }
 
@@ -324,4 +326,8 @@ func SortByFunc[T any](by string, getname func(T) string, gettime func(T) time.T
 	default:
 		return nil
 	}
+}
+
+func NewTimeAsName() string {
+	return time.Now().Format("20060102150405")
 }
