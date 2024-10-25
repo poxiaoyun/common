@@ -524,7 +524,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 			if err := ConvertFromUnstructured(current, unsobj); err != nil {
 				return nil, nil, err
 			}
-			scopes, name, uid := unsobj.GetScopes(), unsobj.GetName(), unsobj.GetUID()
+			scopes, name, uid, creation := unsobj.GetScopes(), unsobj.GetName(), unsobj.GetUID(), unsobj.GetCreationTimestamp()
 			unsobjchanged, err := fn(ctx, unsobj)
 			if err != nil {
 				return nil, nil, err
@@ -534,6 +534,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 			unsobjchanged.SetName(name)
 			unsobjchanged.SetUID(uid)
 			unsobjchanged.SetResource(db.resource.String())
+			unsobjchanged.SetCreationTimestamp(creation)
 
 			newuns, err := ConvertToUnstructured(unsobjchanged)
 			if err != nil {
