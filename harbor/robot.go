@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+
+	"xiaoshiai.cn/common/errors"
 )
 
 type ListRobotOptions struct {
@@ -146,6 +148,24 @@ func (c *Client) GetProjectRobotAccount(ctx context.Context, project string, id 
 		return nil, err
 	}
 	return &r, nil
+}
+
+func (c *Client) GetProjectRobotAccountByName(ctx context.Context, project string, name string) (*Robot, error) {
+	encodedname := fmt.Sprintf("%s+%s", project, name)
+	opt := ListRobotOptions{
+		CommonOptions: CommonOptions{Q: fmt.Sprintf("name=%s", encodedname)},
+	}
+	robots, err := c.ListProjectRobotAccounts(ctx, project, opt)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, robot := range robots {
+		if robot.Name == "robot$"+encodedname {
+			return &robot, nil
+		}
+	}
+	return nil, errors.NewNotFound("robot account", name)
 }
 
 func (c *Client) DeleteProjectRobotAccount(ctx context.Context, project string, id int) error {
