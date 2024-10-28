@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	corev1 "k8s.io/api/core/v1"
+	httpstreamspdy "k8s.io/apimachinery/pkg/util/httpstream/spdy"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
@@ -15,18 +18,44 @@ import (
 	"xiaoshiai.cn/common/log"
 )
 
-func NewPodExecutor(cs kubernetes.Interface, config *rest.Config,
-	namespace, name string, options *corev1.PodExecOptions,
-) (remotecommand.Executor, error) {
-	req := cs.CoreV1().
-		RESTClient().
-		Post().
+func NewPodExecutRequest(cs kubernetes.Interface, namesapce, name string, options *corev1.PodExecOptions) *rest.Request {
+	req := cs.CoreV1().RESTClient().Post().
 		Resource("pods").
-		Namespace(namespace).
+		Namespace(namesapce).
 		Name(name).
 		SubResource("exec").
 		VersionedParams(options, kubectlscheme.ParameterCodec)
+	return req
+}
+
+func NewPodExecutor(cs kubernetes.Interface, config *rest.Config,
+	namespace, name string, options *corev1.PodExecOptions,
+) (remotecommand.Executor, error) {
+	req := NewPodExecutRequest(cs, namespace, name, options)
 	return remotecommand.NewSPDYExecutor(config, "POST", req.URL())
+}
+
+func NewPodExecutorWithHttpTransport(cs kubernetes.Interface, config *rest.Config, tranport http.RoundTripper,
+	namespace, name string, options *corev1.PodExecOptions,
+) (remotecommand.Executor, error) {
+	upgradeRoundTripper, err := httpstreamspdy.NewRoundTripperWithConfig(httpstreamspdy.RoundTripperConfig{
+		PingPeriod:       time.Second * 5,
+		UpgradeTransport: tranport,
+	})
+	if err != nil {
+		return nil, err
+	}
+	wrapper, err := rest.HTTPWrappersForConfig(config, upgradeRoundTripper)
+	if err != nil {
+		return nil, err
+	}
+	req := NewPodExecutRequest(cs, namespace, name, options)
+	return remotecommand.NewSPDYExecutorForTransports(wrapper, upgradeRoundTripper, "POST", req.URL())
+}
+
+func NewWebSocketExecutor(cs kubernetes.Interface, config *rest.Config, namespace, name string, options *corev1.PodExecOptions) (remotecommand.Executor, error) {
+	req := NewPodExecutRequest(cs, namespace, name, options)
+	return remotecommand.NewWebSocketExecutor(config, "POST", req.URL().String())
 }
 
 func NewExecStream(ctx context.Context, ws *websocket.Conn) *StreamHandler {
@@ -61,6 +90,10 @@ type xtermMessage struct {
 
 func (s *StreamHandler) Next() (size *remotecommand.TerminalSize) {
 	return <-s.ResizeEvent
+}
+
+func (s *StreamHandler) Close() error {
+	return s.Conn.Close()
 }
 
 func (s *StreamHandler) readLoop(ctx context.Context, w *io.PipeWriter) error {

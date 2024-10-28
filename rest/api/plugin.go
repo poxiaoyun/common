@@ -15,12 +15,22 @@ type RoutePlugin interface {
 }
 
 type VersionPlugin struct {
-	Version any
+	Version    any
+	GetVersion func() (any, error)
 }
 
 func (v VersionPlugin) Install(m *API) error {
 	m.Route(GET("/version").Doc("version").To(func(resp http.ResponseWriter, req *http.Request) {
-		Raw(resp, http.StatusOK, v.Version, nil)
+		if v.GetVersion != nil {
+			version, err := v.GetVersion()
+			if err != nil {
+				ServerError(resp, err)
+				return
+			}
+			Raw(resp, http.StatusOK, version, nil)
+		} else {
+			Raw(resp, http.StatusOK, v.Version, nil)
+		}
 	}))
 	return nil
 }
