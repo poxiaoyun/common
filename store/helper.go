@@ -39,6 +39,10 @@ type ResourcedObjectReference struct {
 	Resource string  `json:"resource,omitempty"`
 }
 
+func (r ResourcedObjectReference) Equals(other ResourcedObjectReference) bool {
+	return r.Name == other.Name && r.Resource == other.Resource && ScopesEquals(r.Scopes, other.Scopes)
+}
+
 func (r ResourcedObjectReference) String() string {
 	key := ""
 	for _, scope := range r.Scopes {

@@ -119,8 +119,9 @@ func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStora
 	log := log.FromContext(ctx)
 	original := DeepCopyObject(obj)
 
-	funcerr := fun(ctx, condStorage, obj)
+	requeueAfter, funcerr := unwrapReQueueError(fun(ctx, condStorage, obj))
 	if funcerr != nil {
+		log.Error(funcerr, "unable to reconcile")
 		r.setStatusMessage(obj, funcerr)
 		if !reflect.DeepEqual(original, obj) {
 			if updateerr := condStorage.Status().Update(ctx, obj); updateerr != nil {
@@ -138,11 +139,24 @@ func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStora
 			return updateerr
 		}
 	}
-	if r.Options.requeueOnSuccess > 0 {
-		log.Info("requeue after success", "duration", r.Options.requeueOnSuccess)
-		return WithReQueue(r.Options.requeueOnSuccess, funcerr)
+	if requeueAfter == 0 {
+		requeueAfter = r.Options.requeueOnSuccess
+	}
+	if requeueAfter > 0 {
+		log.Info("requeue after", "duration", requeueAfter)
+		return WithReQueue(requeueAfter, nil)
 	}
 	return funcerr
+}
+
+func unwrapReQueueError(err error) (time.Duration, error) {
+	if err == nil {
+		return 0, nil
+	}
+	if re, ok := err.(ReQueueError); ok {
+		return re.Atfer, re.Err
+	}
+	return 0, err
 }
 
 func NewObject[T any](t reflect.Type) T {
