@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -10,12 +11,28 @@ import (
 	"xiaoshiai.cn/common/log"
 )
 
+type ClientConfig struct {
+	Server       url.URL
+	RoundTripper http.RoundTripper
+	DialContext  func(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
 type Client struct {
 	Client       *http.Client
 	RoundTripper http.RoundTripper
 	Server       string
 	OnRequest    func(req *http.Request) error
 	OnResponse   func(req *http.Request, resp *http.Response) error
+}
+
+func NewClientFromConfig(cfg *ClientConfig) *Client {
+	var transport http.RoundTripper
+	if cfg.DialContext != nil {
+		transport = &http.Transport{DialContext: cfg.DialContext}
+	} else {
+		transport = cfg.RoundTripper
+	}
+	return &Client{RoundTripper: transport, Server: cfg.Server.String()}
 }
 
 func NewClient(server string) *Client {
