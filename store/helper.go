@@ -33,6 +33,10 @@ func (r ObjectReference) String() string {
 	return key
 }
 
+func (r ObjectReference) Equals(other ObjectReference) bool {
+	return r.Name == other.Name && ScopesEquals(r.Scopes, other.Scopes)
+}
+
 type ResourcedObjectReference struct {
 	Name     string  `json:"name,omitempty"`
 	Scopes   []Scope `json:"scopes,omitempty"`

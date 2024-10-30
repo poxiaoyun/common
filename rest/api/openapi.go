@@ -100,6 +100,10 @@ func addSwaggerOperation(swagger *spec.Swagger, route Route, builder *openapi.Bu
 }
 
 func buildRouteOperation(route Route, builder *openapi.Builder) *spec.Operation {
+	summary := route.Summary
+	if summary == "" {
+		summary = route.OperationName
+	}
 	return &spec.Operation{
 		OperationProps: spec.OperationProps{
 			ID: route.Method + " " + route.Path,
@@ -110,8 +114,8 @@ func buildRouteOperation(route Route, builder *openapi.Builder) *spec.Operation 
 				}
 				return []string{"Default"} // default tag
 			}(),
-			Summary:     route.Summary,
-			Description: route.Summary,
+			Summary:     summary,
+			Description: summary,
 			Consumes:    route.Consumes,
 			Produces:    route.Produces,
 			Deprecated:  route.IsDeprecated,
