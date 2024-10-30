@@ -9,7 +9,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/ssh"
+	"xiaoshiai.cn/common/errors"
 )
+
+var ErrNotProvided = fmt.Errorf("no authentication provided")
 
 const AnonymousUser = "anonymous" // anonymous username
 
@@ -61,18 +64,7 @@ func AuthenticateFromContext(ctx context.Context) AuthenticateInfo {
 }
 
 func NewBearerTokenAuthenticationFilter(authenticator TokenAuthenticator) Filter {
-	return NewBearerTokenAuthenticationFilterWithErrHandle(authenticator, nil)
-}
-
-type AuthenticateErrorHandleFunc func(w http.ResponseWriter, r *http.Request, err error)
-
-func NewBearerTokenAuthenticationFilterWithErrHandle(authenticator TokenAuthenticator, errhandle AuthenticateErrorHandleFunc) Filter {
-	authfunc := func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-		token := ExtracBearerTokenFromRequest(r)
-		ctx := WithResponseHeader(r.Context(), w.Header())
-		return authenticator.Authenticate(ctx, token)
-	}
-	return NewAuthenticateFilter(AuthenticateFunc(authfunc), errhandle)
+	return NewAuthenticateFilter(BearerTokenAuthenticatorWrap(authenticator), nil)
 }
 
 func ResponseHeaderFromContext(ctx context.Context) http.Header {
@@ -83,15 +75,59 @@ func WithResponseHeader(ctx context.Context, header http.Header) context.Context
 	return SetContextValue(ctx, "response-header", header)
 }
 
-// NewCookieTokenAuthenticationFilter get token from cookie
-func NewCookieTokenAuthenticationFilter(authenticator TokenAuthenticator, cookieName string) Filter {
-	authfunc := func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-		token := ExtracTokenFromCookie(r, cookieName)
+func SessionAuthenticatorWrap(authn TokenAuthenticator, sessionkey string) Authenticator {
+	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+		token := ExtracTokenFromCookie(r, sessionkey)
+		if token == "" {
+			return nil, ErrNotProvided
+		}
 		ctx := WithResponseHeader(r.Context(), w.Header())
-		return authenticator.Authenticate(ctx, token)
-	}
-	return NewAuthenticateFilter(AuthenticateFunc(authfunc), nil)
+		return authn.Authenticate(ctx, token)
+	})
 }
+
+func BearerTokenAuthenticatorWrap(authn TokenAuthenticator) Authenticator {
+	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+		token := ExtracBearerTokenFromRequest(r)
+		if token == "" {
+			return nil, ErrNotProvided
+		}
+		ctx := WithResponseHeader(r.Context(), w.Header())
+		return authn.Authenticate(ctx, token)
+	})
+}
+
+func BasicAuthenticatorWrap(authn BasicAuthenticator) Authenticator {
+	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+		username, password, ok := r.BasicAuth()
+		if !ok {
+			return nil, ErrNotProvided
+		}
+		return authn.Authenticate(r.Context(), username, password)
+	})
+}
+
+type DelegateAuthenticator []Authenticator
+
+func (d DelegateAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+	var errs []error
+	for _, a := range d {
+		info, err := a.Authenticate(w, r)
+		if err == nil {
+			return info, nil
+		}
+		if err == ErrNotProvided {
+			continue
+		}
+		errs = append(errs, err)
+	}
+	if len(errs) == 0 {
+		return nil, ErrNotProvided
+	}
+	return nil, errors.NewAggregate(errs)
+}
+
+type AuthenticateErrorHandleFunc func(w http.ResponseWriter, r *http.Request, err error)
 
 func NewAuthenticateFilter(authn Authenticator, onerr AuthenticateErrorHandleFunc) Filter {
 	return FilterFunc(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -118,15 +154,14 @@ func ExtracTokenFromCookie(r *http.Request, cookieName string) string {
 	if cookie != nil && cookie.Value != "" {
 		return cookie.Value
 	}
-	// fallback
-	return ExtracBearerTokenFromRequest(r)
+	return ""
 }
 
 func ExtracBearerTokenFromRequest(r *http.Request) string {
 	token := r.Header.Get("Authorization")
-	if token != "" {
+	// only support bearer token
+	if strings.HasPrefix(token, "Bearer ") {
 		return strings.TrimPrefix(token, "Bearer ")
 	}
-	token = r.URL.Query().Get("token")
-	return token
+	return r.URL.Query().Get("token")
 }
