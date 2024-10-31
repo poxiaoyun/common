@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"sigs.k8s.io/yaml"
+	"xiaoshiai.cn/common/errors"
 )
 
 type PathVar struct {
@@ -151,6 +152,9 @@ func Body(r *http.Request, into any) error {
 	contentEncoding := r.Header.Get("Content-Encoding")
 	contentType := r.Header.Get("Content-Type")
 	defer r.Body.Close()
+	if r.ContentLength == 0 {
+		return errors.NewBadRequest("request body is empty")
+	}
 	if err := ReadContent(contentType, contentEncoding, r.Body, into); err != nil {
 		return err
 	}
