@@ -419,8 +419,13 @@ func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...sto
 
 // Patch implements Storage.
 func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
+	options := store.PatchOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
 		update, err := patchToMongoUpdate(patch, []string{"status"}, nil)
 		if err != nil {
 			return err
