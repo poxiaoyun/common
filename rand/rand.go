@@ -1,6 +1,9 @@
 package rand
 
-import "golang.org/x/exp/rand"
+import (
+	"crypto/rand"
+	"math/big"
+)
 
 func RandomAlphaNumeric(size int) string {
 	return RandomFromCandidates(size, "abcdefghijklmnopqrstuvwxyz0123456789") // 36 characters
@@ -20,9 +23,13 @@ func RandomHex(size int) string {
 }
 
 func RandomFromCandidates(size int, candidates string) string {
-	password := make([]byte, size)
+	result := make([]byte, size)
 	for i := 0; i < size; i++ {
-		password[i] = candidates[rand.Intn(len(candidates))]
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(candidates))))
+		if err != nil {
+			panic(err) // handle error appropriately
+		}
+		result[i] = candidates[n.Int64()]
 	}
-	return string(password)
+	return string(result)
 }

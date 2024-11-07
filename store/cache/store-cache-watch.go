@@ -7,6 +7,7 @@ import (
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
+	"xiaoshiai.cn/common/store/etcd"
 )
 
 // Watch implements Store.
@@ -98,10 +99,10 @@ func (c *cachedWatcher) send(ctx context.Context, kind store.WatchEventType, obj
 	if !store.ScopesEquals(obj.GetScopes(), c.scopes) {
 		return
 	}
-	if !store.MatchLabelReqirements(obj, c.labelSelector) {
+	if !etcd.MatchLabelReqirements(obj, c.labelSelector) {
 		return
 	}
-	if !store.MatchUnstructuredFieldRequirments(obj, c.fieldSelector) {
+	if !etcd.MatchUnstructuredFieldRequirments(obj, c.fieldSelector) {
 		return
 	}
 	// decode

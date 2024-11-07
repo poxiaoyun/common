@@ -179,7 +179,7 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 			err = storeerr.InterpretCreateError(err, db.resource, obj.GetName())
 			return err
 		}
-		ConvertFromUnstructured(uns, obj)
+		ConvertFromUnstructured(uns, obj, db.resource)
 		return nil
 	})
 }
@@ -194,6 +194,7 @@ func (c *generic) Delete(ctx context.Context, obj store.Object, opts ...store.De
 	if obj.GetUID() != "" {
 		preconditions.UID = ptr.To(types.UID(obj.GetUID()))
 	}
+	prediate := storage.SelectionPredicate{}
 	updatefunc := func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error) {
 		// update finalizers
 		nogcFinalizers := slices.DeleteFunc(current.GetFinalizers(), func(finalizer string) bool {
@@ -212,7 +213,7 @@ func (c *generic) Delete(ctx context.Context, obj store.Object, opts ...store.De
 		}
 		return current, nil
 	}
-	return c.update(ctx, obj, preconditions, updatefunc)
+	return c.update(ctx, obj, preconditions, prediate, updatefunc)
 }
 
 // Get implements store.Store.
@@ -228,7 +229,7 @@ func (c *generic) Get(ctx context.Context, name string, obj store.Object, opts .
 			err = storeerr.InterpretGetError(err, db.resource, name)
 			return err
 		}
-		return ConvertFromUnstructured(uns, obj)
+		return ConvertFromUnstructured(uns, obj, db.resource)
 	})
 }
 
@@ -285,7 +286,7 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 		// convert to result
 		for _, uns := range filtered {
 			obj := newItemFunc()
-			if err := ConvertFromUnstructured(&uns, obj); err != nil {
+			if err := ConvertFromUnstructured(&uns, obj, db.resource); err != nil {
 				return err
 			}
 			v.Set(reflect.Append(v, reflect.ValueOf(obj).Elem()))
@@ -318,13 +319,17 @@ func ConvertPredicate(l store.Requirements, f store.Requirements) (storage.Selec
 		}
 		fieldsel = newfieldsel
 	}
-	return storage.SelectionPredicate{Label: labelssel, Field: fieldsel}, nil
+	return storage.SelectionPredicate{
+		Label:    labelssel,
+		Field:    fieldsel,
+		GetAttrs: GetAttrs,
+	}, nil
 }
 
 func requirementsToLabelsSelector(reqs store.Requirements) (labels.Selector, error) {
 	selector := labels.Everything()
 	for _, req := range reqs {
-		labelreq, err := labels.NewRequirement(req.Key, req.Operator, req.Values)
+		labelreq, err := labels.NewRequirement(req.Key, req.Operator, store.AnyToStrings(req.Values))
 		if err != nil {
 			return nil, err
 		}
@@ -338,9 +343,9 @@ func requirementsToFieldsSelector(reqs store.Requirements) (fields.Selector, err
 	for _, req := range reqs {
 		switch req.Operator {
 		case selection.Equals, selection.DoubleEquals:
-			selectors = append(selectors, fields.OneTermEqualSelector(req.Key, req.Values[0]))
+			selectors = append(selectors, fields.OneTermEqualSelector(req.Key, store.AnyToString(req.Values[0])))
 		case selection.NotEquals:
-			selectors = append(selectors, fields.OneTermNotEqualSelector(req.Key, req.Values[0]))
+			selectors = append(selectors, fields.OneTermNotEqualSelector(req.Key, store.AnyToString(req.Values[0])))
 		default:
 			return nil, fmt.Errorf("unsupported field selector operator: %s", req.Operator)
 		}
@@ -358,6 +363,10 @@ func (c *generic) Patch(ctx context.Context, obj store.Object, patch store.Patch
 	if obj.GetUID() != "" {
 		preconditions.UID = ptr.To(types.UID(obj.GetUID()))
 	}
+	predicate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
+	if err != nil {
+		return err
+	}
 	updatefunc := func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error) {
 		patchdata, err := patch.Data(obj)
 		if err != nil {
@@ -368,7 +377,7 @@ func (c *generic) Patch(ctx context.Context, obj store.Object, patch store.Patch
 		}
 		return current, nil
 	}
-	return c.update(ctx, obj, preconditions, updatefunc)
+	return c.update(ctx, obj, preconditions, predicate, updatefunc)
 }
 
 func applyPatch(to any, patchtype store.PatchType, patchdata []byte) error {
@@ -405,11 +414,16 @@ func (c *generic) Update(ctx context.Context, obj store.Object, opts ...store.Up
 	if obj.GetUID() != "" {
 		preconditions.UID = ptr.To(types.UID(obj.GetUID()))
 	}
-	return c.update(ctx, obj, preconditions, updatefunc)
+
+	predicate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
+	if err != nil {
+		return err
+	}
+	return c.update(ctx, obj, preconditions, predicate, updatefunc)
 }
 
-func (c *generic) update(ctx context.Context, obj store.Object, preconditions *storage.Preconditions, updatefunc updatFunc) error {
-	return c.core.update(ctx, c.scopes, obj, preconditions, updatefunc, true)
+func (c *generic) update(ctx context.Context, obj store.Object, preconditions *storage.Preconditions, predicate storage.SelectionPredicate, updatefunc updatFunc) error {
+	return c.core.update(ctx, c.scopes, obj, preconditions, predicate, updatefunc, true)
 }
 
 // Status implements store.Store.
@@ -434,6 +448,10 @@ func (s *status) Patch(ctx context.Context, obj store.Object, patch store.Patch,
 	if obj.GetUID() != "" {
 		preconditions.UID = ptr.To(types.UID(obj.GetUID()))
 	}
+	predicate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
+	if err != nil {
+		return err
+	}
 	updatefunc := func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error) {
 		patchdata, err := patch.Data(obj)
 		if err != nil {
@@ -444,11 +462,11 @@ func (s *status) Patch(ctx context.Context, obj store.Object, patch store.Patch,
 		}
 		return current, nil
 	}
-	return s.update(ctx, obj, preconditions, updatefunc)
+	return s.update(ctx, obj, preconditions, predicate, updatefunc)
 }
 
-func (s *status) update(ctx context.Context, obj store.Object, preconditions *storage.Preconditions, updatefunc updatFunc) error {
-	return s.core.update(ctx, s.scopes, obj, preconditions, updatefunc, false)
+func (s *status) update(ctx context.Context, obj store.Object, preconditions *storage.Preconditions, predicate storage.SelectionPredicate, updatefunc updatFunc) error {
+	return s.core.update(ctx, s.scopes, obj, preconditions, predicate, updatefunc, false)
 }
 
 // Update implements store.StatusStorage.
@@ -464,10 +482,14 @@ func (s *status) Update(ctx context.Context, obj store.Object, opts ...store.Upd
 	if rev := obj.GetResourceVersion(); rev != 0 {
 		preconditions.ResourceVersion = ptr.To(strconv.FormatInt(rev, 10))
 	}
+	predicate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
+	if err != nil {
+		return err
+	}
 	updatefunc := func(ctx context.Context, oldObj *store.Unstructured) (store.Object, error) {
 		return obj, nil
 	}
-	return s.update(ctx, obj, preconditions, updatefunc)
+	return s.update(ctx, obj, preconditions, predicate, updatefunc)
 }
 
 type ResourceFieldsMap map[string][]string
@@ -508,11 +530,14 @@ func convertError(err error) error {
 
 type updatFunc func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error)
 
-func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Object, predicate *storage.Preconditions, fn updatFunc, ignoreStatus bool) error {
+func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Object, preconditions *storage.Preconditions, predicate storage.SelectionPredicate, fn updatFunc, ignoreStatus bool) error {
+	if !predicate.Empty() {
+		return errors.NewBadRequest("predicate is not supported")
+	}
 	return c.on(ctx, obj, func(ctx context.Context, db *db) error {
 		out := &unstructured.Unstructured{}
 		key := getObjectKey(scopes, db.resource.String(), obj.GetName())
-		err := db.storage.GuaranteedUpdate(ctx, key, out, false, predicate, func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
+		err := db.storage.GuaranteedUpdate(ctx, key, out, false, preconditions, func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
 			current, ok := input.(*unstructured.Unstructured)
 			if !ok {
 				return nil, nil, fmt.Errorf("unexpected object type: %T", input)
@@ -521,7 +546,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 			statusfield, _, _ := unstructured.NestedFieldNoCopy(current.Object, UnstructuredObjectField, "status")
 			deletionTimestamp := current.GetDeletionTimestamp()
 			unsobj := &store.Unstructured{}
-			if err := ConvertFromUnstructured(current, unsobj); err != nil {
+			if err := ConvertFromUnstructured(current, unsobj, db.resource); err != nil {
 				return nil, nil, err
 			}
 			scopes, name, uid, creation := unsobj.GetScopes(), unsobj.GetName(), unsobj.GetUID(), unsobj.GetCreationTimestamp()
@@ -559,7 +584,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 		if err != nil {
 			if err == errShouldDelete {
 				// Using the rest.ValidateAllObjectFunc because the request is an UPDATE request and has already passed the admission for the UPDATE verb.
-				if err := db.storage.Delete(ctx, key, out, predicate, rest.ValidateAllObjectFunc, nil); err != nil {
+				if err := db.storage.Delete(ctx, key, out, preconditions, rest.ValidateAllObjectFunc, nil); err != nil {
 					// Deletion is racy, i.e., there could be multiple update
 					// requests to remove all finalizers from the object, so we
 					// ignore the NotFound error.
@@ -575,7 +600,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 				return err
 			}
 		}
-		ConvertFromUnstructured(out, obj)
+		ConvertFromUnstructured(out, obj, db.resource)
 		return nil
 	})
 }
@@ -763,7 +788,7 @@ func ConvertToUnstructured(obj store.Object) (*unstructured.Unstructured, error)
 	return uns, nil
 }
 
-func ConvertFromUnstructured(uns *unstructured.Unstructured, obj store.Object) error {
+func ConvertFromUnstructured(uns *unstructured.Unstructured, obj store.Object, resource schema.GroupResource) error {
 	datafield, ok := uns.Object[UnstructuredObjectField].(map[string]any)
 	if !ok {
 		datafield = map[string]any{}
@@ -774,7 +799,7 @@ func ConvertFromUnstructured(uns *unstructured.Unstructured, obj store.Object) e
 	}
 	// restore metadata
 	obj.SetName(uns.GetName())
-	obj.SetResource(uns.GetKind())
+	obj.SetResource(resource.String())
 	obj.SetLabels(uns.GetLabels())
 	obj.SetAnnotations(uns.GetAnnotations())
 	obj.SetFinalizers(uns.GetFinalizers())

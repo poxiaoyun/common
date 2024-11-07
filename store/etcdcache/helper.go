@@ -1,11 +1,17 @@
 package etcdcache
 
 import (
+	"fmt"
 	"reflect"
 
+	"golang.org/x/exp/maps"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"xiaoshiai.cn/common/store"
 )
 
 // UnstructuredObjectTyper provides a runtime.ObjectTyper implementation for
@@ -45,4 +51,37 @@ func (c UnstructuredCreator) New(kind schema.GroupVersionKind) (runtime.Object, 
 	ret := &unstructured.Unstructured{}
 	ret.SetGroupVersionKind(kind)
 	return ret, nil
+}
+
+func GetAttrs(obj runtime.Object) (labels.Set, fields.Set, error) {
+	accessor, err := meta.Accessor(obj)
+	if err != nil {
+		return nil, nil, err
+	}
+	objectMetaFields := fields.Set{
+		"metadata.name":      accessor.GetName(),
+		"metadata.namespace": accessor.GetNamespace(),
+	}
+	us, ok := obj.(runtime.Unstructured)
+	if !ok {
+		return nil, nil, fmt.Errorf("unexpected error casting a custom resource to unstructured")
+	}
+	uc := us.UnstructuredContent()
+	maps.Copy(objectMetaFields, FlatterMap(uc))
+	return accessor.GetLabels(), objectMetaFields, nil
+}
+
+func FlatterMap(m map[string]any) map[string]string {
+	ret := make(map[string]string)
+	for k, v := range m {
+		switch val := v.(type) {
+		case map[string]any:
+			for kk, vv := range FlatterMap(val) {
+				ret[k+"."+kk] = vv
+			}
+		default:
+			ret[k] = store.AnyToString(v)
+		}
+	}
+	return ret
 }

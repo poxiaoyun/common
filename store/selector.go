@@ -1,8 +1,7 @@
 package store
 
 import (
-	"slices"
-	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
@@ -11,55 +10,33 @@ import (
 
 type Requirements []Requirement
 
-func (r Requirements) MatchLabels(labels map[string]string) bool {
-	for _, req := range r {
-		if !req.MatchLabels(labels) {
-			return false
-		}
-	}
-	return true
-}
-
-func RequirementEqual(key string, value string) Requirement {
+func RequirementEqual(key string, value any) Requirement {
 	return Requirement{
 		Key:      key,
 		Operator: selection.Equals,
-		Values:   []string{value},
+		Values:   []any{value},
 	}
 }
 
-func NewRequirement(key string, operator selection.Operator, values ...string) Requirement {
+func NewRequirement(key string, operator selection.Operator, values ...any) Requirement {
 	return Requirement{Key: key, Operator: operator, Values: values}
+}
+
+func NewCreationRangeRequirement(start, end time.Time) []Requirement {
+	ret := make([]Requirement, 0, 2)
+	if !start.IsZero() {
+		ret = append(ret, NewRequirement("creationTimestamp", selection.GreaterThan, start))
+	}
+	if !end.IsZero() {
+		ret = append(ret, NewRequirement("creationTimestamp", selection.LessThan, end))
+	}
+	return ret
 }
 
 type Requirement struct {
 	Key      string
 	Operator selection.Operator
-	Values   []string
-}
-
-func (r Requirement) MatchLabels(obj map[string]string) bool {
-	switch r.Operator {
-	case selection.DoesNotExist:
-		_, ok := obj[r.Key]
-		return !ok
-	case selection.Exists:
-		_, ok := obj[r.Key]
-		return ok
-	case selection.Equals, selection.DoubleEquals:
-		return len(r.Values) == 1 && obj[r.Key] == r.Values[0]
-	case selection.In:
-		return slices.Contains(r.Values, obj[r.Key])
-	case selection.NotEquals:
-		return len(r.Values) == 1 && obj[r.Key] != r.Values[0]
-	case selection.NotIn:
-		return !slices.Contains(r.Values, obj[r.Key])
-	case selection.GreaterThan:
-		return strings.Compare(obj[r.Key], r.Values[0]) > 0
-	case selection.LessThan:
-		return strings.Compare(obj[r.Key], r.Values[0]) < 0
-	}
-	return false
+	Values   []any
 }
 
 func RequirementsFromMap(kvs map[string]string) Requirements {
@@ -74,7 +51,7 @@ func LabelsSelectorToReqirements(labels labels.Selector) Requirements {
 	reqs, _ := labels.Requirements()
 	list := make([]Requirement, 0, len(reqs))
 	for _, r := range reqs {
-		list = append(list, Requirement{Key: r.Key(), Operator: r.Operator(), Values: r.Values().List()})
+		list = append(list, Requirement{Key: r.Key(), Operator: r.Operator(), Values: StringsToAny(r.Values().List())})
 	}
 	return list
 }
@@ -83,22 +60,7 @@ func FieldsSelectorToReqirements(fields fields.Selector) Requirements {
 	reqs := fields.Requirements()
 	list := make([]Requirement, 0, len(reqs))
 	for _, r := range reqs {
-		list = append(list, Requirement{Key: r.Field, Operator: r.Operator, Values: []string{r.Value}})
+		list = append(list, Requirement{Key: r.Field, Operator: r.Operator, Values: []any{r.Value}})
 	}
 	return list
-}
-
-func MatchLabelReqirements(obj Object, reqs Requirements) bool {
-	if obj == nil {
-		return false
-	}
-	return reqs.MatchLabels(obj.GetLabels())
-}
-
-func MatchUnstructuredFieldRequirments(obj *Unstructured, reqs Requirements) bool {
-	if obj == nil {
-		return false
-	}
-	// TODO: implement this
-	return true
 }

@@ -6,7 +6,6 @@ import (
 	stderrors "errors"
 	"fmt"
 	"reflect"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -269,7 +268,22 @@ func (m *MongoStorage) Count(ctx context.Context, obj store.Object, opts ...stor
 
 // Create implements Storage.
 func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...store.CreateOption) error {
+	creationopt := store.CreateOptions{}
+	for _, opt := range opts {
+		opt(&creationopt)
+	}
 	return m.on(ctx, into, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		if into.GetName() == "" && creationopt.AutoIncrementOnName {
+			// if name is empty, get next auto increment id
+			cnt, err := GetCounter(ctx, col.Database(), col.Name())
+			if err != nil {
+				return errors.NewInternalError(err)
+			}
+			into.SetName(strconv.FormatUint(uint64(cnt), 10))
+		}
+		if into.GetName() == "" {
+			return errors.NewBadRequest("name is required")
+		}
 		into.SetCreationTimestamp(store.Now())
 		into.SetUID(uuid.NewString())
 		data, err := m.mergeConditionOnChange(into, []string{"status"})
@@ -277,6 +291,7 @@ func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...st
 			return err
 		}
 		data = m.beforeSave(data)
+		// before creation
 		m.core.logger.V(5).Info("create", "collection", col.Name(), "data", data)
 		result, err := col.InsertOne(ctx, data)
 		if err != nil {
@@ -377,8 +392,13 @@ func (m *MongoStorage) Get(ctx context.Context, name string, obj store.Object, o
 
 // Update implements Storage.
 func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
+	updateoptions := store.UpdateOptions{}
+	for _, opt := range opts {
+		opt(&updateoptions)
+	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		filter = conditionsmatch(filter, SelectorToReqirements(updateoptions.LabelRequirements, updateoptions.FieldRequirements))
 		// inoder not to update creation time or creator
 		fields, err := m.mergeConditionOnChange(obj, []string{"creator", "creationTimestamp", "status"})
 		if err != nil {
@@ -496,6 +516,8 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, post []any) b
 	sortstage := sortstage(opts.Sort)
 	if len(sortstage) > 0 {
 		pipeline = append(pipeline, bson.M{"$sort": sortstage})
+	} else {
+		pipeline = append(pipeline, bson.M{"$sort": bson.D{{Key: "creationTimestamp", Value: -1}}})
 	}
 	pipeline = append(pipeline, post...)
 	// pagination
@@ -567,7 +589,7 @@ func pipelinesort(pipeline bson.A, sort string) bson.A {
 func scopesmatch(match bson.D, scopes []store.Scope) bson.D {
 	conds := store.Requirements{}
 	for _, scope := range scopes {
-		conds = append(conds, store.Requirement{Operator: selection.Equals, Key: scope.Resource, Values: []string{scope.Name}})
+		conds = append(conds, store.Requirement{Operator: selection.Equals, Key: scope.Resource, Values: []any{scope.Name}})
 	}
 	return conditionsmatch(match, conds)
 }
@@ -599,39 +621,12 @@ func conditionsmatch(match bson.D, conds store.Requirements) bson.D {
 		case selection.DoesNotExist:
 			match = append(match, bson.E{Key: key, Value: bson.M{"$exists": false}})
 		case selection.GreaterThan:
-			match = append(match, bson.E{Key: key, Value: bson.M{"$gt": autoConvertString(values[0])}})
+			match = append(match, bson.E{Key: key, Value: bson.M{"$gt": values[0]}})
 		case selection.LessThan:
-			match = append(match, bson.E{Key: key, Value: bson.M{"$lt": autoConvertString(values[0])}})
+			match = append(match, bson.E{Key: key, Value: bson.M{"$lt": values[0]}})
 		}
 	}
 	return match
-}
-
-var (
-	rfc3339regex  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$`)
-	isnumberRegex = regexp.MustCompile(`^\d+$`)
-	isboolRegex   = regexp.MustCompile(`^(true|false)$`)
-)
-
-// autoConvertString convert string to any type
-// it usefull for convert string to time.Time and compare
-func autoConvertString(s string) any {
-	if isboolRegex.MatchString(s) {
-		if b, err := strconv.ParseBool(s); err == nil {
-			return b
-		}
-	}
-	if rfc3339regex.MatchString(s) {
-		if tim, err := time.Parse(time.RFC3339, s); err == nil {
-			return tim
-		}
-	}
-	if isnumberRegex.MatchString(s) {
-		if i, err := strconv.Atoi(s); err == nil {
-			return i
-		}
-	}
-	return s
 }
 
 func patchToMongoUpdate(patch store.Patch, excludes []string, includes []string) (bson.D, error) {

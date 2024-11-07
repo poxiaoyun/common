@@ -47,6 +47,9 @@ type (
 
 	CreateOptions struct {
 		TTL time.Duration
+		// AutoIncrementOnName is a flag to enable auto increment id for object
+		// it'll set the object's name to the auto increment id if empty
+		AutoIncrementOnName bool
 	}
 	CreateOption func(*CreateOptions)
 
@@ -57,11 +60,18 @@ type (
 
 	UpdateOptions struct {
 		TTL time.Duration
+		// FieldRequirements is a list of conditions that must be true for the update to occur.
+		// it apply to fields.
+		FieldRequirements Requirements
+		LabelRequirements Requirements
 	}
 	UpdateOption func(*UpdateOptions)
 
-	PatchOptions struct{}
-	PatchOption  func(*PatchOptions)
+	PatchOptions struct {
+		FieldRequirements Requirements
+		LabelRequirements Requirements
+	}
+	PatchOption func(*PatchOptions)
 
 	WatchOptions struct {
 		LabelRequirements Requirements
@@ -208,3 +218,31 @@ type StatusStorage interface {
 	Update(ctx context.Context, obj Object, opts ...UpdateOption) error
 	Patch(ctx context.Context, obj Object, patch Patch, opts ...PatchOption) error
 }
+
+type TransactionOptions struct {
+	Timeout    time.Duration
+	MaxRetries int
+}
+
+type TransactionOption func(*TransactionOptions)
+
+func WithTransactionTimeout(timeout time.Duration) TransactionOption {
+	return func(o *TransactionOptions) {
+		o.Timeout = timeout
+	}
+}
+
+func WithTransactionMaxRetries(retries int) TransactionOption {
+	return func(o *TransactionOptions) {
+		o.MaxRetries = retries
+	}
+}
+
+type TransactionStore interface {
+	Store
+	Transcation(ctx context.Context, fn func(ctx context.Context, store Store) error, opts ...TransactionOption) error
+}
+
+// AutoIncrementID is a type for auto increment id
+// impletions should use this type for auto increment id
+type AutoIncrementID uint64

@@ -261,7 +261,7 @@ func (w *etcdWatcher) parseEvent(e *etcdEvent) (*store.WatchEvent, error) {
 	obj.SetResourceVersion(e.rev)
 
 	// filter by label selector
-	if !store.MatchLabelReqirements(obj, w.labelSelector) {
+	if !MatchLabelReqirements(obj, w.labelSelector) {
 		return nil, nil
 	}
 

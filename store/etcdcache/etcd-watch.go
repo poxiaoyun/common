@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage"
@@ -63,7 +64,7 @@ func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store
 		w:                watcher,
 		cancel:           cancel,
 		scopes:           c.scopes,
-		resource:         resource,
+		resource:         db.resource,
 		includeSubscopes: options.IncludeSubScopes,
 		newItemFunc:      newItemFunc,
 		result:           make(chan store.WatchEvent, 1),
@@ -77,7 +78,7 @@ type warpWatcher struct {
 	w                watch.Interface
 	cancel           context.CancelFunc
 	scopes           []store.Scope
-	resource         string
+	resource         schema.GroupResource
 	includeSubscopes bool
 	newItemFunc      func() store.Object
 	result           chan store.WatchEvent
@@ -129,7 +130,7 @@ func (w *warpWatcher) run(ctx context.Context) {
 			}
 
 			newobj := w.newItemFunc()
-			ConvertFromUnstructured(uns, newobj)
+			ConvertFromUnstructured(uns, newobj, w.resource)
 
 			if !w.includeSubscopes && !store.ScopesEquals(newobj.GetScopes(), w.scopes) {
 				continue

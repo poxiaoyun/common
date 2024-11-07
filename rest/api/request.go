@@ -131,6 +131,21 @@ func ValueOrDefault[T any](val string, defaultValue T) T {
 	case int64:
 		intval, _ := strconv.ParseInt(val, 10, 64)
 		return any(intval).(T)
+	case uint64:
+		intval, _ := strconv.ParseUint(val, 10, 64)
+		return any(intval).(T)
+	case uint32:
+		intval, _ := strconv.ParseUint(val, 10, 32)
+		return any(intval).(T)
+	case float64:
+		floatval, _ := strconv.ParseFloat(val, 64)
+		return any(floatval).(T)
+	case *int:
+		if val == "" {
+			return defaultValue
+		}
+		intval, _ := strconv.Atoi(val)
+		return any(&intval).(T)
 	case *int64:
 		if val == "" {
 			return defaultValue

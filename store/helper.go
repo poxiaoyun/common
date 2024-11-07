@@ -5,7 +5,9 @@ import (
 	stderrors "errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -338,4 +340,93 @@ func SortByFunc[T any](by string, getname func(T) string, gettime func(T) time.T
 
 func NewTimeAsName() string {
 	return time.Now().Format("20060102150405")
+}
+
+func StringsToAny(values []string) []any {
+	result := make([]any, len(values))
+	for i, v := range values {
+		result[i] = StringToAny(v)
+	}
+	return result
+}
+
+func AnyToStrings(values []any) []string {
+	result := make([]string, len(values))
+	for i, v := range values {
+		result[i] = v.(string)
+	}
+	return result
+}
+
+var (
+	rfc3339regex  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$`)
+	isnumberRegex = regexp.MustCompile(`^\d+$`)
+	isboolRegex   = regexp.MustCompile(`^(true|false)$`)
+)
+
+// autoConvertString convert string to any type
+// it usefull for convert string to time.Time and compare
+func StringToAny(s string) any {
+	if isboolRegex.MatchString(s) {
+		if b, err := strconv.ParseBool(s); err == nil {
+			return b
+		}
+	}
+	if rfc3339regex.MatchString(s) {
+		if tim, err := time.Parse(time.RFC3339, s); err == nil {
+			return tim
+		}
+	}
+	if isnumberRegex.MatchString(s) {
+		if i, err := strconv.Atoi(s); err == nil {
+			return i
+		}
+	}
+	return s
+}
+
+func AnyToString(a any) string {
+	if a == nil {
+		return "null"
+	}
+	switch v := a.(type) {
+	case string:
+		return v
+	case time.Time:
+		return v.Format(time.RFC3339)
+	case *time.Time:
+		if v != nil {
+			return v.Format(time.RFC3339)
+		}
+		return ""
+	case *Time:
+		if v != nil {
+			return v.Time.Format(time.RFC3339)
+		}
+		return ""
+	case Time:
+		return v.Time.Format(time.RFC3339)
+	case bool:
+		return strconv.FormatBool(v)
+	case int:
+		return strconv.Itoa(v)
+	case int8:
+		return strconv.Itoa(int(v))
+	case int32:
+		return strconv.Itoa(int(v))
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float32:
+		return strconv.FormatFloat(float64(v), 'f', -1, 32)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case uint:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint64:
+		return strconv.FormatUint(v, 10)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
