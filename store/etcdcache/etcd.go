@@ -195,7 +195,10 @@ func (c *generic) Delete(ctx context.Context, obj store.Object, opts ...store.De
 	if obj.GetUID() != "" {
 		preconditions.UID = ptr.To(types.UID(obj.GetUID()))
 	}
-	prediate := storage.SelectionPredicate{}
+	predicate, err := ConvertPredicate(nil, nil)
+	if err != nil {
+		return err
+	}
 	updatefunc := func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error) {
 		// update finalizers
 		nogcFinalizers := slices.DeleteFunc(current.GetFinalizers(), func(finalizer string) bool {
@@ -214,7 +217,7 @@ func (c *generic) Delete(ctx context.Context, obj store.Object, opts ...store.De
 		}
 		return current, nil
 	}
-	return c.update(ctx, obj, preconditions, prediate, updatefunc)
+	return c.update(ctx, obj, preconditions, predicate, updatefunc)
 }
 
 // Get implements store.Store.

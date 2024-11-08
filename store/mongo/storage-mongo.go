@@ -238,6 +238,10 @@ func (m *MongoStorage) Scheme() *ObjectScheme {
 	return m.core.scheme
 }
 
+func (m *MongoStorage) Database() *mongo.Database {
+	return m.core.db
+}
+
 // Scope implements Storage.
 func (m *MongoStorage) Scope(scopes ...store.Scope) store.Store {
 	if len(scopes) == 0 {
