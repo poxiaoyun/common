@@ -284,6 +284,7 @@ func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...st
 		if into.GetName() == "" {
 			return errors.NewBadRequest("name is required")
 		}
+		into.SetOwnerReferences(creationopt.OwnerReferences)
 		into.SetCreationTimestamp(store.Now())
 		into.SetUID(uuid.NewString())
 		data, err := m.mergeConditionOnChange(into, []string{"status"})

@@ -50,6 +50,7 @@ type (
 		// AutoIncrementOnName is a flag to enable auto increment id for object
 		// it'll set the object's name to the auto increment id if empty
 		AutoIncrementOnName bool
+		OwnerReferences     []OwnerReference
 	}
 	CreateOption func(*CreateOptions)
 
@@ -91,6 +92,12 @@ func WithCountFieldRequirementsFromSelector(selector fields.Selector) CountOptio
 func WithCountFieldRequirementsFromSet(kvs map[string]string) CountOption {
 	return func(o *CountOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, RequirementsFromMap(kvs)...)
+	}
+}
+
+func WithOwnerReference(ownerReferences []OwnerReference) CreateOption {
+	return func(co *CreateOptions) {
+		co.OwnerReferences = ownerReferences
 	}
 }
 

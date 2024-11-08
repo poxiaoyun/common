@@ -170,6 +170,7 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 		obj.SetCreationTimestamp(store.Now())
 		obj.SetScopes(c.scopes)
 		obj.SetResource(db.resource.String())
+		obj.SetOwnerReferences(options.OwnerReferences)
 		uns, err := ConvertToUnstructured(obj)
 		if err != nil {
 			return err
