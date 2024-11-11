@@ -28,6 +28,15 @@ func (n ObjectIdentity) Equals(other ObjectIdentity) bool {
 	return n.Resource == other.Resource && n.Name == other.Name && n.UID == other.UID && IsSameScopes(n.Scopes, other.Scopes)
 }
 
+func (n ObjectIdentity) Identity() string {
+	id := n.UID + ":" + n.Resource
+	for _, scope := range n.Scopes {
+		id += "/" + scope.Resource + "/" + scope.Name
+	}
+	id += "/" + n.Name
+	return id
+}
+
 type empty struct{}
 
 type node struct {
@@ -194,13 +203,13 @@ func NewReferenceCache(maxCacheEntries int) *ReferenceCache {
 func (c *ReferenceCache) Add(reference ObjectIdentity) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	c.cache.Add(reference, nil)
+	c.cache.Add(reference.Identity(), nil)
 }
 
 // Has returns if a uid is in the cache.
 func (c *ReferenceCache) Has(reference ObjectIdentity) bool {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	_, found := c.cache.Get(reference)
+	_, found := c.cache.Get(reference.Identity())
 	return found
 }
