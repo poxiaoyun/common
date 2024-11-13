@@ -38,7 +38,15 @@ func BuildRequest(r Request) (*http.Request, error) {
 	if r.Err != nil {
 		return nil, r.Err
 	}
-	u, err := MergeURL(r.BaseAddr, r.Path, r.Queries)
+	serveraddr := r.BaseAddr
+	if serveraddr == "" {
+		return nil, errors.NewBadRequest("empty base address on http request")
+	}
+	serveru, err := url.Parse(serveraddr)
+	if err != nil {
+		return nil, err
+	}
+	u, err := MergeURL(*serveru, r.Path, r.Queries)
 	if err != nil {
 		return nil, err
 	}
@@ -106,21 +114,14 @@ func NewFormURLEncoded(data map[string]string) (io.Reader, string) {
 	return bytes.NewBufferString(form.Encode()), "application/x-www-form-urlencoded"
 }
 
-func MergeURL(server, reqpath string, queries url.Values) (*url.URL, error) {
-	if server == "" {
-		return nil, errors.NewBadRequest("empty base address on http request")
-	}
-	u, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
+func MergeURL(u url.URL, reqpath string, queries url.Values) (*url.URL, error) {
 	u.Path = path.Join(u.Path, reqpath)
 	existsQuery := u.Query()
 	for k, v := range queries {
 		existsQuery[k] = v
 	}
 	u.RawQuery = existsQuery.Encode()
-	return u, nil
+	return &u, nil
 }
 
 func GetClient(cli *http.Client, tp http.RoundTripper) *http.Client {

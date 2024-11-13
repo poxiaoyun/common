@@ -19,8 +19,8 @@ type ClientConfig struct {
 
 type Client struct {
 	Client       *http.Client
-	RoundTripper http.RoundTripper
 	Server       string
+	RoundTripper http.RoundTripper
 	OnRequest    func(req *http.Request) error
 	OnResponse   func(req *http.Request, resp *http.Response) error
 }
@@ -64,8 +64,9 @@ func (c *Client) Request(method string, path string) *Builder {
 		BaseAddr(c.Server)
 }
 
-func (c *Client) GetWebSocket(ctx context.Context, reqpath string, queries url.Values, onmsg func(ctx context.Context, msg []byte) error) error {
-	u, err := MergeURL(c.Server, reqpath, queries)
+func GetWebSocket(ctx context.Context, cliconfig *ClientConfig, reqpath string, queries url.Values, onmsg func(ctx context.Context, msg []byte) error) error {
+	log := log.FromContext(ctx).WithValues("path", reqpath, "queries", queries)
+	u, err := MergeURL(cliconfig.Server, reqpath, queries)
 	if err != nil {
 		return err
 	}
@@ -76,14 +77,15 @@ func (c *Client) GetWebSocket(ctx context.Context, reqpath string, queries url.V
 		u.Scheme = "wss"
 	}
 
-	dailer := websocket.Dialer{}
-	if c.RoundTripper == nil {
-		c.RoundTripper = http.DefaultTransport
+	dailer := websocket.Dialer{
+		NetDialContext: cliconfig.DialContext,
 	}
-	if httptransport, ok := c.RoundTripper.(*http.Transport); ok {
-		dailer.TLSClientConfig = httptransport.TLSClientConfig
+	if cliconfig.RoundTripper != nil {
+		if httptransport, ok := cliconfig.RoundTripper.(*http.Transport); ok {
+			dailer.TLSClientConfig = httptransport.TLSClientConfig
+		}
 	}
-	log.FromContext(ctx).V(5).Info("common http client websocket", "url", u.String())
+	log.V(5).Info("common http client websocket", "url", u.String())
 	wsconn, resp, err := dailer.DialContext(ctx, u.String(), nil)
 	if err != nil {
 		return err
@@ -111,6 +113,7 @@ func (c *Client) GetWebSocket(ctx context.Context, reqpath string, queries url.V
 		default:
 			msgtype, message, err := wsconn.ReadMessage()
 			if err != nil {
+				log.Error(err, "failed to read message")
 				return err
 			}
 			switch msgtype {
