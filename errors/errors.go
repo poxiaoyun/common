@@ -26,6 +26,7 @@ const (
 	StatusReasonTooManyRequests       StatusReason = "TooManyRequests"
 	StatusReasonRequestEntityTooLarge StatusReason = "RequestEntityTooLarge"
 	StatusReasonResourceExpired       StatusReason = "ResourceExpired"
+	StatusReasonServiceUnavailable    StatusReason = "ServiceUnavailable"
 )
 
 type StatusReason string
@@ -135,6 +136,10 @@ func NewResourceExpired(resource, msaage string) *Status {
 	}
 	message := fmt.Sprintf("%s is expired: %v", resource, msaage)
 	return &Status{Status: StatusFailure, Code: http.StatusGone, Reason: StatusReasonResourceExpired, Message: message}
+}
+
+func NewServiceUnavailable(reason string) *Status {
+	return &Status{Status: StatusFailure, Code: http.StatusServiceUnavailable, Reason: StatusReasonServiceUnavailable, Message: reason}
 }
 
 func NewCustomError(code int, reason StatusReason, message string) *Status {

@@ -152,6 +152,9 @@ func DefaultDecodeFunc(resp *http.Response, into any) error {
 		_, err := io.Copy(into, resp.Body)
 		return err
 	default:
+		if resp.ContentLength == 0 {
+			return errors.NewInternalError(fmt.Errorf("empty response body"))
+		}
 		jsondata, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if err != nil {
 			return err
