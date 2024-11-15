@@ -523,12 +523,8 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, post []any) b
 	// filter
 	pipeline = append(pipeline, bson.M{"$match": match})
 	// sort
-	sortstage := sortstage(opts.Sort)
-	if len(sortstage) > 0 {
-		pipeline = append(pipeline, bson.M{"$sort": sortstage})
-	} else {
-		pipeline = append(pipeline, bson.M{"$sort": bson.D{{Key: "creationTimestamp", Value: -1}}})
-	}
+	pipeline = append(pipeline, sortstage(opts.Sort))
+	// post conditions
 	pipeline = append(pipeline, post...)
 	// pagination
 	group := bson.M{
@@ -557,43 +553,23 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, post []any) b
 	return pipeline
 }
 
-func sortstage(sort string) bson.D {
+func sortstage(sort string) bson.M {
 	sorts := bson.D{}
-	for _, s := range strings.Split(sort, ",") {
-		order := 1
-		if len(s) > 0 && s[len(s)-1] == '-' {
-			s, order = s[:len(s)-1], -1
+	for _, s := range store.ParseSorts(sort) {
+		if s.Field == "time" {
+			s.Field = "creationTimestamp"
 		}
-		if s == "" {
-			continue
+		direction := 1
+		if !s.ASC {
+			direction = -1
 		}
-		if s == "time" {
-			s = "modified"
-		}
-		sorts = append(sorts, bson.E{Key: s, Value: order})
-	}
-	return sorts
-}
-
-func pipelinesort(pipeline bson.A, sort string) bson.A {
-	sorts := bson.D{}
-	for _, s := range strings.Split(sort, ",") {
-		order := 1
-		if len(s) > 0 && s[len(s)-1] == '-' {
-			s, order = s[:len(s)-1], -1
-		}
-		if s == "" {
-			continue
-		}
-		if s == "time" {
-			s = "modified"
-		}
-		sorts = append(sorts, bson.E{Key: s, Value: order})
+		sorts = append(sorts, bson.E{Key: s.Field, Value: direction})
 	}
 	if len(sorts) > 0 {
-		pipeline = append(pipeline, bson.M{"$sort": sorts})
+		return bson.M{"$sort": sorts}
+	} else {
+		return bson.M{"$sort": bson.D{{Key: "creationTimestamp", Value: -1}}}
 	}
-	return pipeline
 }
 
 func scopesmatch(match bson.D, scopes []store.Scope) bson.D {

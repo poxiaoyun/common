@@ -439,31 +439,31 @@ func (u *Unstructured) MarshalJSON() ([]byte, error) {
 	return json.Marshal(u.Object)
 }
 
-func CompareUnstructuredField(a, b *Unstructured, sorts []sortBy) int {
+func CompareUnstructuredField(a, b *Unstructured, sorts []SortBy) int {
 	for _, sort := range sorts {
-		switch sort.field {
+		switch sort.Field {
 		case "metadata.name", "name":
-			if sort.asc {
+			if sort.ASC {
 				return strings.Compare(a.GetName(), b.GetName())
 			}
 			return strings.Compare(b.GetName(), a.GetName())
 		case "metadata.creationTimestamp", "time":
 			at, bt := a.GetCreationTimestamp(), b.GetCreationTimestamp()
-			if sort.asc {
+			if sort.ASC {
 				return at.Compare(bt.Time)
 			}
 			return bt.Compare(at.Time)
 		}
 
-		av, ok := GetNestedField(a.Object, strings.Split(sort.field, ".")...)
+		av, ok := GetNestedField(a.Object, strings.Split(sort.Field, ".")...)
 		if !ok {
 			av = ""
 		}
-		bv, ok := GetNestedField(b.Object, strings.Split(sort.field, ".")...)
+		bv, ok := GetNestedField(b.Object, strings.Split(sort.Field, ".")...)
 		if !ok {
 			bv = ""
 		}
-		if sort.asc {
+		if sort.ASC {
 			return CompareField(av, bv)
 		}
 		return CompareField(bv, av)
@@ -496,16 +496,16 @@ func CompareField(a, b any) int {
 	}
 }
 
-type sortBy struct {
-	field string
-	asc   bool
+type SortBy struct {
+	Field string
+	ASC   bool
 }
 
-func ParseSorts(sort string) []sortBy {
+func ParseSorts(sort string) []SortBy {
 	if sort == "" {
 		return nil
 	}
-	sortbys := []sortBy{}
+	sortbys := []SortBy{}
 	for _, s := range strings.Split(sort, ",") {
 		s = strings.TrimSpace(s)
 		if s == "" {
@@ -518,7 +518,7 @@ func ParseSorts(sort string) []sortBy {
 		} else if strings.HasPrefix(s, "+") {
 			s = s[1:]
 		}
-		sortbys = append(sortbys, sortBy{field: s, asc: asc})
+		sortbys = append(sortbys, SortBy{Field: s, ASC: asc})
 	}
 	return sortbys
 }
