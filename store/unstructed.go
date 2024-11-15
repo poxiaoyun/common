@@ -512,11 +512,11 @@ func ParseSorts(sort string) []SortBy {
 			continue
 		}
 		asc := true
-		if strings.HasPrefix(s, "-") {
+		if strings.HasSuffix(s, "-") {
 			asc = false
-			s = s[1:]
-		} else if strings.HasPrefix(s, "+") {
-			s = s[1:]
+			s = s[:len(s)-1]
+		} else if strings.HasSuffix(s, "+") {
+			s = s[:len(s)-1]
 		}
 		sortbys = append(sortbys, SortBy{Field: s, ASC: asc})
 	}
