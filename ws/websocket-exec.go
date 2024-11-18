@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net/http"
 	"sync"
 	"time"
 
@@ -35,12 +34,13 @@ func NewPodExecutor(cs kubernetes.Interface, config *rest.Config,
 	return remotecommand.NewSPDYExecutor(config, "POST", req.URL())
 }
 
-func NewPodExecutorWithHttpTransport(cs kubernetes.Interface, config *rest.Config, tranport http.RoundTripper,
+func NewPodExecutorWithTransport(
+	cs kubernetes.Interface, config *rest.Config,
 	namespace, name string, options *corev1.PodExecOptions,
 ) (remotecommand.Executor, error) {
 	upgradeRoundTripper, err := httpstreamspdy.NewRoundTripperWithConfig(httpstreamspdy.RoundTripperConfig{
 		PingPeriod:       time.Second * 5,
-		UpgradeTransport: tranport,
+		UpgradeTransport: config.Transport,
 	})
 	if err != nil {
 		return nil, err
