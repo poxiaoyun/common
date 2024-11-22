@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	jsonpatch "github.com/evanphx/json-patch"
 	"xiaoshiai.cn/common/errors"
@@ -14,6 +15,14 @@ var _ Patch = &rawPatch{}
 
 func RawPatch(typ PatchType, data []byte) Patch {
 	return &rawPatch{typ: typ, data: data}
+}
+
+func JSONPointerUnescape(s string) string {
+	return strings.NewReplacer("~1", "/", "~0", "~").Replace(s)
+}
+
+func JSONPointerEscape(s string) string {
+	return strings.NewReplacer("~", "~0", "/", "~1").Replace(s)
 }
 
 type rawPatch struct {
