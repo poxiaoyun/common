@@ -128,6 +128,12 @@ func ValueOrDefault[T any](val string, defaultValue T) T {
 	case bool:
 		b, _ := strconv.ParseBool(val)
 		return any(b).(T)
+	case *bool:
+		if val == "" {
+			return defaultValue
+		}
+		b, _ := strconv.ParseBool(val)
+		return any(&b).(T)
 	case int64:
 		intval, _ := strconv.ParseInt(val, 10, 64)
 		return any(intval).(T)
