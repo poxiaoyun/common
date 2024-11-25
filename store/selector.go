@@ -64,3 +64,11 @@ func FieldsSelectorToReqirements(fields fields.Selector) Requirements {
 	}
 	return list
 }
+
+func ParseRequirements(expr string) (Requirements, error) {
+	sel, err := labels.Parse(expr)
+	if err != nil {
+		return nil, err
+	}
+	return LabelsSelectorToReqirements(sel), nil
+}
