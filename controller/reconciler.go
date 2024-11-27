@@ -63,6 +63,13 @@ func NewBetterReconciler[T store.Object](r Reconciler[T], cli store.Store, optio
 	return &BetterReconciler[T]{Options: *opts, Reconciler: r, Client: cli}
 }
 
+func (r *BetterReconciler[T]) Initialize(ctx context.Context) error {
+	if init, ok := r.Reconciler.(InitializeReconciler); ok {
+		return init.Initialize(ctx)
+	}
+	return nil
+}
+
 // nolint: funlen,gocognit
 func (r *BetterReconciler[T]) Reconcile(ctx context.Context, key *ScopedKey) error {
 	log := log.FromContext(ctx)

@@ -31,6 +31,11 @@ type TypedReconciler[T any] interface {
 	Reconcile(ctx context.Context, key T) error
 }
 
+// InitalizeReconciler is an optional interface that can be implemented by a Reconciler to
+type InitializeReconciler interface {
+	Initialize(ctx context.Context) error
+}
+
 var _ TypedReconciler[any] = TypedReconcilerFunc[any](nil)
 
 type TypedReconcilerFunc[T any] func(ctx context.Context, key T) error
@@ -134,6 +139,11 @@ func (h *TypedController[T]) Run(ctx context.Context) error {
 }
 
 func (h *TypedController[T]) run(ctx context.Context) error {
+	if init, ok := h.syncFunc.(InitializeReconciler); ok {
+		if err := init.Initialize(ctx); err != nil {
+			return err
+		}
+	}
 	eg, ctx := errgroup.WithContext(ctx)
 	// watch sources
 	for _, source := range h.sources {
