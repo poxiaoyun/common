@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blang/semver/v4"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/regclient/regclient"
@@ -299,6 +300,10 @@ func (o *OCIArtifacts) UploadHelmChart(ctx context.Context, image string, expect
 	}
 	if chart.Metadata.Version == "" {
 		return fmt.Errorf("chart version is empty")
+	}
+	// check must be semver version
+	if _, err := semver.Parse(chart.Metadata.Version); err != nil {
+		return fmt.Errorf("chart version must be semver version: %w", err)
 	}
 	// upload
 	ref, err := ref.New(image + ":" + chart.Metadata.Version)
