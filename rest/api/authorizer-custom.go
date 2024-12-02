@@ -84,6 +84,10 @@ func checkRecursive(ctx context.Context, allows []CustomAuthorizeNode, resources
 			return decision, msg, err
 		}
 		if decision == DecisionAllow {
+			// check this level
+			if allow.Authorizer != nil {
+				return allow.Authorizer.Authorize(ctx, user, origin)
+			}
 			return decision, msg, err
 		}
 	}
