@@ -1,7 +1,9 @@
 package harbor
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -61,6 +63,17 @@ func (c *Client) onResponse(req *http.Request, resp *http.Response) error {
 		if csrftoken := resp.Header.Get(csrfTokenHeader); csrftoken != "" {
 			c.csrftoken = csrftoken
 		}
+	}
+	if resp.StatusCode >= 400 {
+		he := HarborErrors{}
+		bodydata, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if len(bodydata) > 0 {
+			if err := json.Unmarshal(bodydata, &he); err != nil {
+				return fmt.Errorf("unexpected response status %d, %s", resp.StatusCode, string(bodydata))
+			}
+			return he
+		}
+		return fmt.Errorf("unexpected response status %d", resp.StatusCode)
 	}
 	return nil
 }
