@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,15 +15,52 @@ import (
 )
 
 type ScopedKey struct {
-	Name     string
-	Resource string
-	Scopes   []store.Scope
+	Name   string
+	Prefix string
+}
+
+func ScopedKeyFromObject(obj store.Object) ScopedKey {
+	return NewScopedKey(obj.GetScopes(), obj.GetName())
+}
+
+func NewScopedKey(scopes []store.Scope, name string) ScopedKey {
+	return ScopedKey{Name: name, Prefix: encodeScopes(scopes)}
+}
+
+func (s ScopedKey) Scopes() []store.Scope {
+	return decodeScopes(s.Prefix)
+}
+
+func encodeScopes(scopes []store.Scope) string {
+	ret := ""
+	for _, scope := range scopes {
+		ret += "/" + scope.Resource + "/" + scope.Name
+	}
+	return ret
+}
+
+func decodeScopes(scopes string) []store.Scope {
+	if len(scopes) == 0 {
+		return nil
+	}
+	ret := []store.Scope{}
+	parts := strings.Split(scopes, "/")
+	if parts[0] == "" {
+		parts = parts[1:]
+	}
+	for i := 0; i < len(parts); i += 2 {
+		ret = append(ret, store.Scope{
+			Resource: parts[i],
+			Name:     parts[i+1],
+		})
+	}
+	return ret
 }
 
 type (
-	Controller           = TypedController[*ScopedKey]
+	Controller           = TypedController[ScopedKey]
 	ControllerReconciler interface {
-		Reconcile(ctx context.Context, key *ScopedKey) error
+		Reconcile(ctx context.Context, key ScopedKey) error
 	}
 	ControllerQueue = TypedQueue[*ScopedKey]
 )
@@ -63,32 +101,32 @@ func WithReQueue(after time.Duration, err error) error {
 	return ReQueueError{Err: err, Atfer: after}
 }
 
-type ControllerOptions struct {
+type ControllerOptions[T comparable] struct {
 	Concurrent     int
 	LeaderElection LeaderElection
-	RateLimiter    workqueue.RateLimiter
+	RateLimiter    workqueue.TypedRateLimiter[T]
 }
 
-type ControllerOption func(*ControllerOptions)
+type ControllerOption[T comparable] func(*ControllerOptions[T])
 
-func WithConcurrent(concurrent int) ControllerOption {
-	return func(o *ControllerOptions) {
+func WithConcurrent[T comparable](concurrent int) ControllerOption[T] {
+	return func(o *ControllerOptions[T]) {
 		o.Concurrent = concurrent
 	}
 }
 
-func WithLeaderElection(leader LeaderElection) ControllerOption {
-	return func(o *ControllerOptions) {
+func WithLeaderElection[T comparable](leader LeaderElection) ControllerOption[T] {
+	return func(o *ControllerOptions[T]) {
 		o.LeaderElection = leader
 	}
 }
 
-func NewController(name string, sync ControllerReconciler, options ...ControllerOption) *Controller {
+func NewController(name string, sync ControllerReconciler, options ...ControllerOption[ScopedKey]) *Controller {
 	return NewTypedController(name, sync, options...)
 }
 
-func NewTypedController[T comparable](name string, sync TypedReconciler[T], options ...ControllerOption) *TypedController[T] {
-	opts := ControllerOptions{}
+func NewTypedController[T comparable](name string, sync TypedReconciler[T], options ...ControllerOption[T]) *TypedController[T] {
+	opts := ControllerOptions[T]{}
 	for _, opt := range options {
 		opt(&opts)
 	}
@@ -109,7 +147,7 @@ func NewTypedController[T comparable](name string, sync TypedReconciler[T], opti
 
 type TypedController[T comparable] struct {
 	name     string
-	options  ControllerOptions
+	options  ControllerOptions[T]
 	sources  []Source[T]
 	queue    TypedQueue[T]
 	syncFunc TypedReconciler[T]

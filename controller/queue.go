@@ -16,59 +16,11 @@ type TypedQueue[T comparable] interface {
 	AddRateLimited(key T)
 }
 
-func NewDefaultTypedQueue[T comparable](name string, rateLimiter workqueue.RateLimiter) TypedQueue[T] {
+func NewDefaultTypedQueue[T comparable](name string, rateLimiter workqueue.TypedRateLimiter[T]) TypedQueue[T] {
 	if rateLimiter == nil {
-		rateLimiter = workqueue.DefaultControllerRateLimiter()
+		rateLimiter = workqueue.DefaultTypedControllerRateLimiter[T]()
 	}
-	return &DefaultTypedQueue[T]{
-		Queue: workqueue.NewNamedRateLimitingQueue(rateLimiter, name),
-	}
+	return workqueue.NewTypedRateLimitingQueueWithConfig(rateLimiter, workqueue.TypedRateLimitingQueueConfig[T]{Name: name})
 }
 
-type DefaultTypedQueue[T any] struct {
-	Queue workqueue.RateLimitingInterface
-}
-
-// AddAfter implements ControllerQueue.
-func (w *DefaultTypedQueue[T]) AddAfter(key T, after time.Duration) {
-	w.Queue.AddAfter(key, after)
-}
-
-// AddRateLimited implements ControllerQueue.
-func (w *DefaultTypedQueue[T]) AddRateLimited(key T) {
-	w.Queue.AddRateLimited(key)
-}
-
-// ShutDown implements ControllerQueue.
-func (w *DefaultTypedQueue[T]) ShutDown() {
-	w.Queue.ShutDown()
-}
-
-// Done implements ControllerQueue.
-func (w *DefaultTypedQueue[T]) Done(item T) {
-	w.Queue.Done(item)
-}
-
-// Forget implements ControllerQueue.
-func (w *DefaultTypedQueue[T]) Forget(item T) {
-	w.Queue.Forget(item)
-}
-
-// Get implements ControllerQueue.
-func (w *DefaultTypedQueue[T]) Get() (T, bool) {
-	item, shutdown := w.Queue.Get()
-	if shutdown {
-		return *new(T), shutdown
-	}
-	key, ok := item.(T)
-	if !ok {
-		w.Queue.Forget(item)
-		return *new(T), false
-	}
-	return key, shutdown
-}
-
-// Add implements ControllerQueue.
-func (w *DefaultTypedQueue[T]) Add(key T) {
-	w.Queue.Add(key)
-}
+type DefaultTypedQueue[T comparable] workqueue.TypedRateLimitingInterface[T]

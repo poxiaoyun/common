@@ -21,9 +21,7 @@ func (f SourceFunc[K]) Run(ctx context.Context, queue TypedQueue[K]) error {
 
 func NewStoreSource(storage store.Store, example store.Object) *StoreSource {
 	return NewCustomStoreSource(storage, example, func(ctx context.Context, kind store.WatchEventType, obj store.Object) ([]ScopedKey, error) {
-		return []ScopedKey{
-			{Name: obj.GetName(), Resource: obj.GetResource(), Scopes: obj.GetScopes()},
-		}, nil
+		return []ScopedKey{ScopedKeyFromObject(obj)}, nil
 	})
 }
 
@@ -47,7 +45,7 @@ type StoreSource struct {
 	KeyFunc  KeyFunc
 }
 
-func (s *StoreSource) Run(ctx context.Context, queue TypedQueue[*ScopedKey]) error {
+func (s *StoreSource) Run(ctx context.Context, queue TypedQueue[ScopedKey]) error {
 	logger := log.FromContext(ctx).WithValues("resource", s.Resource)
 	logger.Info("source start")
 	ctx = log.NewContext(ctx, logger)
@@ -60,7 +58,7 @@ func (s *StoreSource) Run(ctx context.Context, queue TypedQueue[*ScopedKey]) err
 			return nil
 		}
 		for i := range keys {
-			queue.Add(&keys[i])
+			queue.Add(keys[i])
 		}
 		return nil
 	}))

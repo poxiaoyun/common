@@ -11,8 +11,8 @@ import (
 )
 
 type Reconciler[T store.Object] interface {
-	Sync(ctx context.Context, store store.Store, obj T) error
-	Remove(ctx context.Context, store store.Store, obj T) error
+	Sync(ctx context.Context, obj T) error
+	Remove(ctx context.Context, obj T) error
 }
 
 // BetterReconciler wraps the reconciler with some features.
@@ -71,7 +71,7 @@ func (r *BetterReconciler[T]) Initialize(ctx context.Context) error {
 }
 
 // nolint: funlen,gocognit
-func (r *BetterReconciler[T]) Reconcile(ctx context.Context, key *ScopedKey) error {
+func (r *BetterReconciler[T]) Reconcile(ctx context.Context, key ScopedKey) error {
 	log := log.FromContext(ctx)
 
 	log.Info("start reconcile")
@@ -79,7 +79,7 @@ func (r *BetterReconciler[T]) Reconcile(ctx context.Context, key *ScopedKey) err
 
 	obj, _ := reflect.New(reflect.TypeOf(*new(T)).Elem()).Interface().(T)
 
-	condStorage := r.Client.Scope(key.Scopes...)
+	condStorage := r.Client.Scope(key.Scopes()...)
 	if err := condStorage.Get(ctx, key.Name, obj); err != nil {
 		log.Error(err, "unable to fetch")
 		// if object not found , just ignore it
@@ -122,11 +122,11 @@ func (r *BetterReconciler[T]) Reconcile(ctx context.Context, key *ScopedKey) err
 	return r.processWithPostFunc(ctx, condStorage, obj, r.Reconciler.Sync)
 }
 
-func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStorage store.Store, obj T, fun func(ctx context.Context, condStorage store.Store, obj T) error) error {
+func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStorage store.Store, obj T, fun func(ctx context.Context, obj T) error) error {
 	log := log.FromContext(ctx)
 	original := DeepCopyObject(obj)
 
-	requeueAfter, funcerr := unwrapReQueueError(fun(ctx, condStorage, obj))
+	requeueAfter, funcerr := unwrapReQueueError(fun(ctx, obj))
 	if funcerr != nil {
 		log.Error(funcerr, "unable to reconcile")
 		r.setStatusMessage(obj, funcerr)
