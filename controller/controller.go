@@ -223,7 +223,7 @@ func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], sy
 						return
 					}
 					if err := syncfunc(ctx, val); err != nil {
-						logger.Error(err, "sync error")
+						logger.Error(err, "sync error", "key", val)
 						// requeue
 						retry := ReQueueError{}
 						if errors.As(err, &retry) {
