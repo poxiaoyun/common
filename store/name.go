@@ -6,13 +6,22 @@ import (
 	"strings"
 )
 
+type ResourceName interface {
+	ResourceName() string
+}
+
 func GetResource(obj any) (string, error) {
+	// limit only can use resouce field from [Unstructured]'s GetResource() method
+	// otherwise, it will cause an injection attack
 	t := reflect.TypeOf(obj)
 	switch val := obj.(type) {
-	case Object:
+	case ResourceName:
+		return val.ResourceName(), nil
+	case *Unstructured:
 		if resource := val.GetResource(); resource != "" {
 			return resource, nil
 		}
+		return "", fmt.Errorf("cannot get resource name from Unstructured object")
 	case ObjectList:
 		if resource := val.GetResource(); resource != "" {
 			return resource, nil
