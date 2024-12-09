@@ -81,6 +81,42 @@ func walkDir(fsys FileSystem, name string, d DirEntry, walkDirFn WalkDirFunc) er
 }
 
 func Copy(fsys FileSystem, dst, src string) error {
+	finfo, err := fsys.Stat(src)
+	if err != nil {
+		return err
+	}
+	fmode := finfo.Mode()
+	if fmode.IsDir() {
+		return CopyDir(fsys, dst, src)
+	}
+	return CopyFile(fsys, dst, src)
+}
+
+func CopyDir(fsys FileSystem, dst, src string) error {
+	if err := fsys.MkdirAll(dst, 0o777); err != nil {
+		return err
+	}
+	entries, err := fsys.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		srcPath := path.Join(src, entry.Name())
+		dstPath := path.Join(dst, entry.Name())
+		if entry.IsDir() {
+			if err := CopyDir(fsys, dstPath, srcPath); err != nil {
+				return err
+			}
+		} else {
+			if err := CopyFile(fsys, dstPath, srcPath); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func CopyFile(fsys FileSystem, dst, src string) error {
 	srcFile, err := Open(fsys, src)
 	if err != nil {
 		return err

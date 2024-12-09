@@ -3,6 +3,7 @@ package fs
 import (
 	"io/fs"
 	"path"
+	"strings"
 )
 
 var _ FileSystem = SubFS{}
@@ -63,7 +64,7 @@ func (f SubFS) RemoveAll(path string) error {
 	if err != nil {
 		return err
 	}
-	return f.Fsys.Remove(full)
+	return f.Fsys.RemoveAll(full)
 }
 
 // Rename implements FileSystem.
@@ -119,7 +120,10 @@ func (f SubFS) Sub(dir string) (FileSystem, error) {
 
 // fullName maps name to the fully-qualified name dir/name.
 func (f SubFS) fullName(op string, name string) (string, error) {
-	if !fs.ValidPath(name) {
+	if name == "" || name == "." || name == "/" {
+		return f.Dir, nil
+	}
+	if !fs.ValidPath(strings.TrimPrefix(name, "/")) {
 		return "", &fs.PathError{Op: op, Path: name, Err: fs.ErrInvalid}
 	}
 	return path.Join(f.Dir, name), nil
