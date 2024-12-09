@@ -262,7 +262,7 @@ func (m *MongoStorage) Count(ctx context.Context, obj store.Object, opts ...stor
 		m.core.logger.V(5).Info("count", "collection", col.Name(), "filter", filter)
 		doccount, err := col.CountDocuments(ctx, filter)
 		if err != nil {
-			return warpMongoError(err, col, obj)
+			return WarpMongoError(err, col, obj)
 		}
 		count = int(doccount)
 		return nil
@@ -300,7 +300,7 @@ func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...st
 		m.core.logger.V(5).Info("create", "collection", col.Name(), "data", data)
 		result, err := col.InsertOne(ctx, data)
 		if err != nil {
-			return warpMongoError(err, col, into)
+			return WarpMongoError(err, col, into)
 		}
 		switch id := result.InsertedID.(type) {
 		case string:
@@ -355,7 +355,7 @@ func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...sto
 		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
 		m.core.logger.V(5).Info("delete", "collection", col.Name(), "filter", filter)
 		if err := col.FindOneAndDelete(ctx, filter).Decode(obj); err != nil {
-			return warpMongoError(err, col, obj)
+			return WarpMongoError(err, col, obj)
 		}
 		return nil
 	})
@@ -389,7 +389,7 @@ func (m *MongoStorage) Get(ctx context.Context, name string, obj store.Object, o
 		findopt := mongooptions.FindOne()
 		m.core.logger.V(5).Info("get", "collection", col.Name(), "filter", filter)
 		if err := col.FindOne(ctx, filter, findopt).Decode(obj); err != nil {
-			return warpMongoError(err, col, obj)
+			return WarpMongoError(err, col, obj)
 		}
 		return nil
 	})
@@ -416,7 +416,7 @@ func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...sto
 		}
 		m.core.logger.V(5).Info("update", "collection", col.Name(), "filter", filter, "update", update)
 		if err := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions).Decode(obj); err != nil {
-			return warpMongoError(err, col, obj)
+			return WarpMongoError(err, col, obj)
 		}
 		return nil
 	})
@@ -441,7 +441,7 @@ func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.
 		m.core.logger.V(5).Info("patch", "collection", col.Name(), "filter", filter, "update", update)
 		result := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions)
 		if err := result.Decode(obj); err != nil {
-			return warpMongoError(err, col, obj)
+			return WarpMongoError(err, col, obj)
 		}
 		return nil
 	})
@@ -647,18 +647,22 @@ func patchToMongoUpdate(patch store.Patch, excludes []string, includes []string)
 	}
 }
 
-func warpMongoError(err error, col *mongo.Collection, obj store.Object) error {
+func WarpMongoError(err error, col *mongo.Collection, obj store.Object) error {
 	if obj == nil {
 		obj = &store.ObjectMeta{}
 	}
 	if err == nil {
 		return nil
 	}
+	return ConvetMongoError(err, col, obj.GetName())
+}
+
+func ConvetMongoError(err error, col *mongo.Collection, name string) error {
 	if stderrors.Is(err, mongo.ErrNoDocuments) {
-		return errors.NewNotFound(col.Name(), obj.GetName())
+		return errors.NewNotFound(col.Name(), name)
 	}
 	if mongo.IsDuplicateKeyError(err) {
-		return errors.NewAlreadyExists(col.Name(), obj.GetName())
+		return errors.NewAlreadyExists(col.Name(), name)
 	}
 	return errors.NewInternalError(err)
 }
@@ -685,7 +689,7 @@ func (m *MongoStorageStatus) Patch(ctx context.Context, obj store.Object, patch 
 		}
 		m.core.logger.V(5).Info("patch status", "collection", col.Name(), "filter", filter, "update", update)
 		if err := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions).Decode(obj); err != nil {
-			return warpMongoError(err, col, obj)
+			return WarpMongoError(err, col, obj)
 		}
 		return nil
 	})
@@ -707,7 +711,7 @@ func (m *MongoStorageStatus) Update(ctx context.Context, obj store.Object, opts 
 		}
 		m.core.logger.V(5).Info("update status", "collection", col.Name(), "filter", filter, "update", update)
 		if err := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions).Decode(obj); err != nil {
-			return warpMongoError(err, col, obj)
+			return WarpMongoError(err, col, obj)
 		}
 		return nil
 	})
