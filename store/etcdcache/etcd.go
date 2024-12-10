@@ -281,6 +281,14 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 		if !options.IncludeSubScopes {
 			filtered = FilterByScopes(filtered, c.scopes)
 		}
+		// search
+		if options.Search != "" {
+			filtered = slices.DeleteFunc(filtered, func(uns unstructured.Unstructured) bool {
+				// allow search alias
+				alias, _, _ := unstructured.NestedString(uns.Object, UnstructuredObjectField, "alias")
+				return !strings.Contains(uns.GetName(), options.Search) && !strings.Contains(alias, options.Search)
+			})
+		}
 		// sort
 		SortUnstructuredList(filtered, options.Sort)
 		// pagination

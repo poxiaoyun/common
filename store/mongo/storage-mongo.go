@@ -610,6 +610,8 @@ func conditionsmatch(match bson.D, conds store.Requirements) bson.D {
 			match = append(match, bson.E{Key: key, Value: bson.M{"$gt": values[0]}})
 		case selection.LessThan:
 			match = append(match, bson.E{Key: key, Value: bson.M{"$lt": values[0]}})
+		case "like", "~=":
+			match = append(match, bson.E{Key: key, Value: bson.M{"$regex": values[0], "$options": "i"}})
 		}
 	}
 	return match

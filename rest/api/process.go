@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/log"
 )
 
 type ResponseStatusOnly int32
@@ -21,6 +22,7 @@ func On(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context) (an
 	obj, err := fn(ctx)
 	if err != nil {
 		Error(w, err)
+		log.FromContext(ctx).Error(err, "response")
 		return
 	}
 	switch val := obj.(type) {
