@@ -130,6 +130,11 @@ func (r *Builder) Body(data io.Reader, contenttype string) *Builder {
 	return r
 }
 
+func (r *Builder) GetBody(fn func() (io.ReadCloser, error)) *Builder {
+	r.R.GetBody = fn
+	return r
+}
+
 func (r *Builder) Binary(data []byte) *Builder {
 	return r.Body(bytes.NewReader(data), "application/octet-stream")
 }

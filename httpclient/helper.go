@@ -27,14 +27,14 @@ type Request struct {
 	Cookies      []http.Cookie
 	ContentType  string
 	Body         io.Reader
-	GetBody      func() (io.Reader, error)
+	GetBody      func() (io.ReadCloser, error)
 	DecodeInto   any
 	OnRequest    func(req *http.Request) error
 	OnResponse   func(req *http.Request, resp *http.Response) error
 	OnDecode     func(resp *http.Response, into any) error
 }
 
-func BuildRequest(r Request) (*http.Request, error) {
+func BuildRequest(ctx context.Context, r Request) (*http.Request, error) {
 	if r.Err != nil {
 		return nil, r.Err
 	}
@@ -50,9 +50,12 @@ func BuildRequest(r Request) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest(r.Method, u.String(), r.Body)
+	req, err := http.NewRequestWithContext(ctx, r.Method, u.String(), r.Body)
 	if err != nil {
 		return nil, err
+	}
+	if r.GetBody != nil {
+		req.GetBody = r.GetBody
 	}
 	if r.ContentType != "" {
 		req.Header.Set("Content-Type", r.ContentType)
@@ -72,7 +75,7 @@ func BuildRequest(r Request) (*http.Request, error) {
 }
 
 func Do(ctx context.Context, r Request) (*http.Response, error) {
-	req, err := BuildRequest(r)
+	req, err := BuildRequest(ctx, r)
 	if err != nil {
 		return nil, err
 	}
