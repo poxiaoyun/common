@@ -185,6 +185,10 @@ func (m *MongoStorageCore) initCollections(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if defination.Uniques == nil {
+			// default unique index is name
+			defination.Uniques = []UnionFields{{"name"}}
+		}
 		col := m.db.Collection(resource)
 		indexes := []mongo.IndexModel{}
 		// scopes keys
