@@ -6,6 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.30.3
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.27
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.58.2
+	github.com/aws/smithy-go v1.20.3
 	github.com/blang/semver/v4 v4.0.0
 	github.com/coreos/go-oidc/v3 v3.11.0
 	github.com/evanphx/json-patch v5.9.0+incompatible
@@ -73,7 +74,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.3.17 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.11.17 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.17.15 // indirect
-	github.com/aws/smithy-go v1.20.3 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

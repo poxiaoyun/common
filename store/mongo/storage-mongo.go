@@ -463,12 +463,12 @@ func (m *MongoStorage) List(ctx context.Context, list store.ObjectList, opts ...
 		m.core.logger.V(5).Info("list", "collection", col.Name(), "pipeline", pipeline)
 		cur, err := col.Aggregate(ctx, pipeline)
 		if err != nil {
-			return errors.NewInternalError(err)
+			return ConvetMongoListError(err, col)
 		}
 		defer cur.Close(ctx)
 		if cur.Next(ctx) {
 			if err := cur.Decode(list); err != nil {
-				return errors.NewInternalError(err)
+				return ConvetMongoListError(err, col)
 			}
 		}
 		// set empty list if no items instead of nil
@@ -514,7 +514,7 @@ func listProjectionFromList(list store.ObjectList) []string {
 
 func listPipeline(match bson.D, pre []any, opts store.ListOptions, post []any) bson.A {
 	if search := opts.Search; search != "" {
-		match = append(match, bson.E{Key: "name", Value: bson.M{"$regex": search, "$options": "i"}})
+		match = append(match, searchStage("name", search))
 	}
 	match = conditionsmatch(match, SelectorToReqirements(opts.LabelRequirements, opts.FieldRequirements))
 	pipeline := bson.A{}
@@ -611,10 +611,40 @@ func conditionsmatch(match bson.D, conds store.Requirements) bson.D {
 		case selection.LessThan:
 			match = append(match, bson.E{Key: key, Value: bson.M{"$lt": values[0]}})
 		case "like", "~=":
-			match = append(match, bson.E{Key: key, Value: bson.M{"$regex": values[0], "$options": "i"}})
+			match = append(match, searchStage(key, store.AnyToString(values[0])))
 		}
 	}
 	return match
+}
+
+func searchStage(key, search string) bson.E {
+	if search == "" {
+		return bson.E{}
+	}
+	// do not support regex, it raise error when search is invalid regex
+	search = escapeRegex(search)
+	// https://www.mongodb.com/docs/manual/reference/operator/query/regex/
+	return bson.E{Key: key, Value: bson.M{"$regex": search, "$options": "i"}}
+}
+
+var escapeRegexReplacer = strings.NewReplacer(
+	".", "\\.",
+	"*", "\\*",
+	"+", "\\+",
+	"?", "\\?",
+	"^", "\\^",
+	"$", "\\$",
+	"{", "\\{",
+	"}", "\\}",
+	"(", "\\(",
+	")", "\\)",
+	"|", "\\|",
+	"[", "\\[",
+	"]", "\\]",
+	"\\", "\\\\")
+
+func escapeRegex(input string) string {
+	return escapeRegexReplacer.Replace(input)
 }
 
 func patchToMongoUpdate(patch store.Patch, excludes []string, includes []string) (bson.D, error) {
@@ -657,6 +687,17 @@ func WarpMongoError(err error, col *mongo.Collection, obj store.Object) error {
 		return nil
 	}
 	return ConvetMongoError(err, col, obj.GetName())
+}
+
+func ConvetMongoListError(err error, col *mongo.Collection) error {
+	mongoerr, ok := err.(mongo.CommandError)
+	if ok {
+		switch mongoerr.Code {
+		case 51091:
+			return errors.NewBadRequest("invalid search expression")
+		}
+	}
+	return errors.NewInternalError(err)
 }
 
 func ConvetMongoError(err error, col *mongo.Collection, name string) error {
