@@ -55,7 +55,12 @@ func BuildRequest(ctx context.Context, r Request) (*http.Request, error) {
 		return nil, err
 	}
 	if r.GetBody != nil {
+		req.ContentLength = -1
 		req.GetBody = r.GetBody
+		req.Body, err = r.GetBody()
+		if err != nil {
+			return nil, err
+		}
 	}
 	if r.ContentType != "" {
 		req.Header.Set("Content-Type", r.ContentType)
