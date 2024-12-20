@@ -8,8 +8,10 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"path"
+	"strings"
 
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
@@ -112,6 +114,53 @@ func NewMultiFormData(data map[string]string) (io.Reader, string) {
 	}
 	writer.Close()
 	return body, writer.FormDataContentType()
+}
+
+type MultiFormPart struct {
+	FieldName string
+	Reader    io.Reader
+	FileName  string
+	Header    textproto.MIMEHeader
+}
+
+var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
+
+func escapeQuotes(s string) string {
+	return quoteEscaper.Replace(s)
+}
+
+func NewMultiFormDataStream(data []MultiFormPart) (io.Reader, string) {
+	piper, pipew := io.Pipe()
+	mr := multipart.NewWriter(pipew)
+	go func() {
+		defer pipew.Close()
+		defer mr.Close()
+		for _, p := range data {
+			h := make(textproto.MIMEHeader)
+			if p.FieldName != "" {
+				h.Set("Content-Disposition",
+					fmt.Sprintf(`form-data; name="%s"`, escapeQuotes(p.FieldName)))
+			}
+			if p.FileName != "" {
+				h.Set("Content-Disposition",
+					fmt.Sprintf(`form-data; name="%s"; filename="%s"`, escapeQuotes(p.FieldName), escapeQuotes(p.FileName)))
+				h.Set("Content-Type", "application/octet-stream")
+			}
+			for k, v := range p.Header {
+				h[k] = v
+			}
+			part, err := mr.CreatePart(h)
+			if err != nil {
+				pipew.CloseWithError(err)
+				return
+			}
+			if _, err := io.Copy(part, p.Reader); err != nil {
+				pipew.CloseWithError(err)
+				return
+			}
+		}
+	}()
+	return piper, mr.FormDataContentType()
 }
 
 func NewFormURLEncoded(data map[string]string) (io.Reader, string) {

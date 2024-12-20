@@ -108,6 +108,10 @@ func (r *Builder) MultiFormData(data map[string]string) *Builder {
 	return r.Body(NewMultiFormData(data))
 }
 
+func (r *Builder) MultiFormDataStream(data []MultiFormPart) *Builder {
+	return r.Body(NewMultiFormDataStream(data))
+}
+
 func (r *Builder) FormURLEncoded(data map[string]string) *Builder {
 	return r.Body(NewFormURLEncoded(data))
 }
