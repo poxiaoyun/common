@@ -48,10 +48,8 @@ func BuildRequest(ctx context.Context, r Request) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-	u, err := MergeURL(*serveru, r.Path, r.Queries)
-	if err != nil {
-		return nil, err
-	}
+	u := MergeURL(*serveru, r.Path, r.Queries)
+
 	req, err := http.NewRequestWithContext(ctx, r.Method, u.String(), r.Body)
 	if err != nil {
 		return nil, err
@@ -171,14 +169,14 @@ func NewFormURLEncoded(data map[string]string) (io.Reader, string) {
 	return bytes.NewBufferString(form.Encode()), "application/x-www-form-urlencoded"
 }
 
-func MergeURL(u url.URL, reqpath string, queries url.Values) (*url.URL, error) {
+func MergeURL(u url.URL, reqpath string, queries url.Values) *url.URL {
 	u.Path = path.Join(u.Path, reqpath)
 	existsQuery := u.Query()
 	for k, v := range queries {
 		existsQuery[k] = v
 	}
 	u.RawQuery = existsQuery.Encode()
-	return &u, nil
+	return &u
 }
 
 func GetClient(cli *http.Client, tp http.RoundTripper) *http.Client {

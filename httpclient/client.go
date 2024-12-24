@@ -66,10 +66,7 @@ func (c *Client) Request(method string, path string) *Builder {
 
 func GetWebSocket(ctx context.Context, cliconfig *ClientConfig, reqpath string, queries url.Values, onmsg func(ctx context.Context, msg []byte) error) error {
 	log := log.FromContext(ctx).WithValues("path", reqpath, "queries", queries)
-	u, err := MergeURL(cliconfig.Server, reqpath, queries)
-	if err != nil {
-		return err
-	}
+	u := MergeURL(cliconfig.Server, reqpath, queries)
 	switch u.Scheme {
 	case "http":
 		u.Scheme = "ws"
