@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 	"k8s.io/client-go/util/workqueue"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
@@ -141,6 +142,10 @@ func NewTypedController[T comparable](name string, sync TypedReconciler[T], opti
 		options:  opts,
 		queue:    NewDefaultTypedQueue[T](name, opts.RateLimiter),
 		syncFunc: sync,
+		ratelimiter: workqueue.NewTypedRateLimitingQueueWithConfig(
+			workqueue.DefaultTypedControllerRateLimiter[T](),
+			workqueue.TypedRateLimitingQueueConfig[T]{Name: name + "-rate-limiter"},
+		),
 	}
 	return c
 }
@@ -151,6 +156,9 @@ type TypedController[T comparable] struct {
 	sources  []Source[T]
 	queue    TypedQueue[T]
 	syncFunc TypedReconciler[T]
+
+	// ratelimiter is a global ratelimiter for the controller
+	ratelimiter workqueue.TypedRateLimitingInterface[T]
 }
 
 func (h *TypedController[T]) Watch(souce ...Source[T]) *TypedController[T] {
@@ -206,6 +214,9 @@ func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], sy
 
 	logger := log.FromContext(ctx)
 
+	// 10 qps, burst 100
+	ratelimit := rate.NewLimiter(rate.Limit(10), 100)
+
 	// get item from queue and process
 	wg := sync.WaitGroup{}
 	wg.Add(concurent)
@@ -222,6 +233,9 @@ func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], sy
 						queue.Done(val)
 						return
 					}
+					// ratelimit 1
+					ratelimit.Wait(ctx)
+
 					if err := syncfunc(ctx, val); err != nil {
 						logger.Error(err, "sync error", "key", val)
 						// requeue
