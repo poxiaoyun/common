@@ -33,7 +33,7 @@ type Request struct {
 	DecodeInto   any
 	OnRequest    func(req *http.Request) error
 	OnResponse   func(req *http.Request, resp *http.Response) error
-	OnDecode     func(resp *http.Response, into any) error
+	OnDecode     func(req *http.Request, resp *http.Response, into any) error
 }
 
 func BuildRequest(ctx context.Context, r Request) (*http.Request, error) {
@@ -96,9 +96,9 @@ func Do(ctx context.Context, r Request) (*http.Response, error) {
 	}
 	if r.DecodeInto != nil {
 		if r.OnDecode == nil {
-			return resp, DefaultDecodeFunc(resp, r.DecodeInto)
+			return resp, DefaultDecodeFunc(req, resp, r.DecodeInto)
 		}
-		return resp, r.OnDecode(resp, r.DecodeInto)
+		return resp, r.OnDecode(req, resp, r.DecodeInto)
 	} else {
 		return resp, nil
 	}
@@ -189,7 +189,7 @@ func GetClient(cli *http.Client, tp http.RoundTripper) *http.Client {
 	return cli
 }
 
-func DefaultDecodeFunc(resp *http.Response, into any) error {
+func DefaultDecodeFunc(req *http.Request, resp *http.Response, into any) error {
 	if resp.StatusCode < http.StatusInternalServerError && resp.StatusCode >= http.StatusBadRequest {
 		bytes, _ := io.ReadAll(resp.Body)
 		return errors.NewBadRequest(string(bytes))
@@ -214,8 +214,9 @@ func DefaultDecodeFunc(resp *http.Response, into any) error {
 		if err != nil {
 			return err
 		}
+		log.FromContext(req.Context()).V(5).Info("common http client response", "status", resp.StatusCode, "body", string(jsondata))
 		if err := json.Unmarshal(jsondata, into); err != nil {
-			return fmt.Errorf("unexpected response: %s", string(jsondata))
+			return errors.NewInternalError(fmt.Errorf("failed to unmarshal response: %w, response: %s", err, string(jsondata)))
 		}
 		return nil
 	}

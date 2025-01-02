@@ -143,7 +143,7 @@ func (r *Builder) Binary(data []byte) *Builder {
 	return r.Body(bytes.NewReader(data), "application/octet-stream")
 }
 
-func (r *Builder) OnDecode(handler func(resp *http.Response, into any) error) *Builder {
+func (r *Builder) OnDecode(handler func(req *http.Request, resp *http.Response, into any) error) *Builder {
 	r.R.OnDecode = handler
 	return r
 }
