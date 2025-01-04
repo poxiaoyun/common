@@ -293,4 +293,5 @@ var PageParams = []Param{
 	QueryParam("search", "Search string for searching").Optional(),
 	QueryParam("sort", "Sort string for sorting").In("name", "name-", "time", "time-").Optional(),
 	QueryParam("label-selector", "Selector string for filtering").Optional(),
+	QueryParam("continue", "Continue token for pagination").Optional(),
 }

@@ -30,6 +30,12 @@ type Page[T any] struct {
 	Items []T   `json:"items"`
 	Page  int64 `json:"page"`
 	Size  int64 `json:"size"`
+
+	// for pagination
+	// if continue is not empty, means there are more items
+	// when use continue style pagination, total is not returned
+	// and page is ignored
+	Continue string `json:"continue,omitempty"`
 }
 
 func PageObjectFromRequest[T any](req *http.Request, list []T) Page[T] {

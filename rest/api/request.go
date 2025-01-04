@@ -60,14 +60,18 @@ type ListOptions struct {
 	Size   int    `json:"size,omitempty"`
 	Search string `json:"search,omitempty"`
 	Sort   string `json:"sort,omitempty"`
+	// Continue is a token to continue the list
+	// it is used for pagination
+	Continue string `json:"continue,omitempty"`
 }
 
 func GetListOptions(r *http.Request) ListOptions {
 	return ListOptions{
-		Page:   Query(r, "page", 1),
-		Size:   Query(r, "size", 10),
-		Search: Query(r, "search", ""),
-		Sort:   Query(r, "sort", ""),
+		Page:     Query(r, "page", 1),
+		Size:     Query(r, "size", 10),
+		Search:   Query(r, "search", ""),
+		Sort:     Query(r, "sort", ""),
+		Continue: Query(r, "continue", ""),
 	}
 }
 
