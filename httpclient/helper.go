@@ -11,10 +11,12 @@ import (
 	"net/textproto"
 	"net/url"
 	"path"
+	"reflect"
 	"strings"
 
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
+	libreflect "xiaoshiai.cn/common/reflect"
 )
 
 type Request struct {
@@ -220,4 +222,21 @@ func DefaultDecodeFunc(req *http.Request, resp *http.Response, into any) error {
 		}
 		return nil
 	}
+}
+
+func ObjectToQuery(v any) url.Values {
+	values := url.Values{}
+	libreflect.FlattenStructOmmitEmpty("", 1, true, reflect.ValueOf(v), func(name string, v reflect.Value) error {
+		if v.Kind() == reflect.Slice || v.Kind() == reflect.Struct {
+			jsondata, err := json.Marshal(v.Interface())
+			if err != nil {
+				return err
+			}
+			values.Add(name, string(jsondata))
+			return nil
+		}
+		values.Add(name, fmt.Sprint(v.Interface()))
+		return nil
+	})
+	return values
 }

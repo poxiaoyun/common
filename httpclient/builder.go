@@ -66,6 +66,10 @@ func (r *Builder) Query(key, value string) *Builder {
 	return r
 }
 
+func (r *Builder) QueriesData(data any) *Builder {
+	return r.Queries(ObjectToQuery(data))
+}
+
 func (r *Builder) Queries(queries url.Values) *Builder {
 	if r.R.Queries == nil {
 		r.R.Queries = url.Values{}

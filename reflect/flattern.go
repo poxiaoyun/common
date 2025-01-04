@@ -7,6 +7,10 @@ import "reflect"
 // If maxDepth is 0, only the top-level fields will be iterated.
 // name is json path of the field. eg: "metadata.name"
 func FlattenStruct(name string, maxDepth int, v reflect.Value, fieldFunc func(name string, v reflect.Value) error) error {
+	return FlattenStructOmmitEmpty(name, maxDepth, false, v, fieldFunc)
+}
+
+func FlattenStructOmmitEmpty(name string, maxDepth int, ommitEmpty bool, v reflect.Value, fieldFunc func(name string, v reflect.Value) error) error {
 	if maxDepth == 0 {
 		return fieldFunc(name, v)
 	}
@@ -25,7 +29,7 @@ func FlattenStruct(name string, maxDepth int, v reflect.Value, fieldFunc func(na
 	case reflect.Struct:
 		t := v.Type()
 		for i := 0; i < t.NumField(); i++ {
-			isEmbedded, isIgnore, fieldName := StructFieldInfo(t.Field(i))
+			isEmbedded, isIgnore, filedOmmitEmpty, fieldName := StructFieldInfoN(t.Field(i))
 			if isIgnore {
 				continue
 			}
@@ -34,6 +38,9 @@ func FlattenStruct(name string, maxDepth int, v reflect.Value, fieldFunc func(na
 				if err := FlattenStruct(name, maxDepth, fieldValue, fieldFunc); err != nil {
 					return err
 				}
+				continue
+			}
+			if ommitEmpty && filedOmmitEmpty && fieldValue.IsZero() {
 				continue
 			}
 			if err := FlattenStruct(nextkey(fieldName), maxDepth-1, fieldValue, fieldFunc); err != nil {

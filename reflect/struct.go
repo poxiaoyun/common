@@ -171,7 +171,12 @@ func setFieldValue(v reflect.Value, value any, path ...string) error {
 }
 
 func StructFieldInfo(structField reflect.StructField) (bool, bool, string) {
-	isEmbedded, isIgnored, fieldName := structField.Anonymous, false, structField.Name
+	isEmbedded, isIgnored, _, fieldName := StructFieldInfoN(structField)
+	return isEmbedded, isIgnored, fieldName
+}
+
+func StructFieldInfoN(structField reflect.StructField) (bool, bool, bool, string) {
+	isEmbedded, isIgnored, fieldName, omitempty := structField.Anonymous, false, structField.Name, false
 	// json
 	fieldTag := structField.Tag.Get("json")
 	if fieldTag == "" {
@@ -179,21 +184,27 @@ func StructFieldInfo(structField reflect.StructField) (bool, bool, string) {
 	}
 	if fieldTag != "" {
 		opts := strings.Split(fieldTag, ",")
-		switch val := opts[0]; val {
+
+		jsonname, opts := opts[0], opts[1:]
+		switch jsonname {
 		case "-":
 			isIgnored = true
 		case "":
 		default:
-			fieldName = val
+			fieldName = jsonname
 			isEmbedded = false // if field is embedded,but json tag has name,then it is not embedded
 		}
-		for _, opt := range opts[1:] {
-			if opt == "inline" {
+
+		for _, opt := range opts {
+			switch opt {
+			case "omitempty":
+				omitempty = true
+			case "inline": // inline is a json tag option
 				isEmbedded = true
 			}
 		}
 	}
-	return isEmbedded, isIgnored, fieldName
+	return isEmbedded, isIgnored, omitempty, fieldName
 }
 
 func SetValueAutoConvert(v reflect.Value, value any) error {
