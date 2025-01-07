@@ -23,6 +23,7 @@ type Client struct {
 	RoundTripper http.RoundTripper
 	OnRequest    func(req *http.Request) error
 	OnResponse   func(req *http.Request, resp *http.Response) error
+	Debug        bool
 }
 
 func NewClientFromConfig(cfg *ClientConfig) *Client {
@@ -61,7 +62,8 @@ func (c *Client) Request(method string, path string) *Builder {
 		OnResponse(c.OnResponse).
 		Client(c.Client).
 		RoundTripper(c.RoundTripper).
-		BaseAddr(c.Server)
+		BaseAddr(c.Server).
+		Debug(c.Debug)
 }
 
 func GetWebSocket(ctx context.Context, cliconfig *ClientConfig, reqpath string, queries url.Values, onmsg func(ctx context.Context, msg []byte) error) error {

@@ -58,6 +58,11 @@ func (r *Builder) BaseAddr(addr string) *Builder {
 	return r
 }
 
+func (r *Builder) Debug(debug bool) *Builder {
+	r.R.Debug = debug
+	return r
+}
+
 func (r *Builder) Query(key, value string) *Builder {
 	if r.R.Queries == nil {
 		r.R.Queries = url.Values{}

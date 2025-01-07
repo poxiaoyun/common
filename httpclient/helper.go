@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/http/httputil"
 	"net/textproto"
 	"net/url"
 	"path"
@@ -36,6 +37,7 @@ type Request struct {
 	OnRequest    func(req *http.Request) error
 	OnResponse   func(req *http.Request, resp *http.Response) error
 	OnDecode     func(req *http.Request, resp *http.Response, into any) error
+	Debug        bool
 }
 
 func BuildRequest(ctx context.Context, r Request) (*http.Request, error) {
@@ -86,10 +88,30 @@ func Do(ctx context.Context, r Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.FromContext(ctx).V(5).Info("common http client request", "method", req.Method, "url", req.URL.String())
+	log := log.FromContext(ctx)
+	log.V(5).Info("http request", "method", req.Method, "url", req.URL.String(), "headers", req.Header)
+	if r.Debug {
+		if _, isbuffer := r.Body.(*bytes.Buffer); isbuffer {
+			dump, err := httputil.DumpRequest(req, true)
+			if err != nil {
+				log.Error(err, "failed to dump request")
+			} else {
+				log.Info("http request", "dump", string(dump))
+			}
+		}
+	}
 	resp, err := GetClient(r.Client, r.RoundTripper).Do(req)
 	if err != nil {
 		return nil, err
+	}
+	log.V(5).Info("http response", "status", resp.StatusCode, "headers", resp.Header)
+	if r.Debug {
+		dump, err := httputil.DumpResponse(resp, true)
+		if err != nil {
+			log.Error(err, "failed to dump response")
+		} else {
+			log.Info("http response", "dump", string(dump))
+		}
 	}
 	if r.OnResponse != nil {
 		if err := r.OnResponse(req, resp); err != nil {
