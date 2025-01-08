@@ -10,14 +10,31 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 )
 
-type AuthenticatorChain []TokenAuthenticator
+type TokenAuthenticatorChain []TokenAuthenticator
 
-var _ TokenAuthenticator = AuthenticatorChain{}
+var _ TokenAuthenticator = TokenAuthenticatorChain{}
 
-func (c AuthenticatorChain) Authenticate(ctx context.Context, token string) (*AuthenticateInfo, error) {
+func (c TokenAuthenticatorChain) Authenticate(ctx context.Context, token string) (*AuthenticateInfo, error) {
 	var errlist []error
 	for _, authn := range c {
 		info, err := authn.Authenticate(ctx, token)
+		if err != nil {
+			errlist = append(errlist, err)
+			continue
+		}
+		return info, nil
+	}
+	return nil, utilerrors.NewAggregate(errlist)
+}
+
+type BasicAuthenticatorChain []BasicAuthenticator
+
+var _ BasicAuthenticator = BasicAuthenticatorChain{}
+
+func (c BasicAuthenticatorChain) Authenticate(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
+	var errlist []error
+	for _, authn := range c {
+		info, err := authn.Authenticate(ctx, username, password)
 		if err != nil {
 			errlist = append(errlist, err)
 			continue
@@ -41,15 +58,15 @@ func NewAnonymousAuthenticator() *AnonymousAuthenticator {
 
 type AnonymousAuthenticator struct{}
 
-var _ TokenAuthenticator = &AnonymousAuthenticator{}
+var _ Authenticator = &AnonymousAuthenticator{}
 
-func (a *AnonymousAuthenticator) Authenticate(ctx context.Context, token string) (*AuthenticateInfo, error) {
+func (a *AnonymousAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
 	return &AuthenticateInfo{User: UserInfo{Name: AnonymousUser, Groups: []string{AnonymousUser}}}, nil
 }
 
 var _ TokenAuthenticator = &LRUCacheAuthenticator{}
 
-func NewCacheAuthenticator(authenticator TokenAuthenticator, size int, ttl time.Duration) *LRUCacheAuthenticator {
+func NewCacheTokenAuthenticator(authenticator TokenAuthenticator, size int, ttl time.Duration) *LRUCacheAuthenticator {
 	return &LRUCacheAuthenticator{
 		Authenticator: authenticator,
 		Cache:         NewLRUCache[*AuthenticateInfo](size, ttl),
