@@ -60,6 +60,7 @@ var MethodActionMapPlural = map[string]string{
 	"POST":   "create",
 	"DELETE": "removeBatch",
 	"PUT":    "updateBatch",
+	"PATCH":  "patchBatch",
 }
 
 // singular plural
