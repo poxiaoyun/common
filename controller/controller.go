@@ -25,14 +25,14 @@ func ScopedKeyFromObject(obj store.Object) ScopedKey {
 }
 
 func NewScopedKey(scopes []store.Scope, name string) ScopedKey {
-	return ScopedKey{Name: name, Prefix: encodeScopes(scopes)}
+	return ScopedKey{Name: name, Prefix: EncodeScopes(scopes)}
 }
 
 func (s ScopedKey) Scopes() []store.Scope {
-	return decodeScopes(s.Prefix)
+	return DecodeScopes(s.Prefix)
 }
 
-func encodeScopes(scopes []store.Scope) string {
+func EncodeScopes(scopes []store.Scope) string {
 	ret := ""
 	for _, scope := range scopes {
 		ret += "/" + scope.Resource + "/" + scope.Name
@@ -40,7 +40,7 @@ func encodeScopes(scopes []store.Scope) string {
 	return ret
 }
 
-func decodeScopes(scopes string) []store.Scope {
+func DecodeScopes(scopes string) []store.Scope {
 	if len(scopes) == 0 {
 		return nil
 	}

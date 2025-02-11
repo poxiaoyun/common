@@ -23,8 +23,8 @@ func Test_decodeScopes(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		encoded := encodeScopes(tt)
-		decoded := decodeScopes(encoded)
+		encoded := EncodeScopes(tt)
+		decoded := DecodeScopes(encoded)
 		if len(tt) != len(decoded) {
 			t.Errorf("decodeScopes() = %v, want %v", decoded, tt)
 		}
