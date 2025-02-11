@@ -149,6 +149,8 @@ func (s *StreamHandler) readLoop(ctx context.Context, w *io.PipeWriter) error {
 					leftover = nil
 				}
 			case "close":
+				// client close the stream
+				w.Close()
 				return nil
 			}
 		}
