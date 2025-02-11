@@ -122,6 +122,8 @@ func (s *StreamHandler) readLoop(ctx context.Context, w *io.PipeWriter) error {
 			// newly read
 			msgType, data, err := s.Conn.ReadMessage()
 			if err != nil {
+				// let the reader know the stream is closed
+				w.CloseWithError(err)
 				return err
 			}
 			_ = msgType
@@ -149,8 +151,6 @@ func (s *StreamHandler) readLoop(ctx context.Context, w *io.PipeWriter) error {
 					leftover = nil
 				}
 			case "close":
-				// client close the stream
-				w.Close()
 				return nil
 			}
 		}
