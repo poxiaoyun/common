@@ -85,11 +85,11 @@ func GetWebSocket(ctx context.Context, cliconfig *ClientConfig, reqpath string, 
 		}
 	}
 	log.V(5).Info("common http client websocket", "url", u.String())
-	wsconn, resp, err := dailer.DialContext(ctx, u.String(), nil)
+	wsconn, _, err := dailer.DialContext(ctx, u.String(), nil)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer wsconn.Close()
 
 	go func() {
 		// keep alive
