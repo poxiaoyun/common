@@ -32,6 +32,12 @@ func (s ScopedKey) Scopes() []store.Scope {
 	return DecodeScopes(s.Prefix)
 }
 
+type ResourceScopedKey struct {
+	Resource string
+	Name     string
+	Prefix   string
+}
+
 func EncodeScopes(scopes []store.Scope) string {
 	ret := ""
 	for _, scope := range scopes {

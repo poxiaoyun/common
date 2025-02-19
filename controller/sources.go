@@ -19,33 +19,33 @@ func (f SourceFunc[K]) Run(ctx context.Context, queue TypedQueue[K]) error {
 	return f(ctx, queue)
 }
 
-func NewStoreSource(storage store.Store, example store.Object) *StoreSource {
-	return NewCustomStoreSource(storage, example, func(ctx context.Context, kind store.WatchEventType, obj store.Object) ([]ScopedKey, error) {
-		return []ScopedKey{ScopedKeyFromObject(obj)}, nil
-	})
-}
-
-func NewCustomStoreSource(storage store.Store, example store.Object, keyfunc KeyFunc) *StoreSource {
+func NewStoreSource(storage store.Store, example store.Object) StoreSource[ScopedKey] {
 	resource, err := store.GetResource(example)
 	if err != nil {
 		panic(err)
 	}
-	return &StoreSource{
+	return NewCustomStoreSource(storage, resource, func(ctx context.Context, kind store.WatchEventType, obj store.Object) ([]ScopedKey, error) {
+		return []ScopedKey{ScopedKeyFromObject(obj)}, nil
+	})
+}
+
+func NewCustomStoreSource[T comparable](storage store.Store, resource string, keyfunc KeyFunc[T]) StoreSource[T] {
+	return StoreSource[T]{
 		Store:    storage,
 		Resource: resource,
 		KeyFunc:  keyfunc,
 	}
 }
 
-type KeyFunc func(ctx context.Context, kind store.WatchEventType, obj store.Object) ([]ScopedKey, error)
+type KeyFunc[T comparable] func(ctx context.Context, kind store.WatchEventType, obj store.Object) ([]T, error)
 
-type StoreSource struct {
+type StoreSource[T comparable] struct {
 	store.Store
 	Resource string
-	KeyFunc  KeyFunc
+	KeyFunc  KeyFunc[T]
 }
 
-func (s *StoreSource) Run(ctx context.Context, queue TypedQueue[ScopedKey]) error {
+func (s StoreSource[T]) Run(ctx context.Context, queue TypedQueue[T]) error {
 	logger := log.FromContext(ctx).WithValues("resource", s.Resource)
 	logger.Info("source start")
 	ctx = log.NewContext(ctx, logger)
