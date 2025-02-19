@@ -171,15 +171,16 @@ func (h *TypedController[T]) Name() string {
 }
 
 func (h *TypedController[T]) Run(ctx context.Context) error {
-	ctx = log.NewContext(ctx, log.FromContext(ctx).WithName(h.name))
-	log := log.FromContext(ctx)
+	logger := log.FromContext(ctx).WithValues("controller", h.name)
+
+	ctx = log.NewContext(ctx, logger)
 	if h.options.LeaderElection != nil {
 		return h.options.LeaderElection.OnLeader(ctx, h.name, 30*time.Second, func(ctx context.Context) error {
-			log.Info("starting controller on leader")
+			logger.Info("starting controller on leader")
 			return h.run(ctx)
 		})
 	} else {
-		log.Info("starting controller")
+		logger.Info("starting controller")
 		return h.run(ctx)
 	}
 }

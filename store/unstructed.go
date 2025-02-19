@@ -153,7 +153,11 @@ func (u *Unstructured) SetDeletionTimestamp(t *Time) {
 
 // GetScopes implements Object.
 func (u *Unstructured) GetScopes() []Scope {
-	val, ok := GetNestedField(u.Object, "scopes")
+	return GetNestedScopes(u.Object, "scopes")
+}
+
+func GetNestedScopes(obj map[string]any, fields ...string) []Scope {
+	val, ok := GetNestedField(obj, fields...)
 	if !ok {
 		return nil
 	}
@@ -226,6 +230,7 @@ func (u *Unstructured) GetOwnerReferences() []OwnerReference {
 				Resource:           GetNestedString(m, "resource"),
 				Name:               GetNestedString(m, "name"),
 				UID:                GetNestedString(m, "uid"),
+				Scopes:             GetNestedScopes(m, "scopes"),
 				Controller:         controller,
 				BlockOwnerDeletion: blockOwnerDeletionPtr,
 			}
