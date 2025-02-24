@@ -19,21 +19,24 @@ func (f SourceFunc[K]) Run(ctx context.Context, queue TypedQueue[K]) error {
 	return f(ctx, queue)
 }
 
-func NewStoreSource(storage store.Store, example store.Object) StoreSource[ScopedKey] {
+func NewStoreSource(storage store.Store, example store.Object, predicate ...Predicate[store.Object]) StoreSource[ScopedKey] {
 	resource, err := store.GetResource(example)
 	if err != nil {
 		panic(err)
 	}
 	return NewCustomStoreSource(storage, resource, func(ctx context.Context, kind store.WatchEventType, obj store.Object) ([]ScopedKey, error) {
 		return []ScopedKey{ScopedKeyFromObject(obj)}, nil
-	})
+	}, predicate...)
 }
 
-func NewCustomStoreSource[T comparable](storage store.Store, resource string, keyfunc KeyFunc[T]) StoreSource[T] {
+type Predicate[T store.Object] func(kind store.WatchEventType, obj T) bool
+
+func NewCustomStoreSource[T comparable](storage store.Store, resource string, keyfunc KeyFunc[T], predicate ...Predicate[store.Object]) StoreSource[T] {
 	return StoreSource[T]{
-		Store:    storage,
-		Resource: resource,
-		KeyFunc:  keyfunc,
+		Store:     storage,
+		Predicate: predicate,
+		Resource:  resource,
+		KeyFunc:   keyfunc,
 	}
 }
 
@@ -41,8 +44,9 @@ type KeyFunc[T comparable] func(ctx context.Context, kind store.WatchEventType, 
 
 type StoreSource[T comparable] struct {
 	store.Store
-	Resource string
-	KeyFunc  KeyFunc[T]
+	Resource  string
+	Predicate []Predicate[store.Object]
+	KeyFunc   KeyFunc[T]
 }
 
 func (s StoreSource[T]) Run(ctx context.Context, queue TypedQueue[T]) error {
@@ -51,6 +55,12 @@ func (s StoreSource[T]) Run(ctx context.Context, queue TypedQueue[T]) error {
 	ctx = log.NewContext(ctx, logger)
 	return RunListWatchContext(ctx, s.Store, s.Resource, EventHandlerFunc[*store.Unstructured](func(ctx context.Context, kind store.WatchEventType, obj *store.Unstructured) error {
 		logger.Info("event", "kind", kind, "name", obj.GetName())
+
+		for _, predicate := range s.Predicate {
+			if !predicate(kind, obj) {
+				return nil
+			}
+		}
 
 		keys, err := s.KeyFunc(ctx, kind, obj)
 		if err != nil {
