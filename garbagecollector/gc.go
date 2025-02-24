@@ -23,6 +23,9 @@ type GarbageCollector struct {
 
 type GarbageCollectorOptions struct {
 	MonitorResources []string
+
+	// SetParentAsOwner indicates whether the parent should be add to ownerReferences when object is created.
+	SetParentAsOwner bool
 }
 
 func NewGarbageCollector(storage store.Store, options GarbageCollectorOptions) (*GarbageCollector, error) {
@@ -56,6 +59,11 @@ func (c *GarbageCollector) monitorResources(ctx context.Context) error {
 			logger.Info("start monitor")
 			ctx = log.NewContext(ctx, logger)
 			return controller.RunListWatchContext(ctx, c.storage, resource, controller.EventHandlerFunc[*store.Unstructured](func(ctx context.Context, kind store.WatchEventType, obj *store.Unstructured) error {
+				if c.options.SetParentAsOwner && kind == store.WatchEventCreate {
+					if err := c.injectOwnerReference(ctx, obj); err != nil {
+						return err
+					}
+				}
 				c.graph.changes.Add(&event{
 					identity:   objectIdentityFrom(obj),
 					eventtype:  eventType(kind),
@@ -68,6 +76,52 @@ func (c *GarbageCollector) monitorResources(ctx context.Context) error {
 		})
 	}
 	return eg.Wait()
+}
+
+func (c *GarbageCollector) injectOwnerReference(ctx context.Context, obj *store.Unstructured) error {
+	ownerscopes := obj.GetScopes()
+	if len(ownerscopes) == 0 {
+		return nil
+	}
+	ownerscopes, last := ownerscopes[:len(ownerscopes)-1], ownerscopes[len(ownerscopes)-1]
+
+	newown := store.OwnerReference{
+		Name:     last.Name,
+		Resource: last.Resource,
+		Scopes:   ownerscopes,
+	}
+	ownerRefs := obj.GetOwnerReferences()
+	for _, ref := range ownerRefs {
+		// if the owner reference already exists, skip
+		if IsSameScopes(ref.Scopes, newown.Scopes) && ref.Resource == newown.Resource && ref.Name == newown.Name {
+			return nil
+		}
+	}
+
+	// inject owner reference of current parent
+	log.FromContext(ctx).V(5).Info("inject owner reference", "owner", newown, "resource", obj.GetResource(), "name", obj.GetName())
+
+	owner := &store.Unstructured{}
+	owner.SetResource(last.Resource)
+	if err := c.storage.Scope(ownerscopes...).Get(ctx, last.Name, owner); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+	}
+	newown.UID = owner.GetUID()
+
+	for _, ref := range ownerRefs {
+		if ref.UID == newown.UID {
+			return nil
+		}
+	}
+	ownerRefs = append(ownerRefs, newown)
+	patchdata, err := json.Marshal(map[string]any{"ownerReferences": ownerRefs})
+	if err != nil {
+		return err
+	}
+	patch := store.RawPatch(store.PatchTypeMergePatch, patchdata)
+	return c.storage.Scope(obj.GetScopes()...).Patch(ctx, obj, patch)
 }
 
 func eventType(kind store.WatchEventType) eventtype {
