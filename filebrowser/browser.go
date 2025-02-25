@@ -18,6 +18,13 @@ type FileContent struct {
 	Etag         string
 }
 
+type PartialFileContent struct {
+	Name          string
+	Content       io.ReadCloser
+	ContentLength int64
+	Offset        int64
+}
+
 type StateFileOptions struct {
 	Continue string
 	Limit    int
@@ -55,6 +62,11 @@ type TreeItem struct {
 	Continue    string            `json:"continue,omitempty"` // for pagination
 }
 
+type OpenMultiPartUploadMetadata struct {
+	Name          string `json:"name"`
+	ContentLength int64  `json:"contentLength"`
+}
+
 type WebBrowser interface {
 	// File operations
 	StateFile(ctx context.Context, path string, options StateFileOptions) (*TreeItem, error)
@@ -63,11 +75,12 @@ type WebBrowser interface {
 	MoveFile(ctx context.Context, src, dest string) error
 	CopyFile(ctx context.Context, src, dest string) error
 	LinkFile(ctx context.Context, src, dest string) error
-	UploadFile(ctx context.Context, path string, content FileContent) error
 
+	// Upload
+	UploadFile(ctx context.Context, dir string, content FileContent) error
 	// Multipart upload
-	OpenMultiPartUpload(ctx context.Context, path string) (string, error)
-	UploadPart(ctx context.Context, uploadID string, offset, total int64, content FileContent) error
+	OpenMultiPartUpload(ctx context.Context, dir string, metadata OpenMultiPartUploadMetadata) (string, error)
+	UploadPart(ctx context.Context, uploadID string, content PartialFileContent) error
 	CompleteMultiPartUpload(ctx context.Context, uploadID string) error
 	CancelMultiPartUpload(ctx context.Context, uploadID string) error
 }

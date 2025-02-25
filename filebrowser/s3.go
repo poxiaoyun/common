@@ -23,7 +23,7 @@ type S3WebBrowser struct {
 }
 
 // OpenMultiPartUpload implements WebBrowser.
-func (s *S3WebBrowser) OpenMultiPartUpload(ctx context.Context, path string) (string, error) {
+func (s *S3WebBrowser) OpenMultiPartUpload(ctx context.Context, path string, metadata OpenMultiPartUploadMetadata) (string, error) {
 	result, err := s.S3.Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: &s.Bucket, Key: &path})
 	if err != nil {
 		return "", err
@@ -32,12 +32,12 @@ func (s *S3WebBrowser) OpenMultiPartUpload(ctx context.Context, path string) (st
 }
 
 // UploadPart implements WebBrowser.
-func (s *S3WebBrowser) UploadPart(ctx context.Context, uploadID string, offset, total int64, content FileContent) error {
+func (s *S3WebBrowser) UploadPart(ctx context.Context, uploadID string, content PartialFileContent) error {
 	s3content := s3.UploadPartInput{
 		Bucket:        &s.Bucket,
 		Key:           &content.Name,
 		UploadId:      &uploadID,
-		PartNumber:    ptr.To(int32(offset/s.PartSize + 1)),
+		PartNumber:    ptr.To(int32(content.Offset/s.PartSize + 1)),
 		ContentLength: ptr.To(content.ContentLength),
 	}
 	output, err := s.S3.Client.UploadPart(ctx, &s3content)

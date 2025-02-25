@@ -29,7 +29,7 @@ type FSFileBrowser struct {
 }
 
 // UploadPart implements WebBrowser.
-func (f *FSFileBrowser) UploadPart(ctx context.Context, uploadID string, offset, total int64, content FileContent) error {
+func (f *FSFileBrowser) UploadPart(ctx context.Context, uploadID string, content PartialFileContent) error {
 	fullfilename := filepath.Join(f.TempDir, uploadID, content.Name)
 
 	ff, err := f.FS.OpenFile(fullfilename, libfs.O_CREATE|libfs.O_WRONLY, 0o666)
@@ -38,7 +38,7 @@ func (f *FSFileBrowser) UploadPart(ctx context.Context, uploadID string, offset,
 	}
 	defer ff.Close()
 
-	if _, err := ff.Seek(offset, io.SeekStart); err != nil {
+	if _, err := ff.Seek(content.Offset, io.SeekStart); err != nil {
 		return err
 	}
 	if _, err := io.Copy(ff, content.Content); err != nil {
@@ -48,7 +48,7 @@ func (f *FSFileBrowser) UploadPart(ctx context.Context, uploadID string, offset,
 }
 
 // OpenMultiPartUpload implements WebBrowser.
-func (f *FSFileBrowser) OpenMultiPartUpload(ctx context.Context, path string) (string, error) {
+func (f *FSFileBrowser) OpenMultiPartUpload(ctx context.Context, path string, metadata OpenMultiPartUploadMetadata) (string, error) {
 	tmpname := time.Now().Format("20060102-150405")
 	if err := f.FS.MkdirAll(filepath.Join(f.TempDir, tmpname), 0o777); err != nil {
 		return "", err

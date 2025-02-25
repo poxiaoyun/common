@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"path"
 	"strconv"
 	"time"
 
@@ -13,24 +14,10 @@ import (
 	"xiaoshiai.cn/common/rest/api"
 )
 
+const FilepondName = "filepond"
+
 type FileBrowserAPI struct {
 	FileBrowser WebBrowser
-}
-
-func (b *FileBrowserAPI) PostFile(w http.ResponseWriter, r *http.Request) {
-	action := api.Query(r, "action", "")
-	switch action {
-	case "rename":
-		b.RenameFile(w, r)
-	case "link":
-		b.LinkFile(w, r)
-	case "upload", "":
-		b.UploadFile(w, r)
-	case "cp", "copy":
-		b.CopyFile(w, r)
-	default:
-		api.Error(w, errors.NewBadRequest("unknown action: "+action))
-	}
 }
 
 // https://pqina.nl/filepond/docs/api/server/#process
@@ -39,87 +26,83 @@ func (b *FileBrowserAPI) UploadFile(w http.ResponseWriter, r *http.Request) {
 		if fpath == "" {
 			return nil, errors.NewBadRequest("file path is required on upload")
 		}
-		mr, err := r.MultipartReader()
-		if err != nil {
-			if !stderrors.Is(err, http.ErrNotMultipart) {
+		// open multipart upload
+		if isuploads := api.Query(r, "uploads", false); isuploads {
+			newsession, err := fsys.OpenMultiPartUpload(ctx, fpath, OpenMultiPartUploadMetadata{})
+			if err != nil {
 				return nil, err
 			}
-			// direct upload
-			content := FileContent{
-				Name:          fpath,
-				ContentType:   r.Header.Get("Content-Type"),
-				Content:       r.Body,
-				ContentLength: r.ContentLength,
+			ret := OpenMultiPartUploadResponse{
+				UploadID: newsession,
 			}
-			if err := fsys.UploadFile(ctx, fpath, content); err != nil {
+			return ret, nil
+		}
+		// complete the upload session
+		if uploadid := api.Query(r, "uploadId", ""); uploadid != "" {
+			if err := fsys.CompleteMultiPartUpload(ctx, uploadid); err != nil {
 				return nil, err
 			}
 			return api.Empty, nil
 		}
 
-		var filepondSession string
+		// upload file multipart
+		mr, err := r.MultipartReader()
+		if err != nil {
+			if !stderrors.Is(err, http.ErrNotMultipart) {
+				return nil, err
+			}
+			// direct upload file
+			dir, filename := path.Split(fpath)
+			content := FileContent{
+				Name:          filename,
+				ContentType:   r.Header.Get("Content-Type"),
+				Content:       r.Body,
+				ContentLength: r.ContentLength,
+			}
+			if err := fsys.UploadFile(ctx, dir, content); err != nil {
+				return nil, err
+			}
+			return api.Empty, nil
+		}
+
 		for {
-			part, err := mr.NextRawPart()
+			part, err := mr.NextPart()
 			if err != nil {
 				if err == io.EOF {
 					break
 				}
 				return nil, err
 			}
-			switch part.FormName() {
-			case "filepond":
-				// start filepond upload
-				if filepondSession == "" {
-					newsession, err := fsys.OpenMultiPartUpload(ctx, fpath)
+			// start filepond upload
+			if part.FormName() == FilepondName {
+				uploadLength, _ := strconv.ParseInt(r.Header.Get("Upload-Length"), 10, 64)
+				// filepond set uploadLength on multipart upload
+				if uploadLength > 0 {
+					newsession, err := fsys.OpenMultiPartUpload(ctx, fpath, OpenMultiPartUploadMetadata{})
 					if err != nil {
 						return nil, err
 					}
-					filepondSession = newsession
-					continue
+					return newsession, nil
 				}
 			}
+			// the first part will be finpond metadata and no filename
 			filename := part.FileName()
 			if filename == "" {
-				return nil, errors.NewBadRequest("no filename in form")
+				continue
 			}
+			// otherwise, direct upload file
 			content := FileContent{}
 			content.Name = filename
 			content.ContentType = part.Header.Get("Content-Type")
 			content.Content = part
+			content.ContentLength, _ = strconv.ParseInt(part.Header.Get("Content-Length"), 10, 64)
 			if err := fsys.UploadFile(ctx, fpath, content); err != nil {
 				return nil, err
 			}
-		}
-		if filepondSession != "" {
-			return filepondSession, nil
-		}
-		return api.Empty, nil
-	})
-}
-
-// it use https://pqina.nl/filepond/docs/api/server/#process-chunks
-// ChunckUploadFile
-func (b *FileBrowserAPI) ChunckUploadFile(w http.ResponseWriter, r *http.Request) {
-	b.OnPath(w, r, func(ctx context.Context, fsys WebBrowser, fpath string) (any, error) {
-		if patch := api.Query(r, "patch", ""); patch != "" {
-			offset := api.Header(r, "Upload-Offset", int64(0))
-			uploadLength := api.Header(r, "Upload-Length", int64(0))
-			content := FileContent{
-				Name:          api.Header(r, "Upload-Name", ""),
-				ContentLength: r.ContentLength,
-				Content:       r.Body,
-			}
-			if err := fsys.UploadPart(ctx, patch, offset, uploadLength, content); err != nil {
-				return nil, err
-			}
-			if offset+content.ContentLength >= uploadLength {
-				if err := fsys.CompleteMultiPartUpload(ctx, patch); err != nil {
-					return nil, err
-				}
-			}
+			// only the first file will be uploaded
 			return api.Empty, nil
 		}
-		return nil, errors.NewBadRequest("patch is required")
+		return nil, errors.NewBadRequest("no file uploaded")
 	})
 }
 
@@ -222,6 +205,131 @@ func (b *FileBrowserAPI) GetFile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type OpenMultiPartUploadResponse struct {
+	UploadID string `json:"uploadID"`
+	Filename string `json:"filename"`
+}
+
+func (b *FileBrowserAPI) Upload(w http.ResponseWriter, r *http.Request) {
+	b.OnPath(w, r, func(ctx context.Context, fsys WebBrowser, fpath string) (any, error) {
+		if fpath == "" {
+			return nil, errors.NewBadRequest("file path is required on upload")
+		}
+		newsession, err := fsys.OpenMultiPartUpload(ctx, fpath, OpenMultiPartUploadMetadata{})
+		if err != nil {
+			return nil, err
+		}
+		response := OpenMultiPartUploadResponse{
+			UploadID: newsession,
+			Filename: fpath,
+		}
+		return response, nil
+	})
+}
+
+func (b *FileBrowserAPI) CreateChunckUpload(w http.ResponseWriter, r *http.Request) {
+	b.OnPath(w, r, func(ctx context.Context, fsys WebBrowser, fpath string) (any, error) {
+		if fpath == "" {
+			return nil, errors.NewBadRequest("file path is required on upload")
+		}
+		newsession, err := fsys.OpenMultiPartUpload(ctx, fpath, OpenMultiPartUploadMetadata{})
+		if err != nil {
+			return nil, err
+		}
+		response := OpenMultiPartUploadResponse{
+			UploadID: newsession,
+			Filename: fpath,
+		}
+		return response, nil
+	})
+}
+
+func (b *FileBrowserAPI) UploadChunck(w http.ResponseWriter, r *http.Request) {
+	b.OnPath(w, r, func(ctx context.Context, fsys WebBrowser, fpath string) (any, error) {
+		uploadid := api.Query(r, "uploadID", "")
+		if uploadid == "" {
+			return nil, errors.NewBadRequest("uploadID is required")
+		}
+		offset := api.Header(r, "Upload-Offset", int64(0))
+		uploadLength := api.Header(r, "Upload-Length", int64(0))
+		content := PartialFileContent{
+			Name:          api.Header(r, "Upload-Name", ""),
+			ContentLength: r.ContentLength,
+			Content:       r.Body,
+			Offset:        offset,
+		}
+		if err := fsys.UploadPart(ctx, uploadid, content); err != nil {
+			return nil, err
+		}
+		if offset+content.ContentLength >= uploadLength {
+			if err := fsys.CompleteMultiPartUpload(ctx, uploadid); err != nil {
+				return nil, err
+			}
+		}
+		return api.Empty, nil
+	})
+}
+
+// it use https://pqina.nl/filepond/docs/api/server/#process-chunks
+// ChunckUploadFile
+func (b *FileBrowserAPI) ChunckUploadFile(w http.ResponseWriter, r *http.Request) {
+	b.OnPath(w, r, func(ctx context.Context, fsys WebBrowser, fpath string) (any, error) {
+		// part number style
+		if uploadID := api.Query(r, "uploadId", ""); uploadID != "" {
+			offset := api.Header(r, "Upload-Offset", int64(0))
+			uploadLength := api.Header(r, "Upload-Length", int64(0))
+			content := PartialFileContent{
+				Name:          api.Header(r, "Upload-Name", ""),
+				ContentLength: r.ContentLength,
+				Content:       r.Body,
+				Offset:        offset,
+			}
+			if err := fsys.UploadPart(ctx, uploadID, content); err != nil {
+				return nil, err
+			}
+			if offset+content.ContentLength >= uploadLength {
+				if err := fsys.CompleteMultiPartUpload(ctx, uploadID); err != nil {
+					return nil, err
+				}
+			}
+			return api.Empty, nil
+		}
+		// offset style
+		if patch := api.Query(r, "patch", ""); patch != "" {
+			offset := api.Header(r, "Upload-Offset", int64(0))
+			uploadLength := api.Header(r, "Upload-Length", int64(0))
+			content := PartialFileContent{
+				Name:          api.Header(r, "Upload-Name", ""),
+				ContentLength: r.ContentLength,
+				Content:       r.Body,
+			}
+			if err := fsys.UploadPart(ctx, patch, content); err != nil {
+				return nil, err
+			}
+			if offset+content.ContentLength >= uploadLength {
+				if err := fsys.CompleteMultiPartUpload(ctx, patch); err != nil {
+					return nil, err
+				}
+			}
+			return api.Empty, nil
+		}
+		return nil, errors.NewBadRequest("patch is required")
+	})
+}
+
+func (b *FileBrowserAPI) CompleteChunckUpload(w http.ResponseWriter, r *http.Request) {
+	b.OnPath(w, r, func(ctx context.Context, fsys WebBrowser, fpath string) (any, error) {
+		uploadid := api.Query(r, "uploadID", "")
+		if uploadid == "" {
+			return nil, errors.NewBadRequest("uploadID is required")
+		}
+		if err := fsys.CompleteMultiPartUpload(ctx, uploadid); err != nil {
+			return nil, err
+		}
+		return api.Empty, nil
+	})
+}
+
 func (b *FileBrowserAPI) OnPath(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, fsys WebBrowser, path string) (any, error)) {
 	api.On(w, r, func(ctx context.Context) (any, error) {
 		return fn(ctx, b.FileBrowser, api.Path(r, "path", ""))
@@ -233,35 +341,47 @@ func (b *FileBrowserAPI) Group() api.Group {
 		NewGroup("").
 		Tag("FileBrowser").
 		Route(
-			api.HEAD("/{path}*").
+			api.HEAD("/files/{path}*").
 				Operation("options file/dir").
 				To(b.HeadFile),
 
-			api.GET("/{path}*").
+			api.GET("/files/{path}*").
 				Operation("state file/dir or download file").
 				To(b.GetFile).
 				Param(
 					api.QueryParam("stat", "stat the file").Optional(),
-					api.QueryParam("download", "download the file").Optional(),
 				).
 				Response(TreeItem{}),
 
-			api.POST("/{path}*").
-				Operation("modify file").
-				To(b.PostFile).
+			api.POST("/files/{path}*").
+				Operation("upload file").
+				To(b.UploadFile).
 				Param(
-					api.QueryParam("action", "action on the file").In("rename", "link", "copy", "state").Optional(),
-					api.QueryParam("dest", "destination path, dest is path which rename/copy/link to").Optional(),
+					api.QueryParam("uploads", "open multipart upload").Optional(),
+					api.QueryParam("uploadId", "complete the upload session").Optional(),
 					api.BodyParam("body", "file content to upload").Optional(),
 				),
 
-			api.PATCH("/{path}*").
+			api.PUT("/files/{path}*").
 				Operation("chunck upload file").
+				Param(
+					api.QueryParam("uploadId", "upload session id").Optional(),
+				).
 				To(b.ChunckUploadFile),
 
-			api.DELETE("/{path}*").
+			api.PATCH("/files/{path}*").
+				Operation("filepond chunck upload file").
+				Param(
+					api.QueryParam("patch", "upload session id").Optional(),
+				).
+				To(b.ChunckUploadFile),
+
+			api.DELETE("/files/{path}*").
 				Operation("delete file or dir").
-				Param(api.QueryParam("all", "delete all child files").Optional()).
+				Param(
+					api.QueryParam("all", "delete all child files").Optional(),
+					api.QueryParam("uploadId", "delete upload session").Optional(),
+				).
 				To(b.DeleteFile),
 		)
 }
