@@ -113,6 +113,7 @@ func RunListWatch(ctx context.Context, storage store.Store, resource string, sub
 	inlcudesubscope := func(wo *store.WatchOptions) {
 		wo.IncludeSubScopes = subScope
 		wo.ResourceVersion = list.ResourceVersion
+		wo.SendInitialEvents = true
 	}
 	watcher, err := storage.Watch(ctx, list, inlcudesubscope)
 	if err != nil {

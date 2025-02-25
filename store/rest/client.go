@@ -88,7 +88,29 @@ func (c Client) Watch(ctx context.Context, obj store.ObjectList, opts ...store.W
 	if err != nil {
 		return nil, errors.NewBadRequest(err.Error())
 	}
-	resp, err := c.cli.Get(c.getPath(resource, "")).Query("watch", "true").Do(ctx)
+	options := store.WatchOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	queries := url.Values{}
+	if len(options.LabelRequirements) != 0 {
+		queries.Add("labelSelector", options.LabelRequirements.String())
+	}
+	if len(options.FieldRequirements) != 0 {
+		queries.Add("fieldSelector", options.FieldRequirements.String())
+	}
+	if options.ResourceVersion != 0 {
+		queries.Add("resourceVersion", strconv.FormatInt(options.ResourceVersion, 10))
+	}
+	if options.IncludeSubScopes {
+		queries.Add("includeSubscopes", "true")
+	}
+	if options.SendInitialEvents {
+		queries.Add("sendInitialEvents", "true")
+	}
+	resp, err := c.cli.Get(c.getPath(resource, "")).
+		Queries(queries).
+		Query("watch", "true").Do(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -15,7 +15,6 @@ import (
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
-	"xiaoshiai.cn/common/store/etcd"
 )
 
 var _ store.Store = &CacheStore{}
@@ -262,10 +261,10 @@ func (c *cachedResource) listPrefix(ctx context.Context, prefix string,
 	objs, rev := c.kvs.list(prefix)
 	items := []*store.Unstructured{}
 	for _, obj := range objs {
-		if !etcd.MatchLabelReqirements(obj, labelselector) {
+		if !store.MatchLabelReqirements(obj, labelselector) {
 			continue
 		}
-		if !etcd.MatchUnstructuredFieldRequirments(obj, fieldselector) {
+		if !store.MatchUnstructuredFieldRequirments(obj, fieldselector) {
 			continue
 		}
 		items = append(items, obj)
@@ -336,6 +335,7 @@ func (c *cachedResource) sync(ctx context.Context, s store.Store) error {
 		func(wo *store.WatchOptions) {
 			wo.ResourceVersion = c.kvs.latestSyncRevision()
 			wo.IncludeSubScopes = true
+			wo.SendInitialEvents = true
 		},
 	}
 	w, err := s.Watch(ctx, &store.List[store.Unstructured]{Resource: c.resource}, opts...)

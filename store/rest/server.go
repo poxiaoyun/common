@@ -38,7 +38,7 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 				Size:             api.Query(r, "size", 0),
 				Search:           api.Query(r, "search", ""),
 				Sort:             api.Query(r, "sort", ""),
-				IncludeSubScopes: api.Query(r, "subscopes", false),
+				IncludeSubScopes: api.Query(r, "includeSubScopes", false),
 				ResourceVersion:  api.Query(r, "resourceVersion", int64(0)),
 			}
 			labelsel, fildsel, err := decodeSelector(r)
@@ -75,6 +75,7 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 						FieldRequirements: options.FieldRequirements,
 						IncludeSubScopes:  options.IncludeSubScopes,
 						ResourceVersion:   options.ResourceVersion,
+						SendInitialEvents: api.Query(r, "sendInitialEvents", false),
 					}
 				})
 				if err != nil {

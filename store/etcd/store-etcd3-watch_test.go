@@ -30,7 +30,7 @@ func TestEtcdStore_Watch(t *testing.T) {
 		t.Fatalf("failed to create object: %v", err)
 	}
 
-	w, err := etcdStore.Watch(ctx, &store.List[*TestObject]{Resource: "test"})
+	w, err := etcdStore.Watch(ctx, &store.List[*TestObject]{Resource: "test"}, store.WithSendInitialEvents())
 	if err != nil {
 		t.Fatalf("failed to create watcher: %v", err)
 	}

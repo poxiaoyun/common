@@ -78,9 +78,22 @@ type (
 		FieldRequirements Requirements
 		ResourceVersion   int64
 		IncludeSubScopes  bool
+		SendInitialEvents bool
 	}
 	WatchOption func(*WatchOptions)
 )
+
+func WithSendInitialEvents() WatchOption {
+	return func(o *WatchOptions) {
+		o.SendInitialEvents = true
+	}
+}
+
+func WithWatchSubscopes() WatchOption {
+	return func(o *WatchOptions) {
+		o.IncludeSubScopes = true
+	}
+}
 
 func WithCountFieldRequirementsFromSelector(selector fields.Selector) CountOption {
 	return func(o *CountOptions) {

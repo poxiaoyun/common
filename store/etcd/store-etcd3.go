@@ -352,7 +352,7 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 			obj.SetResourceVersion(kv.ModRevision)
 
 			// check if the object matches the label requirements
-			if MatchLabelReqirements(obj, options.LabelRequirements) {
+			if store.MatchLabelReqirements(obj, options.LabelRequirements) {
 				v.Set(reflect.Append(v, reflect.ValueOf(obj).Elem()))
 			}
 		}

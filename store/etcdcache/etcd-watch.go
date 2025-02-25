@@ -46,7 +46,7 @@ func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store
 	prefix := getlistkey(c.scopes, resource)
 	storageOptions := storage.ListOptions{Predicate: preficate, Recursive: true}
 	// allow watch bookmarks to enabled watchlist
-	if true {
+	if options.SendInitialEvents {
 		storageOptions.SendInitialEvents = ptr.To(true)
 		storageOptions.Predicate.AllowWatchBookmarks = true
 	}
