@@ -216,7 +216,7 @@ func (gc *GarbageCollector) processAttemptToDelete(ctx context.Context, n *node)
 		return err
 	}
 	if !n.isObserved() {
-		return controller.ReQueueError{Err: fmt.Errorf("node %v is not observed", n.identity)}
+		return fmt.Errorf("node %v is not observed", n.identity)
 	}
 	return nil
 }
