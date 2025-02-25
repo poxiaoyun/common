@@ -52,6 +52,10 @@ func (c *Client) Put(path string) *Builder {
 	return c.Request(http.MethodPut, path)
 }
 
+func (c *Client) Patch(path string) *Builder {
+	return c.Request(http.MethodPatch, path)
+}
+
 func (c *Client) Delete(path string) *Builder {
 	return c.Request(http.MethodDelete, path)
 }

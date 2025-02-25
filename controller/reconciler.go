@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
 )
@@ -81,35 +82,28 @@ func (r *BetterReconciler[T]) Reconcile(ctx context.Context, key ScopedKey) erro
 
 	condStorage := r.Client.Scope(key.Scopes()...)
 	if err := condStorage.Get(ctx, key.Name, obj); err != nil {
-		log.Error(err, "unable to fetch")
 		// if object not found , just ignore it
 		// if a post handler needed after object deleted, consider to add a finalizer instead
-		return store.IgnoreNotFound(err)
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
 	}
 
 	finalizer := r.Options.finalizer
 	if obj.GetDeletionTimestamp() != nil {
 		log.Info("is being deleted")
 		if finalizer != "" && !ContainsFinalizer(obj, finalizer) {
-			if len(obj.GetFinalizers()) == 0 {
-				// delete now
-				return condStorage.Delete(ctx, obj)
-			}
 			return nil
 		}
 		// remove
 		if err := r.processWithPostFunc(ctx, condStorage, obj, r.Reconciler.Remove); err != nil {
 			return err
 		}
-		if finalizer != "" {
-			RemoveFinalizer(obj, finalizer)
-		}
-		if err := condStorage.Status().Update(ctx, obj); err != nil {
-			return err
-		}
-		if len(obj.GetFinalizers()) == 0 {
-			// delete now
-			return condStorage.Delete(ctx, obj)
+		if finalizer != "" && RemoveFinalizer(obj, finalizer) {
+			if err := condStorage.Status().Update(ctx, obj); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -128,7 +122,6 @@ func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStora
 
 	requeueAfter, funcerr := unwrapReQueueError(fun(ctx, obj))
 	if funcerr != nil {
-		log.Error(funcerr, "unable to reconcile")
 		r.setStatusMessage(obj, funcerr)
 		if !reflect.DeepEqual(original, obj) {
 			if updateerr := condStorage.Status().Update(ctx, obj); updateerr != nil {
