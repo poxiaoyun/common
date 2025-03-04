@@ -1,72 +1,76 @@
 package wildcard
 
-import (
-	"slices"
-	"strings"
-)
-
 const (
-	SectionSep = ":"  // section separator
-	MultiSep   = ","  // match any of these sections
 	Star       = "*"  // match this section
 	DoubleStar = "**" // match this section and all following sections
 )
 
 // acting like: https://shiro.apache.org/permissions.html#WildcardPermissions
-// but extended to support ** to match all following sections
+// every section is separated by ':'
+// * match zero or more characters at the same level
+// ** match zero or more characters at any level
 func Match(expr string, test string) bool {
-	return Parse(expr).Match(ParseTest(test))
-}
+	pi, pj := 0, 0
 
-func (w Wildcard) Match(tests Test) bool {
-	exprlen := len(w)
-	for i, testsec := range tests {
-		if i >= exprlen {
-			return false // test has more sections than expr
+	for i, t := range test {
+		switch {
+		case t == ':':
+			goto find
+		case i == len(test)-1:
+			i++
+			goto find
+		default:
+			continue
 		}
-		if slices.Contains(w[i], DoubleStar) {
-			return true // expr has wildcardAll, so it matches all remaining sections
+	find:
+		matched := false
+		for j := pj; j < len(expr); j++ {
+			switch {
+			case expr[j] == ':', expr[j] == ',':
+				goto check
+			case j == len(expr)-1:
+				j++
+				goto check
+			default:
+				continue
+			}
+		check:
+			if expr[pj:j] == DoubleStar {
+				return true
+			}
+			if expr[pj:j] == Star || expr[pj:j] == test[pi:i] {
+				matched = true
+			}
+			pj = j + 1
+			if j == len(expr) || expr[j] == ':' {
+				break
+			}
 		}
-		ok := slices.ContainsFunc(w[i], func(s string) bool {
-			return s == Star || s == testsec
-		})
-		if !ok {
-			return false // testsec is not in exprsec
+		if !matched {
+			return false
 		}
+		pi = i + 1
 	}
 	// test has fewer sections than expr
-	for i := len(tests); i < exprlen; i++ {
-		if slices.Contains(w[i], DoubleStar) {
-			return true // test has fewer sections than expr, but expr has wildcardAll, so it matches all remaining sections
+	for j := pj; j < len(expr); j++ {
+		switch {
+		case expr[j] == ':', expr[j] == ',':
+			goto last
+		case j == len(expr)-1:
+			j++
+			goto last
+		default:
+			continue
 		}
-		if !slices.Contains(w[i], Star) {
-			return false // test has fewer sections than expr, but expr has no wildcard, so it must not match
+	last:
+		if expr[pj:j] == DoubleStar {
+			return true
 		}
+		// tom:* will matches tom: tom if enabled
+		if false && expr[pj:j] == Star {
+			continue
+		}
+		return false
 	}
 	return true
-}
-
-type Wildcard [][]string
-
-func Parse(expr string) Wildcard {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
-		return nil
-	}
-	sectionstrs := strings.Split(expr, SectionSep)
-	sections := make([][]string, len(sectionstrs))
-	for i, section := range sectionstrs {
-		sections[i] = strings.Split(section, MultiSep)
-	}
-	return sections
-}
-
-type Test []string
-
-func (t Test) String() string {
-	return strings.Join(t, SectionSep)
-}
-
-func ParseTest(test string) Test {
-	return strings.Split(test, SectionSep)
 }

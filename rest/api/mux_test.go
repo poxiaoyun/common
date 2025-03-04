@@ -46,7 +46,6 @@ func Test_matcher_Match(t *testing.T) {
 			},
 			req:     "/api",
 			matched: false,
-			vars:    []MatchVar{},
 		},
 		{
 			registered: []string{

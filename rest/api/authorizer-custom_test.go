@@ -22,18 +22,75 @@ func Test_checkRecursive(t *testing.T) {
 			args: args{
 				allows: []CustomAuthorizeNode{
 					{
-						Actions:  []string{"get", "list"},
-						Resource: []string{"clusters:*:metadata"},
+						Actions:  []string{"get"},
+						Resource: []string{"clusters:*:metadata:*"},
 					},
 				},
 				attr: Attributes{
 					Action: "get",
 					Resources: []AttrbuteResource{
 						{Resource: "clusters", Name: "default"},
+						{Resource: "metadata", Name: "test"},
+					},
+				},
+			},
+			wantAuthorized: DecisionAllow,
+		},
+		{
+			args: args{
+				allows: []CustomAuthorizeNode{
+					{
+						Actions:  []string{"get", "list"},
+						Resource: []string{"clusters:*:metadata"},
+					},
+				},
+				attr: Attributes{
+					Action: "list",
+					Resources: []AttrbuteResource{
+						{Resource: "clusters", Name: "default"},
 						{Resource: "metadata"},
 					},
 				},
 			},
+			wantAuthorized: DecisionAllow,
+		},
+		{
+			args: args{
+				allows: []CustomAuthorizeNode{
+					{
+						Actions:    []string{"get"},
+						Resource:   []string{"clusters:*:metadata:*"},
+						Authorizer: NewAlwaysDenyAuthorizer(),
+					},
+				},
+				attr: Attributes{
+					Action: "get",
+					Resources: []AttrbuteResource{
+						{Resource: "clusters", Name: "default"},
+						{Resource: "metadata", Name: "test"},
+					},
+				},
+			},
+			wantAuthorized: DecisionDeny,
+		},
+		{
+			name: "not matched is no opinion",
+			args: args{
+				allows: []CustomAuthorizeNode{
+					{
+						Actions:  []string{"get"},
+						Resource: []string{"clusters:*:metadata:*"},
+					},
+				},
+				attr: Attributes{
+					Action: "list",
+					Resources: []AttrbuteResource{
+						{Resource: "clusters", Name: "default"},
+						{Resource: "metadata"},
+					},
+				},
+			},
+			wantAuthorized: DecisionNoOpinion,
 		},
 	}
 	for _, tt := range tests {
