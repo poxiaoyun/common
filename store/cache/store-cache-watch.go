@@ -11,6 +11,10 @@ import (
 
 // Watch implements Store.
 func (g *CacheStore) Watch(ctx context.Context, list store.ObjectList, opts ...store.WatchOption) (store.Watcher, error) {
+	resource, err := store.GetResource(list)
+	if err != nil {
+		return nil, err
+	}
 	options := &store.WatchOptions{}
 	for _, opt := range opts {
 		opt(options)
@@ -20,10 +24,6 @@ func (g *CacheStore) Watch(ctx context.Context, list store.ObjectList, opts ...s
 	}
 	if _, err := store.EnforcePtr(list); err != nil {
 		return nil, errors.NewBadRequest(fmt.Sprintf("object list must be a pointer: %v", err))
-	}
-	resource := list.GetResource()
-	if resource == "" {
-		return nil, errors.NewBadRequest("resource is required for object list")
 	}
 	if options.ResourceVersion > 0 {
 		return nil, errors.NewBadRequest("watch with resource version is not supported in cache store")

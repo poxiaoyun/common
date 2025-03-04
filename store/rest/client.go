@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -16,7 +17,7 @@ import (
 
 var _ store.Store = &Client{}
 
-func NewClient(server string) *Client {
+func NewRemoteStore(server string) *Client {
 	return &Client{cli: httpclient.NewClient(server)}
 }
 
@@ -140,11 +141,11 @@ func (w *watcher) Events() <-chan store.WatchEvent {
 // Stop implements store.Watcher.
 func (w *watcher) Stop() {
 	w.cancel()
+	close(w.result)
 }
 
 func (w *watcher) run(ctx context.Context) {
 	defer w.resp.Body.Close()
-	defer close(w.result)
 
 	err := api.NewSSEDecode(ctx, w.resp.Body, func(e api.Event) error {
 		obj := &store.Unstructured{}
@@ -156,6 +157,9 @@ func (w *watcher) run(ctx context.Context) {
 	})
 	if err != nil {
 		w.result <- store.WatchEvent{Error: err}
+		return
+	} else {
+		w.result <- store.WatchEvent{Error: fmt.Errorf("watcher closed")}
 		return
 	}
 }

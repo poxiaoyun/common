@@ -36,17 +36,14 @@ type CacheStore struct {
 
 // Count implements Store.
 func (c *CacheStore) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
+	resource, err := store.GetResource(obj)
+	if err != nil {
+		return 0, err
+	}
 	options := &store.CountOptions{}
 	for _, opt := range opts {
 		opt(options)
 	}
-	if obj == nil {
-		return 0, errors.NewBadRequest("object list is nil")
-	}
-	if obj.GetResource() == "" {
-		return 0, errors.NewBadRequest("resource is required for object list")
-	}
-	resource := obj.GetResource()
 	// filter
 	items, _, err := c.core.
 		resource(resource).
@@ -69,6 +66,10 @@ func (g *CacheStore) Delete(ctx context.Context, obj store.Object, opts ...store
 
 // Get implements Store.
 func (g *CacheStore) Get(ctx context.Context, name string, obj store.Object, opts ...store.GetOption) error {
+	resource, err := store.GetResource(obj)
+	if err != nil {
+		return err
+	}
 	options := &store.GetOptions{}
 	for _, opt := range opts {
 		opt(options)
@@ -81,10 +82,6 @@ func (g *CacheStore) Get(ctx context.Context, name string, obj store.Object, opt
 	}
 	if name == "" {
 		return errors.NewBadRequest(fmt.Sprintf("name is required for %s", obj.GetResource()))
-	}
-	resource := obj.GetResource()
-	if resource == "" {
-		return errors.NewBadRequest("resource is required for object")
 	}
 	uns, err := g.core.resource(resource).get(ctx, g.scopes, name)
 	if err != nil {
@@ -101,6 +98,10 @@ func (g *CacheStore) Get(ctx context.Context, name string, obj store.Object, opt
 
 // List implements Store.
 func (g *CacheStore) List(ctx context.Context, list store.ObjectList, opts ...store.ListOption) error {
+	resource, err := store.GetResource(list)
+	if err != nil {
+		return err
+	}
 	options := &store.ListOptions{}
 	for _, opt := range opts {
 		opt(options)
@@ -110,10 +111,6 @@ func (g *CacheStore) List(ctx context.Context, list store.ObjectList, opts ...st
 	}
 	if _, err := store.EnforcePtr(list); err != nil {
 		return errors.NewBadRequest(fmt.Sprintf("object list must be a pointer: %v", err))
-	}
-	resource := list.GetResource()
-	if resource == "" {
-		return errors.NewBadRequest("resource is required for object list")
 	}
 	if options.ResourceVersion > 0 {
 		return errors.NewBadRequest("list with resource version is not supported in cache store")
@@ -218,7 +215,11 @@ func (g *cacheStoreCore) resource(resource string) *cachedResource {
 	if c, ok := g.resources[resource]; ok {
 		return c
 	}
-	c := &cachedResource{resource: resource}
+	c := &cachedResource{
+		resource: resource,
+		watchers: map[int64]*cachedWatcher{},
+		kvs:      newThreadSafeReversionMap(),
+	}
 	go c.run(g.ctx, g.store)
 	g.resources[resource] = c
 	return c
@@ -327,10 +328,8 @@ func (c *cachedResource) run(ctx context.Context, store store.Store) {
 }
 
 func (c *cachedResource) sync(ctx context.Context, s store.Store) error {
-	newkvs := newThreadSafeReversionMap()
-	if c.kvs == nil {
-		c.kvs = newkvs
-	}
+	log := log.FromContext(ctx)
+
 	opts := []store.WatchOption{
 		func(wo *store.WatchOptions) {
 			wo.ResourceVersion = c.kvs.latestSyncRevision()
@@ -344,18 +343,27 @@ func (c *cachedResource) sync(ctx context.Context, s store.Store) error {
 	}
 	defer w.Stop()
 
+	newkvs := newThreadSafeReversionMap()
+
 	initlized := false
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case event := <-w.Events():
+		case event, ok := <-w.Events():
+			if !ok {
+				return fmt.Errorf("watcher channel closed")
+			}
 			if event.Error != nil {
 				return event.Error
 			}
 			if event.Type == store.WatchEventBookmark {
 				if !initlized {
+					log.Info("cache resource synced", "resource", c.resource)
+
+					c.kvs.refresh(newkvs.items)
 					initlized = true
+
 					c.lock.Lock()
 					c.initlized = true
 					c.lock.Unlock()
@@ -369,11 +377,23 @@ func (c *cachedResource) sync(ctx context.Context, s store.Store) error {
 			objid := c.getkey(objval.GetScopes(), objval.GetName())
 			switch event.Type {
 			case store.WatchEventCreate:
-				newkvs.set(objid, true, objval)
+				if initlized {
+					c.kvs.set(objid, true, objval)
+				} else {
+					newkvs.set(objid, true, objval)
+				}
 			case store.WatchEventUpdate:
-				newkvs.set(objid, false, objval)
+				if initlized {
+					c.kvs.set(objid, false, objval)
+				} else {
+					newkvs.set(objid, false, objval)
+				}
 			case store.WatchEventDelete:
-				newkvs.delete(objid, objval)
+				if initlized {
+					c.kvs.delete(objid, objval)
+				} else {
+					newkvs.delete(objid, objval)
+				}
 			}
 		}
 	}
@@ -426,11 +446,38 @@ func (c *threadsafeReversionMap) notify(key string, kind store.WatchEventType, o
 	}
 }
 
+func (c *threadsafeReversionMap) refresh(list map[string]*store.Unstructured) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	for key, exists := range c.items {
+		newobj, ok := list[key]
+		if !ok {
+			delete(c.items, key)
+			c.notify(key, store.WatchEventDelete, exists)
+			continue
+		}
+		delete(list, key)
+		// exists, update
+		if newobj.GetResourceVersion() <= exists.GetResourceVersion() {
+			continue
+		}
+		c.items[key] = exists
+		c.notify(key, store.WatchEventUpdate, exists)
+	}
+	for key, obj := range list {
+		c.items[key] = obj
+		c.notify(key, store.WatchEventCreate, obj)
+	}
+}
+
 func (c *threadsafeReversionMap) set(key string, iscreate bool, obj *store.Unstructured) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	if latestversion := obj.GetResourceVersion(); c.lastSyncRevision < latestversion {
 		c.lastSyncRevision = latestversion
+	} else {
+		// ignore old version,it maybe retry
 	}
 	c.items[key] = obj
 	if iscreate {
@@ -477,7 +524,7 @@ type threadsafeReversionMapWacther struct {
 }
 
 func (t *threadsafeReversionMapWacther) send(key string, kind store.WatchEventType, obj *store.Unstructured) {
-	if strings.HasPrefix(key, t.prefix+"/") {
+	if strings.HasPrefix(key, t.prefix) {
 		t.on(key, kind, obj)
 	}
 }

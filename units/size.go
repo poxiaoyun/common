@@ -3,30 +3,14 @@ package units
 import "fmt"
 
 const (
-	KB = 1000
-	MB = 1000 * KB
-	GB = 1000 * MB
-	TB = 1000 * GB
-	PB = 1000 * TB
-
-	KiB = 1024
-	MiB = 1024 * KiB
-	GiB = 1024 * MiB
-	TiB = 1024 * GiB
-	PiB = 1024 * TiB
+	KB = 1024
+	MB = 1024 * KB
+	GB = 1024 * MB
+	TB = 1024 * GB
+	PB = 1024 * TB
 )
 
-type unitMap map[byte]int64
-
-var (
-	decimalMap = unitMap{'k': KB, 'm': MB, 'g': GB, 't': TB, 'p': PB}
-	binaryMap  = unitMap{'k': KiB, 'm': MiB, 'g': GiB, 't': TiB, 'p': PiB}
-)
-
-var (
-	decimapAbbrs = []string{"B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"}
-	binaryAbbrs  = []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"}
-)
+var binaryAbbrs = []string{"B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"}
 
 func getSizeAndUnit(size float64, base float64, _map []string) (float64, string) {
 	i := 0
@@ -43,6 +27,6 @@ func HumanSize(size float64) string {
 }
 
 func HumanSizeWithPrecision(size float64, precision int) string {
-	size, unit := getSizeAndUnit(size, 1000.0, decimapAbbrs)
+	size, unit := getSizeAndUnit(size, 1024.0, binaryAbbrs)
 	return fmt.Sprintf("%.*g%s", precision, size, unit)
 }
