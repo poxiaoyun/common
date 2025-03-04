@@ -19,10 +19,14 @@ func TestWildcardMatchSections(t *testing.T) {
 		{expr: "zoo:list:*:*", perm: "zoo:list", match: true},
 		{expr: "zoo:list:*:abc", perm: "zoo:list", match: false},
 		{expr: "zoo:list:**", perm: "zoo:list", match: true},
+		{expr: "zoo:list,get:**", perm: "zoo:get", match: true},
+		{expr: "zoo:list,get,*:**", perm: "zoo:get", match: true},
+		{expr: "zoo:list,get,*:**", perm: "zoo:kill", match: true},
+		{expr: "zoo:list,get:**", perm: "zoo:kill", match: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
-			if got := WildcardMatchSections(tt.expr, tt.perm); got != tt.match {
+			if got := Match(tt.expr, tt.perm); got != tt.match {
 				t.Errorf("WildcardMatchSections() = %v, want %v", got, tt.match)
 			}
 		})

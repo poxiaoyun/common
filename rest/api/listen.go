@@ -76,40 +76,6 @@ func ServeContext(ctx context.Context, listen string, handler http.Handler, opti
 	}
 }
 
-func ServeContextTLS(ctx context.Context, listen string, handler http.Handler, cert, key string) error {
-	log := log.FromContext(ctx)
-	s := http.Server{
-		Handler: handler,
-		Addr:    listen,
-		BaseContext: func(_ net.Listener) context.Context {
-			return ctx
-		},
-	}
-	tlsconfig, err := NewDynamicTLSConfig(ctx, cert, key)
-	if err != nil {
-		return err
-	}
-	if tlsconfig != nil {
-		s.TLSConfig = tlsconfig
-	}
-	go func() {
-		<-ctx.Done()
-		log.Info("closing http(s) server", "listen", listen)
-		s.Close()
-	}()
-	if cert != "" && key != "" {
-		// http2 support with tls enabled
-		http2.ConfigureServer(&s, &http2.Server{})
-		log.Info("starting https server", "listen", listen)
-		return s.ListenAndServeTLS(cert, key)
-	} else {
-		// http2 support without https
-		s.Handler = h2c.NewHandler(s.Handler, &http2.Server{})
-		log.Info("starting http server", "listen", listen)
-		return s.ListenAndServe()
-	}
-}
-
 func GRPCHTTPMux(httphandler http.Handler, grpchandler http.Handler) http.Handler {
 	httphandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {

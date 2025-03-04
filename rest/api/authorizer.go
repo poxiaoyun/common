@@ -108,8 +108,7 @@ func (c *LRUCacheAuthorizer) Authorize(ctx context.Context, user UserInfo, a Att
 	if c.cache == nil {
 		return c.Authorizer.Authorize(ctx, user, a)
 	}
-	act, expr := a.ToWildcards()
-	key := user.Name + "@" + expr + ":" + act
+	key := user.Name + "@" +  ResourcesToWildcardTest(a.Resources).String() + ":" + a.Action
 	if decision, ok := c.cache.Get(key); ok {
 		return decision, "", nil
 	}
