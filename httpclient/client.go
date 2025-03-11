@@ -71,17 +71,37 @@ func (c *Client) Request(method string, path string) *Builder {
 }
 
 func GetWebSocket(ctx context.Context, cliconfig *ClientConfig, reqpath string, queries url.Values, onmsg func(ctx context.Context, msg []byte) error) error {
-	log := log.FromContext(ctx).WithValues("path", reqpath, "queries", queries)
-	u := MergeURL(cliconfig.Server, reqpath, queries)
+	return GetWebSocketOptions(ctx, cliconfig, reqpath, WebSocketOptions{
+		Queries:           queries,
+		KeepAliveInterval: 30 * time.Second,
+		OnMessage: func(ctx context.Context, kind int, msg []byte) error {
+			return onmsg(ctx, msg)
+		},
+	})
+}
+
+type WebSocketOptions struct {
+	Queries           url.Values
+	Header            http.Header
+	KeepAliveInterval time.Duration
+	ProxyURL          *url.URL
+	OnMessage         func(ctx context.Context, kind int, msg []byte) error
+}
+
+func GetWebSocketOptions(ctx context.Context, cliconfig *ClientConfig, reqpath string, options WebSocketOptions) error {
+	log := log.FromContext(ctx).WithValues("path", reqpath, "queries", options.Queries)
+	u := MergeURL(cliconfig.Server, reqpath, options.Queries)
 	switch u.Scheme {
 	case "http":
 		u.Scheme = "ws"
 	case "https":
 		u.Scheme = "wss"
 	}
-
 	dailer := websocket.Dialer{
 		NetDialContext: cliconfig.DialContext,
+	}
+	if options.ProxyURL != nil {
+		dailer.Proxy = http.ProxyURL(options.ProxyURL)
 	}
 	if cliconfig.RoundTripper != nil {
 		if httptransport, ok := cliconfig.RoundTripper.(*http.Transport); ok {
@@ -89,25 +109,32 @@ func GetWebSocket(ctx context.Context, cliconfig *ClientConfig, reqpath string, 
 		}
 	}
 	log.V(5).Info("common http client websocket", "url", u.String())
-	wsconn, _, err := dailer.DialContext(ctx, u.String(), nil)
+	wsconn, _, err := dailer.DialContext(ctx, u.String(), options.Header)
 	if err != nil {
 		return err
 	}
 	defer wsconn.Close()
 
-	go func() {
-		// keep alive
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(30 * time.Second):
-				if err := wsconn.WriteMessage(websocket.PingMessage, nil); err != nil {
+	if options.KeepAliveInterval != 0 {
+		go func() {
+			log.V(3).Info("start keep alive", "interval", options.KeepAliveInterval)
+			// keep alive
+			timer := time.NewTimer(options.KeepAliveInterval)
+			defer timer.Stop()
+			for {
+				select {
+				case <-ctx.Done():
 					return
+				case <-timer.C:
+					if err := wsconn.WriteMessage(websocket.PingMessage, nil); err != nil {
+						log.V(5).Error(err, "failed to send ping")
+						return
+					}
+					timer.Reset(options.KeepAliveInterval)
 				}
 			}
-		}
-	}()
+		}()
+	}
 
 	for {
 		select {
@@ -125,11 +152,11 @@ func GetWebSocket(ctx context.Context, cliconfig *ClientConfig, reqpath string, 
 					return err
 				}
 			case websocket.PongMessage:
-			case websocket.CloseMessage:
-				return nil
 			case websocket.TextMessage, websocket.BinaryMessage:
-				if err := onmsg(ctx, message); err != nil {
-					return err
+				if options.OnMessage != nil {
+					if err := options.OnMessage(ctx, msgtype, message); err != nil {
+						return err
+					}
 				}
 			}
 		}
