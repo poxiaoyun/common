@@ -73,7 +73,7 @@ func (r *BetterReconciler[T]) Initialize(ctx context.Context) error {
 
 // nolint: funlen,gocognit
 func (r *BetterReconciler[T]) Reconcile(ctx context.Context, key ScopedKey) error {
-	log := log.FromContext(ctx)
+	log := log.FromContext(ctx).WithValues("key", key)
 
 	log.Info("start reconcile")
 	defer log.Info("finish reconcile")
@@ -127,6 +127,10 @@ func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStora
 			if updateerr := condStorage.Status().Update(ctx, obj); updateerr != nil {
 				log.Error(updateerr, "unable to update status")
 			}
+		}
+		if requeueAfter > 0 {
+			log.Info("requeue after", "duration", requeueAfter)
+			return WithReQueue(requeueAfter, nil)
 		}
 		return funcerr
 	}

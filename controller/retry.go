@@ -52,7 +52,7 @@ func RetryFixIntervalContext(ctx context.Context, interval time.Duration, fn fun
 		if err == nil {
 			return nil
 		}
-		log.FromContext(ctx).Error(err, "retrying in %v", interval)
+		log.FromContext(ctx).Error(err, "retrying", "in", interval)
 		select {
 		case <-ctx.Done():
 			return err

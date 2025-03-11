@@ -102,9 +102,6 @@ func (r ReQueueError) Error() string {
 }
 
 func WithReQueue(after time.Duration, err error) error {
-	if err == nil {
-		return ReQueueError{Atfer: after}
-	}
 	return ReQueueError{Err: err, Atfer: after}
 }
 
@@ -137,16 +134,14 @@ func NewTypedController[T comparable](name string, sync TypedReconciler[T], opti
 	for _, opt := range options {
 		opt(&opts)
 	}
-	if opts.Concurrent <= 0 {
-		opts.Concurrent = 1
-	}
+	opts.Concurrent = max(opts.Concurrent, 1)
 	if sync == nil {
 		panic("sync function is required")
 	}
 	c := &TypedController[T]{
 		name:     name,
 		options:  opts,
-		queue:    NewDefaultTypedQueue[T](name, opts.RateLimiter),
+		queue:    NewDefaultTypedQueue(name, opts.RateLimiter),
 		syncFunc: sync,
 		ratelimiter: workqueue.NewTypedRateLimitingQueueWithConfig(
 			workqueue.DefaultTypedControllerRateLimiter[T](),
@@ -181,7 +176,7 @@ func (h *TypedController[T]) Run(ctx context.Context) error {
 
 	ctx = log.NewContext(ctx, logger)
 	if h.options.LeaderElection != nil {
-		return h.options.LeaderElection.OnLeader(ctx, h.name, 30*time.Second, func(ctx context.Context) error {
+		return h.options.LeaderElection.OnLeader(ctx, 30*time.Second, func(ctx context.Context) error {
 			logger.Info("starting controller on leader")
 			return h.run(ctx)
 		})
@@ -227,7 +222,7 @@ func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], sy
 	// get item from queue and process
 	wg := sync.WaitGroup{}
 	wg.Add(concurent)
-	for i := 0; i < concurent; i++ {
+	for range concurent {
 		go func() {
 			defer wg.Done()
 			for {
@@ -244,12 +239,15 @@ func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], sy
 					ratelimit.Wait(ctx)
 
 					if err := syncfunc(ctx, val); err != nil {
-						logger.Error(err, "sync error", "key", val)
 						// requeue
 						retry := ReQueueError{}
 						if errors.As(err, &retry) {
+							if retry.Err != nil {
+								logger.Error(retry.Err, "sync error", "key", val)
+							}
 							queue.AddAfter(val, retry.Atfer)
 						} else {
+							logger.Error(err, "sync error", "key", val)
 							queue.AddRateLimited(val)
 						}
 					} else {

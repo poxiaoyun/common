@@ -16,7 +16,7 @@ import (
 type OnLeaderElected func(ctx context.Context) error
 
 type LeaderElection interface {
-	OnLeader(ctx context.Context, key string, ttl time.Duration, onLeaderElected OnLeaderElected) error
+	OnLeader(ctx context.Context, ttl time.Duration, onLeaderElected OnLeaderElected) error
 }
 
 type Lease struct {
@@ -28,15 +28,16 @@ type Lease struct {
 	LeaderTransitions    int        `json:"leaderTransitions"`
 }
 
-func NewLeaderElection(store store.Store) LeaderElection {
-	return &StorageLeaderElection{Storage: store}
+func NewStoreLeaderElection(store store.Store, key string) LeaderElection {
+	return &StorageLeaderElection{Storage: store, Key: key}
 }
 
 type StorageLeaderElection struct {
 	Storage store.Store
+	Key     string
 }
 
-func (le *StorageLeaderElection) OnLeader(ctx context.Context, key string, ttl time.Duration, onLeaderElected OnLeaderElected) error {
+func (le *StorageLeaderElection) OnLeader(ctx context.Context, ttl time.Duration, onLeaderElected OnLeaderElected) error {
 	if ttl < 10*time.Second {
 		ttl = 10 * time.Second
 	}
@@ -46,7 +47,7 @@ func (le *StorageLeaderElection) OnLeader(ctx context.Context, key string, ttl t
 		RenewDeadline:   10 * time.Second,
 		OnLeaderElected: onLeaderElected,
 		ReleaseOnCancel: true,
-		Name:            key,
+		Name:            le.Key,
 		Storage:         le.Storage,
 	}
 	return lock.run(ctx)
@@ -138,9 +139,9 @@ func (le *StorageLeaderElectionLock) renew(ctx context.Context) error {
 	wait.Until(func() {
 		timeoutCtx, timeoutCancel := context.WithTimeout(ctx, le.RenewDeadline)
 		defer timeoutCancel()
-		err := wait.PollImmediateUntil(le.RetryPeriod, func() (bool, error) {
-			return le.tryAcquireOrRenew(timeoutCtx), nil
-		}, timeoutCtx.Done())
+		err := wait.PollUntilContextCancel(timeoutCtx, le.RetryPeriod, true, func(ctx context.Context) (bool, error) {
+			return le.tryAcquireOrRenew(ctx), nil
+		})
 		desc := le.Name
 		if err == nil {
 			return

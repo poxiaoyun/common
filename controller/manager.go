@@ -21,8 +21,14 @@ func NewControllerManager() *ControllerManager {
 	}
 }
 
-func (c *ControllerManager) WithStoreLeaderElection(store store.Store) *ControllerManager {
-	c.LedaerElection = NewLeaderElection(store)
+type ControllerManagerOptions struct {
+	LeaderElection    bool   `json:"leaderElection"`
+	LeaderElectionKey string `json:"leaderElectionKey"`
+}
+
+func (c *ControllerManager) WithStoreLeaderElection(storage store.Store, key string) *ControllerManager {
+	storage = storage.Scope(store.Scope{Resource: "namespaces", Name: "leader-election"})
+	c.LedaerElection = NewStoreLeaderElection(storage, key)
 	return c
 }
 
@@ -48,7 +54,7 @@ func (c *ControllerManager) Run(ctx context.Context) error {
 	if c.LedaerElection != nil {
 		log.Info("controller manager run with leader election")
 		return RetryFixIntervalContext(ctx, 10*time.Second, func(ctx context.Context) error {
-			return c.LedaerElection.OnLeader(ctx, "controller-manager", 0, func(ctx context.Context) error {
+			return c.LedaerElection.OnLeader(ctx, 0, func(ctx context.Context) error {
 				log.Info("controller manager run on leader elected")
 				return c.run(ctx)
 			})
@@ -64,10 +70,8 @@ func (c *ControllerManager) run(ctx context.Context) error {
 	for name, controller := range c.Controllers {
 		controller := controller
 		eg.Go(func() error {
-			thislogger := log.FromContext(ctx).WithValues("controller", name)
-			thisctx := log.NewContext(ctx, thislogger)
-			if err := controller.Run(thisctx); err != nil {
-				thislogger.Error(err, "controller run failed")
+			if err := controller.Run(ctx); err != nil {
+				log.FromContext(ctx).Error(err, "controller run failed", "controller", name)
 				return err
 			}
 			return nil
