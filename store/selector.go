@@ -2,6 +2,7 @@ package store
 
 import (
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -148,6 +149,22 @@ func MatchLabelReqirements(obj Object, reqs Requirements) bool {
 	return RequirementsMatchLabels(reqs, obj.GetLabels())
 }
 
+func MatchLabels(obj Object, labels map[string]string) bool {
+	if len(labels) == 0 {
+		return true
+	}
+	target := obj.GetLabels()
+	if len(target) == 0 {
+		return false
+	}
+	for k, v := range labels {
+		if target[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
 func RequirementsMatchLabels(r Requirements, labels map[string]string) bool {
 	for _, req := range r {
 		if !RequirementMatchLabels(req, labels) {
@@ -207,18 +224,59 @@ func requirementValueCompare(a, b any) int {
 }
 
 func RequirementMatchIn(val any, in ...any) bool {
-	for _, v := range in {
-		if val == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(in, val)
 }
 
 func MatchUnstructuredFieldRequirments(obj *Unstructured, reqs Requirements) bool {
+	if len(reqs) == 0 {
+		return true
+	}
 	if obj == nil {
 		return false
 	}
 	// TODO: implement this
+	for _, req := range reqs {
+		val, ok := GetNestedField(obj.Object, strings.Split(req.Key, ".")...)
+		if !ok {
+			if req.Operator == selection.DoesNotExist {
+				continue
+			}
+			return false
+		}
+		if req.Operator == selection.DoesNotExist {
+			return false
+		}
+		if req.Operator == selection.Exists {
+			continue
+		}
+		switch req.Operator {
+		case selection.Equals, selection.DoubleEquals:
+			if val != req.Values[0] {
+				return false
+			}
+		case selection.NotEquals:
+			if val == req.Values[0] {
+				return false
+			}
+		case selection.In:
+			if !slices.Contains(req.Values, val) {
+				return false
+			}
+		case selection.NotIn:
+			if slices.Contains(req.Values, val) {
+				return false
+			}
+		case selection.GreaterThan:
+			if requirementValueCompare(val, req.Values[0]) <= 0 {
+				return false
+			}
+		case selection.LessThan:
+			if requirementValueCompare(val, req.Values[0]) >= 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
 	return true
 }

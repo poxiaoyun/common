@@ -38,7 +38,7 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 				Size:             api.Query(r, "size", 0),
 				Search:           api.Query(r, "search", ""),
 				Sort:             api.Query(r, "sort", ""),
-				IncludeSubScopes: api.Query(r, "includeSubScopes", false),
+				IncludeSubScopes: api.Query(r, "includeSubscopes", false),
 				ResourceVersion:  api.Query(r, "resourceVersion", int64(0)),
 			}
 			labelsel, fildsel, err := decodeSelector(r)
@@ -87,7 +87,7 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 				for {
 					select {
 					case <-ctx.Done():
-						return nil, ctx.Err()
+						return nil, nil
 					case event, ok := <-watcher.Events():
 						if !ok {
 							ssew.WriteEvent("error", fmt.Errorf("watcher closed"))

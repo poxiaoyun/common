@@ -35,6 +35,7 @@ type (
 		FieldRequirements Requirements
 		//  IncludeSubScopes is a flag to include resources in subscopes of current scope.
 		IncludeSubScopes bool
+		Continue         string
 	}
 	ListOption func(*ListOptions)
 
@@ -95,6 +96,12 @@ func WithWatchSubscopes() WatchOption {
 	}
 }
 
+func WithWatchFieldRequirements(reqs ...Requirement) WatchOption {
+	return func(o *WatchOptions) {
+		o.FieldRequirements = append(o.FieldRequirements, reqs...)
+	}
+}
+
 func WithCountFieldRequirementsFromSelector(selector fields.Selector) CountOption {
 	return func(o *CountOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, FieldsSelectorToReqirements(selector)...)
@@ -110,6 +117,12 @@ func WithCountFieldRequirementsFromSet(kvs map[string]string) CountOption {
 func WithFieldRequirementsFromSelector(selector fields.Selector) ListOption {
 	return func(o *ListOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, FieldsSelectorToReqirements(selector)...)
+	}
+}
+
+func WithContinue(token string) ListOption {
+	return func(o *ListOptions) {
+		o.Continue = token
 	}
 }
 

@@ -127,7 +127,7 @@ func RemoveFinalizer(o Object, finalizer string) (finalizersUpdated bool) {
 	length := len(f)
 
 	index := 0
-	for i := 0; i < length; i++ {
+	for i := range length {
 		if f[i] == finalizer {
 			continue
 		}
@@ -139,13 +139,7 @@ func RemoveFinalizer(o Object, finalizer string) (finalizersUpdated bool) {
 }
 
 func ContainsFinalizer(o Object, finalizer string) bool {
-	f := o.GetFinalizers()
-	for _, e := range f {
-		if e == finalizer {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(o.GetFinalizers(), finalizer)
 }
 
 func IgnoreNotFound(err error) error {
@@ -220,6 +214,10 @@ func getItemsPtr(list any) (any, error) {
 	}
 }
 
+func NewObject(obj Object) Object {
+	return reflect.New(reflect.TypeOf(obj).Elem()).Interface().(Object)
+}
+
 func CreateOrUpdate(ctx context.Context, store Store, obj Object, updatefn func() error) error {
 	if err := store.Get(ctx, obj.GetName(), obj); err != nil {
 		if !errors.IsNotFound(err) {
@@ -260,7 +258,7 @@ func ForEachItem(list ObjectList, fn func(Object) error) error {
 	}
 	v := reflect.ValueOf(items)
 	v = reflect.Indirect(v)
-	for i := 0; i < v.Len(); i++ {
+	for i := range v.Len() {
 		itemv := v.Index(i)
 		// if item is not a pointer, we need to get its address
 		if itemv.Kind() != reflect.Ptr {

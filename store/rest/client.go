@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,7 +19,20 @@ import (
 var _ store.Store = &Client{}
 
 func NewRemoteStore(server string) *Client {
-	return &Client{cli: httpclient.NewClient(server)}
+	return &Client{cli: &httpclient.Client{
+		Server: server,
+		OnResponse: func(req *http.Request, resp *http.Response) error {
+			if resp.StatusCode < 400 {
+				return nil
+			}
+			body, _ := io.ReadAll(resp.Body)
+			statuserr := &errors.Status{}
+			if err := json.Unmarshal(body, statuserr); err == nil {
+				return statuserr
+			}
+			return errors.NewBadRequest(string(body))
+		},
+	}}
 }
 
 type Client struct {
@@ -32,8 +46,22 @@ func (c Client) Count(ctx context.Context, obj store.Object, opts ...store.Count
 	if err != nil {
 		return 0, errors.NewBadRequest(err.Error())
 	}
+	options := store.CountOptions{}
+	for _, o := range opts {
+		o(&options)
+	}
+	queries := url.Values{}
+	if len(options.LabelRequirements) != 0 {
+		queries.Add("labelSelector", options.LabelRequirements.String())
+	}
+	if len(options.FieldRequirements) != 0 {
+		queries.Add("fieldSelector", options.FieldRequirements.String())
+	}
+	if options.IncludeSubScopes {
+		queries.Add("includeSubscopes", "true")
+	}
 	ret := CountResponse{}
-	err = c.cli.Get(c.getPath(resource, "")).Query("count", "true").Return(&ret).Send(ctx)
+	err = c.cli.Get(c.getPath(resource, "")).Query("count", "true").Queries(queries).Return(&ret).Send(ctx)
 	return ret.Count, err
 }
 
@@ -43,7 +71,18 @@ func (c Client) Create(ctx context.Context, obj store.Object, opts ...store.Crea
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	return c.cli.Post(c.getPath(resource, "")).JSON(obj).Return(obj).Send(ctx)
+	options := store.CreateOptions{}
+	for _, o := range opts {
+		o(&options)
+	}
+	queries := url.Values{}
+	if options.TTL != 0 {
+		queries.Add("ttl", options.TTL.String())
+	}
+	if options.AutoIncrementOnName {
+		queries.Add("autoIncrementOnName", "true")
+	}
+	return c.cli.Post(c.getPath(resource, "")).Queries(queries).JSON(obj).Return(obj).Send(ctx)
 }
 
 // Delete implements store.Store.
@@ -52,7 +91,15 @@ func (c Client) Delete(ctx context.Context, obj store.Object, opts ...store.Dele
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	return c.cli.Delete(c.getPath(resource, obj.GetName())).Return(obj).Send(ctx)
+	options := store.DeleteOptions{}
+	for _, o := range opts {
+		o(&options)
+	}
+	queries := url.Values{}
+	if options.PropagationPolicy != nil {
+		queries.Add("propagationPolicy", string(*options.PropagationPolicy))
+	}
+	return c.cli.Delete(c.getPath(resource, obj.GetName())).Queries(queries).Return(obj).Send(ctx)
 }
 
 // Get implements store.Store.
@@ -61,7 +108,15 @@ func (c Client) Get(ctx context.Context, name string, obj store.Object, opts ...
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	return c.cli.Get(c.getPath(resource, name)).Return(obj).Send(ctx)
+	options := store.GetOptions{}
+	for _, o := range opts {
+		o(&options)
+	}
+	queries := url.Values{}
+	if options.ResourceVersion != 0 {
+		queries.Add("resourceVersion", strconv.FormatInt(options.ResourceVersion, 10))
+	}
+	return c.cli.Get(c.getPath(resource, name)).Queries(queries).Return(obj).Send(ctx)
 }
 
 // List implements store.Store.
@@ -70,7 +125,39 @@ func (c Client) List(ctx context.Context, list store.ObjectList, opts ...store.L
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	return c.cli.Get(c.getPath(resource, "")).Return(list).Send(ctx)
+	options := store.ListOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	queries := url.Values{}
+	if len(options.LabelRequirements) != 0 {
+		queries.Add("labelSelector", options.LabelRequirements.String())
+	}
+	if len(options.FieldRequirements) != 0 {
+		queries.Add("fieldSelector", options.FieldRequirements.String())
+	}
+	if options.IncludeSubScopes {
+		queries.Add("includeSubscopes", "true")
+	}
+	if options.Size != 0 {
+		queries.Add("size", strconv.Itoa(options.Size))
+	}
+	if options.Page != 0 {
+		queries.Add("page", strconv.Itoa(options.Page))
+	}
+	if options.Search != "" {
+		queries.Add("search", options.Search)
+	}
+	if options.Sort != "" {
+		queries.Add("sort", options.Sort)
+	}
+	if options.ResourceVersion != 0 {
+		queries.Add("resourceVersion", strconv.FormatInt(options.ResourceVersion, 10))
+	}
+	if options.Continue != "" {
+		queries.Add("continue", options.Continue)
+	}
+	return c.cli.Get(c.getPath(resource, "")).Queries(queries).Return(list).Send(ctx)
 }
 
 // Patch implements store.Store.

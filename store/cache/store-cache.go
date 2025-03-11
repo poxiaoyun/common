@@ -284,7 +284,7 @@ func (e *cachedResource) getlistkey(scopes []store.Scope) string {
 func (e *cachedResource) getkey(scopes []store.Scope, name string) string {
 	key := e.resource
 	for _, scope := range scopes {
-		key += "/" + scope.Resource + "/" + scope.Name
+		key += ("/" + scope.Resource + "/" + scope.Name)
 	}
 	return key + "/" + name
 }
