@@ -89,6 +89,24 @@ func ScopesEquals(a, b []Scope) bool {
 	return true
 }
 
+// IsSameOrUnderScoped returns true if scope1 is under scope2.
+// eg. scope1 = [ { "namespace", "default" } ], scope2 = [ { "namespace", "default" }, { "cluster", "abc" } ].
+// scope2 is under scope1.
+func ScopesIsSameOrUnder(scope1, scope2 []Scope) bool {
+	if len(scope2) == 0 {
+		return true
+	}
+	if len(scope1) < len(scope2) {
+		return false
+	}
+	for i := range scope2 {
+		if scope1[i] != scope2[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func GrowSlice(v reflect.Value, maxCapacity int, sizes ...int) {
 	cap := v.Cap()
 	max := cap

@@ -108,7 +108,7 @@ func GetWebSocketOptions(ctx context.Context, cliconfig *ClientConfig, reqpath s
 			dailer.TLSClientConfig = httptransport.TLSClientConfig
 		}
 	}
-	log.V(5).Info("common http client websocket", "url", u.String())
+	log.V(6).Info("common http client websocket", "url", u.String())
 	wsconn, _, err := dailer.DialContext(ctx, u.String(), options.Header)
 	if err != nil {
 		return err

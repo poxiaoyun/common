@@ -228,7 +228,6 @@ func (w *watcher) Events() <-chan store.WatchEvent {
 // Stop implements store.Watcher.
 func (w *watcher) Stop() {
 	w.cancel()
-	close(w.result)
 }
 
 func (w *watcher) run(ctx context.Context) {

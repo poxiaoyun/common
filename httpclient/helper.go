@@ -89,7 +89,7 @@ func Do(ctx context.Context, r Request) (*http.Response, error) {
 		return nil, err
 	}
 	log := log.FromContext(ctx)
-	log.V(5).Info("http request", "method", req.Method, "url", req.URL.String(), "headers", req.Header)
+	log.V(6).Info("http request", "method", req.Method, "url", req.URL.String(), "headers", req.Header)
 	if r.Debug {
 		if _, isbuffer := r.Body.(*bytes.Buffer); isbuffer {
 			dump, err := httputil.DumpRequest(req, true)
@@ -104,7 +104,7 @@ func Do(ctx context.Context, r Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.V(5).Info("http response", "status", resp.StatusCode, "headers", resp.Header)
+	log.V(6).Info("http response", "status", resp.StatusCode, "headers", resp.Header)
 	if r.Debug {
 		dump, err := httputil.DumpResponse(resp, true)
 		if err != nil {
@@ -238,7 +238,7 @@ func DefaultDecodeFunc(req *http.Request, resp *http.Response, into any) error {
 		if err != nil {
 			return err
 		}
-		log.FromContext(req.Context()).V(5).Info("common http client response", "status", resp.StatusCode, "body", string(jsondata))
+		log.FromContext(req.Context()).V(6).Info("common http client response", "status", resp.StatusCode, "body", string(jsondata))
 		if err := json.Unmarshal(jsondata, into); err != nil {
 			return errors.NewInternalError(fmt.Errorf("failed to unmarshal response: %w, response: %s", err, string(jsondata)))
 		}
@@ -261,4 +261,16 @@ func ObjectToQuery(v any) url.Values {
 		return nil
 	})
 	return values
+}
+
+func StatusOnResponse(req *http.Request, resp *http.Response) error {
+	if resp.StatusCode < http.StatusBadRequest {
+		return nil
+	}
+	bytes, _ := io.ReadAll(resp.Body)
+	statuserr := &errors.Status{}
+	if err := json.Unmarshal(bytes, statuserr); err == nil {
+		return statuserr
+	}
+	return errors.NewBadRequest(string(bytes))
 }

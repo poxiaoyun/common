@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/retry"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -87,7 +88,7 @@ func (f EventHandlerFunc[T]) OnEvent(ctx context.Context, kind store.WatchEventT
 }
 
 func RunListWatchContext(ctx context.Context, storage store.Store, resource string, handler EventHandler[*store.Unstructured]) error {
-	return RetryOnError(ctx, DefaultRetry, AlwaysRetry, func(ctx context.Context) error {
+	return retry.OnError(ctx, func(ctx context.Context) error {
 		return RunListWatch(ctx, storage, resource, true, handler)
 	})
 }

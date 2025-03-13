@@ -97,9 +97,7 @@ func (u *Unstructured) SetAnnotations(annotations map[string]string) {
 
 // GetResourceVersion implements Object.
 func (u *Unstructured) GetResourceVersion() int64 {
-	val, _ := GetNestedField(u.Object, "resourceVersion")
-	s, _ := val.(int64)
-	return s
+	return GetNestedInt64(u.Object, "resourceVersion")
 }
 
 // SetResourceVersion implements Object.
@@ -331,6 +329,25 @@ func GetNestedTime(obj map[string]any, fields ...string) Time {
 		return Time{Time: t}
 	}
 	return Time{}
+}
+
+func GetNestedInt64(obj map[string]any, fields ...string) int64 {
+	val, ok := GetNestedField(obj, fields...)
+	if !ok {
+		return 0
+	}
+	switch typed := val.(type) {
+	case int:
+		return int64(typed)
+	case int64:
+		return typed
+	case float64:
+		return int64(typed)
+	case json.Number:
+		i, _ := typed.Int64()
+		return i
+	}
+	return 0
 }
 
 func GetNestedBool(obj map[string]any, fields ...string) (bool, bool) {

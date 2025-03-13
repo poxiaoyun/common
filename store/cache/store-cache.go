@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"fmt"
-	"math"
 	"reflect"
 	"slices"
 	"strings"
@@ -11,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/wait"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/retry"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -310,20 +309,8 @@ func (c *cachedResource) waitSync(ctx context.Context) error {
 
 func (c *cachedResource) run(ctx context.Context, store store.Store) {
 	log.Info("start syncing cache resource", "resource", c.resource)
-	backoff := wait.Backoff{
-		Duration: 1 * time.Second,
-		Cap:      30 * time.Second,
-		Steps:    math.MaxInt32,
-		Factor:   2.0,
-		Jitter:   1.0,
-	}
-	wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
-		if err := c.sync(ctx, store); err != nil {
-			log.Error(err, "sync failed", "resource", c.resource)
-			// should retry on error
-			return false, nil
-		}
-		return true, nil
+	retry.OnError(ctx, func(ctx context.Context) error {
+		return c.sync(ctx, store)
 	})
 }
 
@@ -337,15 +324,15 @@ func (c *cachedResource) sync(ctx context.Context, s store.Store) error {
 			wo.SendInitialEvents = true
 		},
 	}
+	log.Info("start watching cache resource", "resource", c.resource)
+
 	w, err := s.Watch(ctx, &store.List[store.Unstructured]{Resource: c.resource}, opts...)
 	if err != nil {
 		return err
 	}
 	defer w.Stop()
 
-	newkvs := newThreadSafeReversionMap()
-
-	initlized := false
+	firstbookmark := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -358,15 +345,12 @@ func (c *cachedResource) sync(ctx context.Context, s store.Store) error {
 				return event.Error
 			}
 			if event.Type == store.WatchEventBookmark {
-				if !initlized {
+				if !firstbookmark {
+					firstbookmark = true
 					log.Info("cache resource synced", "resource", c.resource)
-
-					c.kvs.refresh(newkvs.items)
-					initlized = true
-
-					c.lock.Lock()
-					c.initlized = true
-					c.lock.Unlock()
+					if !c.initlized {
+						c.initlized = true
+					}
 				}
 				continue
 			}
@@ -375,26 +359,7 @@ func (c *cachedResource) sync(ctx context.Context, s store.Store) error {
 				continue
 			}
 			objid := c.getkey(objval.GetScopes(), objval.GetName())
-			switch event.Type {
-			case store.WatchEventCreate:
-				if initlized {
-					c.kvs.set(objid, true, objval)
-				} else {
-					newkvs.set(objid, true, objval)
-				}
-			case store.WatchEventUpdate:
-				if initlized {
-					c.kvs.set(objid, false, objval)
-				} else {
-					newkvs.set(objid, false, objval)
-				}
-			case store.WatchEventDelete:
-				if initlized {
-					c.kvs.delete(objid, objval)
-				} else {
-					newkvs.delete(objid, objval)
-				}
-			}
+			c.kvs.set(objid, event.Type, objval)
 		}
 	}
 }
@@ -446,55 +411,32 @@ func (c *threadsafeReversionMap) notify(key string, kind store.WatchEventType, o
 	}
 }
 
-func (c *threadsafeReversionMap) refresh(list map[string]*store.Unstructured) {
+func (c *threadsafeReversionMap) set(key string, event store.WatchEventType, obj *store.Unstructured) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-
-	for key, exists := range c.items {
-		newobj, ok := list[key]
-		if !ok {
-			delete(c.items, key)
-			c.notify(key, store.WatchEventDelete, exists)
-			continue
-		}
-		delete(list, key)
-		// exists, update
-		if newobj.GetResourceVersion() <= exists.GetResourceVersion() {
-			continue
-		}
-		c.items[key] = exists
-		c.notify(key, store.WatchEventUpdate, exists)
+	if latestversion := obj.GetResourceVersion(); c.lastSyncRevision < latestversion {
+		c.lastSyncRevision = latestversion
 	}
-	for key, obj := range list {
+	switch event {
+	case store.WatchEventCreate:
+		exists, ok := c.items[key]
+		if ok && exists.GetResourceVersion() >= obj.GetResourceVersion() {
+			return
+		}
 		c.items[key] = obj
-		c.notify(key, store.WatchEventCreate, obj)
+	case store.WatchEventUpdate:
+		exists, ok := c.items[key]
+		if !ok || exists.GetResourceVersion() >= obj.GetResourceVersion() {
+			return
+		}
+		c.items[key] = obj
+	case store.WatchEventDelete:
+		if _, ok := c.items[key]; !ok {
+			return
+		}
+		delete(c.items, key)
 	}
-}
-
-func (c *threadsafeReversionMap) set(key string, iscreate bool, obj *store.Unstructured) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	if latestversion := obj.GetResourceVersion(); c.lastSyncRevision < latestversion {
-		c.lastSyncRevision = latestversion
-	} else {
-		// ignore old version,it maybe retry
-	}
-	c.items[key] = obj
-	if iscreate {
-		c.notify(key, store.WatchEventCreate, obj)
-	} else {
-		c.notify(key, store.WatchEventUpdate, obj)
-	}
-}
-
-func (c *threadsafeReversionMap) delete(key string, obj *store.Unstructured) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	if latestversion := obj.GetResourceVersion(); c.lastSyncRevision < latestversion {
-		c.lastSyncRevision = latestversion
-	}
-	delete(c.items, key)
-	c.notify(key, store.WatchEventDelete, obj)
+	c.notify(key, event, obj)
 }
 
 func (c *threadsafeReversionMap) watch(ctx context.Context, prefix string, on func(key string, kind store.WatchEventType, obj *store.Unstructured)) {

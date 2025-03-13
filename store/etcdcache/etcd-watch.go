@@ -135,6 +135,9 @@ func (w *warpWatcher) run(ctx context.Context) {
 			if !w.includeSubscopes && !store.ScopesEquals(newobj.GetScopes(), w.scopes) {
 				continue
 			}
+			if w.includeSubscopes && !store.ScopesIsSameOrUnder(newobj.GetScopes(), w.scopes) {
+				continue
+			}
 
 			w.result <- store.WatchEvent{
 				Type: func(et watch.EventType) store.WatchEventType {
