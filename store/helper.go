@@ -369,7 +369,7 @@ func StringsToAny(values []string) []any {
 func AnyToStrings(values []any) []string {
 	result := make([]string, len(values))
 	for i, v := range values {
-		result[i] = v.(string)
+		result[i] = AnyToString(v)
 	}
 	return result
 }
