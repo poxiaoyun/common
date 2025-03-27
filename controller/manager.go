@@ -34,8 +34,18 @@ func (c *ControllerManager) WithStoreLeaderElection(storage store.Store, key str
 }
 
 type ControllerManager struct {
-	Controllers    map[string]Runable
-	LedaerElection LeaderElection
+	Controllers         map[string]Runable
+	LedaerElection      LeaderElection
+	DisabledControllers []string
+	EnableControllers   []string
+}
+
+func (c *ControllerManager) DisableController(name ...string) {
+	c.DisabledControllers = append(c.DisabledControllers, name...)
+}
+
+func (c *ControllerManager) EnableController(name ...string) {
+	c.EnableControllers = append(c.EnableControllers, name...)
 }
 
 func (c *ControllerManager) AddController(controller Runable) error {
@@ -66,9 +76,30 @@ func (c *ControllerManager) Run(ctx context.Context) error {
 	}
 }
 
+func (c *ControllerManager) enabled(name string) bool {
+	if len(c.EnableControllers) == 0 {
+		return !contains(c.DisabledControllers, name)
+	} else {
+		return contains(c.EnableControllers, name)
+	}
+}
+
+func contains(names []string, name string) bool {
+	for _, n := range names {
+		if n == name || n == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *ControllerManager) run(ctx context.Context) error {
 	eg, ctx := errgroup.WithContext(ctx)
 	for name, controller := range c.Controllers {
+		if !c.enabled(name) {
+			log.FromContext(ctx).Info("skip disabled controller", "controller", name)
+			continue
+		}
 		controller := controller
 		eg.Go(func() error {
 			if err := controller.Run(ctx); err != nil {
