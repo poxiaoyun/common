@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/smtp"
 	"net/url"
 	"strings"
@@ -119,8 +120,12 @@ func SendMail(ctx context.Context, smtpOptions SMTPOptions, email *Email) error 
 			return err
 		}
 	}
+	host, _, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return err
+	}
 	if smtpOptions.Username != "" && smtpOptions.Password != "" {
-		auth := smtp.PlainAuth(smtpOptions.Identity, smtpOptions.Username, smtpOptions.Password, u.Host)
+		auth := smtp.PlainAuth(smtpOptions.Identity, smtpOptions.Username, smtpOptions.Password, host)
 		if ok, _ := cli.Extension("AUTH"); !ok {
 			return fmt.Errorf("server does not support auth, but username and password are provided")
 		}
