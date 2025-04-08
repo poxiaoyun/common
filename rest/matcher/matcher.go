@@ -129,19 +129,19 @@ func (s Section) score() int {
 	return score
 }
 
-func (n *Node[T]) Match(path string, oncandidate func(val T) bool) (*Node[T], []MatchVar) {
-	return n.match(ParseToken(path), oncandidate)
+func (n *Node[T]) Match(path string, oncandidate func(val T, vars []MatchVar) bool) (*Node[T], []MatchVar) {
+	return n.match(ParseToken(path), nil, oncandidate)
 }
 
-func (n *Node[T]) match(tokens []string, oncandidate func(val T) bool) (*Node[T], []MatchVar) {
+func (n *Node[T]) match(tokens []string, vars []MatchVar, oncandidate func(val T, vars []MatchVar) bool) (*Node[T], []MatchVar) {
 	for _, child := range n.Children {
-		if ok, lefttokens, vars := child.Section.match(tokens); ok {
-			if len(lefttokens) == 0 && (oncandidate == nil || oncandidate(child.Value)) {
-				return child, vars
+		if ok, lefttokens, thisvars := child.Section.match(tokens); ok {
+			if len(lefttokens) == 0 && (oncandidate == nil || oncandidate(child.Value, vars)) {
+				return child, append(vars, thisvars...)
 			}
-			node, childvars := child.match(lefttokens, oncandidate)
+			node, childvars := child.match(lefttokens, append(vars, thisvars...), oncandidate)
 			if node != nil {
-				return node, append(vars, childvars...)
+				return node, childvars
 			}
 		}
 	}

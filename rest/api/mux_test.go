@@ -38,7 +38,6 @@ func Test_matcher_Match(t *testing.T) {
 			},
 			req:     "/front/@iconify-json/logos-c3b8b8cf.js",
 			matched: true,
-			vars:    []MatchVar{},
 		},
 		{
 			registered: []string{
@@ -162,6 +161,13 @@ func Test_matcher_Match(t *testing.T) {
 				{Name: "reference", Value: "v1"},
 			},
 		},
+		{
+			registered: []string{
+				"/api/tenants/{tenant}/organizations",
+			},
+			req:     "/api/tenants//organizations",
+			matched: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.req, func(t *testing.T) {
@@ -171,9 +177,7 @@ func Test_matcher_Match(t *testing.T) {
 					t.Error(err)
 				}
 			}
-			node, vars := m.Tree.Match(tt.req, func(val MethodsHandler) bool {
-				return val != nil
-			})
+			node, vars := m.Tree.Match(tt.req, DefaultMatchCandidateFunc)
 			matched := (node != nil && node.Value != nil)
 			if matched != tt.matched {
 				t.Errorf("matcher.Match() matched = %v, want %v", matched, tt.matched)

@@ -159,15 +159,26 @@ func completePathParam(route *Route, sections []matcher.Section) {
 	route.Path = matcher.NoRegexpString(sections)
 }
 
+func DefaultMatchCandidateFunc(val MethodsHandler, vars []matcher.MatchVar) bool {
+	for _, v := range vars {
+		// if no matched value,skip
+		//
+		// example: /v1/tenants//organizations matched /v1/tenants/{tenant}/organizations
+		// but tenant is empty which is not allowed
+		if v.Value == "" {
+			return false
+		}
+	}
+	// only match if the node has a handler
+	return val != nil
+}
+
 func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	matchpath := r.URL.Path
 	if r.URL.RawPath != "" {
 		matchpath = r.URL.RawPath
 	}
-	node, vars := m.Tree.Match(matchpath, func(val MethodsHandler) bool {
-		// only match if the node has a handler
-		return val != nil
-	})
+	node, vars := m.Tree.Match(matchpath, DefaultMatchCandidateFunc)
 	if node == nil || node.Value == nil {
 		if m.NotFound == nil {
 			http.NotFound(w, r)
