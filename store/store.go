@@ -16,6 +16,10 @@ const (
 type (
 	GetOptions struct {
 		ResourceVersion int64
+		// FieldRequirements is a list of conditions that must be true for the get to occur.
+		// It may not supported by all databases.
+		FieldRequirements Requirements
+		LabelRequirements Requirements
 	}
 	GetOption func(*GetOptions)
 
@@ -105,6 +109,18 @@ func WithWatchFieldRequirements(reqs ...Requirement) WatchOption {
 func WithCountFieldRequirementsFromSelector(selector fields.Selector) CountOption {
 	return func(o *CountOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, FieldsSelectorToReqirements(selector)...)
+	}
+}
+
+func WithGetFieldRequirements(reqs ...Requirement) GetOption {
+	return func(o *GetOptions) {
+		o.FieldRequirements = append(o.FieldRequirements, reqs...)
+	}
+}
+
+func WithGetLabelRequirements(reqs ...Requirement) GetOption {
+	return func(o *GetOptions) {
+		o.LabelRequirements = append(o.LabelRequirements, reqs...)
 	}
 }
 

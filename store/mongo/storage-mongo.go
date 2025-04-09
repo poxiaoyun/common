@@ -389,6 +389,7 @@ func (m *MongoStorage) Get(ctx context.Context, name string, obj store.Object, o
 	obj.SetName(name)
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "name", Value: name})
+		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
 		findopt := mongooptions.FindOne()
 		m.core.logger.V(5).Info("get", "collection", col.Name(), "filter", filter)
 		if err := col.FindOne(ctx, filter, findopt).Decode(obj); err != nil {
