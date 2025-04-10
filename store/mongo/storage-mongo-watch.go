@@ -47,13 +47,9 @@ func (m *MongoStorage) Watch(ctx context.Context, obj store.ObjectList, opts ...
 	for _, opt := range opts {
 		opt(&options)
 	}
-	itemsPointer, err := store.GetItemsPtr(obj)
+	_, newObjFunc, err := store.NewItemFuncFromList(obj)
 	if err != nil {
 		return nil, err
-	}
-	itemType := reflect.TypeOf(itemsPointer).Elem().Elem()
-	newObjFunc := func() store.Object {
-		return NewObject[store.Object](itemType)
 	}
 	var watcher store.Watcher
 	err = m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {

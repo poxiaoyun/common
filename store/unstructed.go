@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -459,6 +460,19 @@ func (u *Unstructured) UnmarshalJSON(data []byte) error {
 
 func (u *Unstructured) MarshalJSON() ([]byte, error) {
 	return json.Marshal(u.Object)
+}
+
+func (u *Unstructured) UnmarshalBSON(data []byte) error {
+	d := map[string]any{}
+	if err := bson.Unmarshal(data, &d); err != nil {
+		return err
+	}
+	u.Object = d
+	return nil
+}
+
+func (u *Unstructured) MarshalBSON() ([]byte, error) {
+	return bson.Marshal(u.Object)
 }
 
 func CompareUnstructuredField(a, b *Unstructured, sorts []SortBy) int {
