@@ -2,8 +2,6 @@ package controller
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -64,17 +62,11 @@ func DecodeScopes(scopes string) []store.Scope {
 	return ret
 }
 
-type (
-	Controller           = TypedController[ScopedKey]
-	ControllerReconciler interface {
-		Reconcile(ctx context.Context, key ScopedKey) error
-	}
-	ControllerQueue = TypedQueue[*ScopedKey]
-)
-
 type TypedReconciler[T any] interface {
-	Reconcile(ctx context.Context, key T) error
+	Reconcile(ctx context.Context, key T) (Result, error)
 }
+
+type Controller = TypedController[ScopedKey]
 
 // InitalizeReconciler is an optional interface that can be implemented by a Reconciler to
 type InitializeReconciler interface {
@@ -83,26 +75,15 @@ type InitializeReconciler interface {
 
 var _ TypedReconciler[any] = TypedReconcilerFunc[any](nil)
 
-type TypedReconcilerFunc[T any] func(ctx context.Context, key T) error
+type TypedReconcilerFunc[T any] func(ctx context.Context, key T) (Result, error)
 
-func (f TypedReconcilerFunc[T]) Reconcile(ctx context.Context, key T) error {
+func (f TypedReconcilerFunc[T]) Reconcile(ctx context.Context, key T) (Result, error) {
 	return f(ctx, key)
 }
 
-type ReQueueError struct {
-	Err   error
-	Atfer time.Duration
-}
-
-func (r ReQueueError) Error() string {
-	if r.Err == nil {
-		return fmt.Sprintf("retry after %s", r.Atfer)
-	}
-	return fmt.Sprintf("retry after %s: %s", r.Atfer, r.Err.Error())
-}
-
-func WithReQueue(after time.Duration, err error) error {
-	return ReQueueError{Err: err, Atfer: after}
+type Result struct {
+	Requeue      bool
+	RequeueAfter time.Duration
 }
 
 type ControllerOptions[T comparable] struct {
@@ -125,7 +106,7 @@ func WithLeaderElection[T comparable](leader LeaderElection) ControllerOption[T]
 	}
 }
 
-func NewController(name string, sync ControllerReconciler, options ...ControllerOption[ScopedKey]) *Controller {
+func NewController(name string, sync TypedReconciler[ScopedKey], options ...ControllerOption[ScopedKey]) *TypedController[ScopedKey] {
 	return NewTypedController(name, sync, options...)
 }
 
@@ -207,14 +188,13 @@ func (h *TypedController[T]) run(ctx context.Context) error {
 	return eg.Wait()
 }
 
-func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], syncfunc func(ctx context.Context, key T) error, concurent int) error {
+func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], syncfunc func(ctx context.Context, key T) (Result, error), concurent int) error {
 	go func() {
 		<-ctx.Done()
 		queue.ShutDown()
-		log.FromContext(ctx).Info("queue shutdown")
 	}()
 
-	logger := log.FromContext(ctx)
+	log := log.FromContext(ctx)
 
 	// 10 qps, burst 100
 	ratelimit := rate.NewLimiter(rate.Limit(10), 100)
@@ -238,20 +218,16 @@ func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], sy
 					// ratelimit 1
 					ratelimit.Wait(ctx)
 
-					if err := syncfunc(ctx, val); err != nil {
-						// requeue
-						retry := ReQueueError{}
-						if errors.As(err, &retry) {
-							if retry.Err != nil {
-								logger.Error(retry.Err, "sync error", "key", val)
-							}
-							queue.AddAfter(val, retry.Atfer)
-						} else {
-							logger.Error(err, "sync error", "key", val)
-							queue.AddRateLimited(val)
-						}
+					result, err := syncfunc(ctx, val)
+					if err != nil {
+						log.Error(err, "sync", "key", val)
+						queue.AddRateLimited(val)
 					} else {
-						queue.Forget(val)
+						if result.Requeue {
+							queue.AddAfter(val, result.RequeueAfter)
+						} else {
+							queue.Forget(val)
+						}
 					}
 					queue.Done(val)
 				}

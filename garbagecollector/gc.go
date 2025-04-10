@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -139,13 +140,13 @@ func eventType(kind store.WatchEventType) eventtype {
 func (c *GarbageCollector) startProcess(ctx context.Context) error {
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-		return controller.RunQueueConsumer(ctx, c.graph.changes, c.processGraphChanges, 1)
+		return controller.RunQueueConsumer(ctx, c.graph.changes, c.processGraphChangesResult, 1)
 	})
 	eg.Go(func() error {
-		return controller.RunQueueConsumer(ctx, c.graph.attemptToDelete, c.processAttemptToDelete, 1)
+		return controller.RunQueueConsumer(ctx, c.graph.attemptToDelete, c.processAttemptToDeleteResult, 1)
 	})
 	eg.Go(func() error {
-		return controller.RunQueueConsumer(ctx, c.graph.attemptToOrphan, c.processAttemptToOrphan, 1)
+		return controller.RunQueueConsumer(ctx, c.graph.attemptToOrphan, c.processAttemptToOrphanResult, 1)
 	})
 	return eg.Wait()
 }
@@ -188,6 +189,10 @@ func objectIdentityFrom(obj store.Object) objectIdentity {
 	}
 }
 
+func (c *GarbageCollector) processAttemptToOrphanResult(ctx context.Context, node *node) (controller.Result, error) {
+	return controller.Result{}, c.processAttemptToOrphan(ctx, node)
+}
+
 func (c *GarbageCollector) processAttemptToOrphan(ctx context.Context, node *node) error {
 	children := node.getChildren()
 	if err := c.orphanDependents(ctx, node.identity, children); err != nil {
@@ -211,14 +216,16 @@ func (gc *GarbageCollector) orphanDependents(ctx context.Context, owner objectId
 	return eg.Wait()
 }
 
-func (gc *GarbageCollector) processAttemptToDelete(ctx context.Context, n *node) error {
+func (gc *GarbageCollector) processAttemptToDeleteResult(ctx context.Context, n *node) (controller.Result, error) {
 	if err := gc.processAttemptToDeleteInner(ctx, n); err != nil {
-		return err
+		return controller.Result{}, err
 	}
 	if !n.isObserved() {
-		return fmt.Errorf("node %v is not observed", n.identity)
+		// we need to requeue the node because it's not observed yet
+		// retry later
+		return controller.Result{Requeue: true, RequeueAfter: 5 * time.Second}, nil
 	}
-	return nil
+	return controller.Result{}, nil
 }
 
 func (gc *GarbageCollector) processAttemptToDeleteInner(ctx context.Context, n *node) error {
@@ -263,7 +270,6 @@ func (gc *GarbageCollector) processAttemptToDeleteInner(ctx context.Context, n *
 	ownerReferences := latest.GetOwnerReferences()
 
 	if len(ownerReferences) == 0 {
-		logger.V(2).Info("item doesn't have an owner, continue on next item")
 		return nil
 	}
 
@@ -271,14 +277,13 @@ func (gc *GarbageCollector) processAttemptToDeleteInner(ctx context.Context, n *
 	if err != nil {
 		return err
 	}
-	logger.V(5).Info("classify item's references",
+	logger.V(6).Info("classify item's references",
 		"solid", solid,
 		"dangling", dangling,
 		"waitingForDependentsDeletion", waitingForDependentsDeletion,
 	)
 	switch {
 	case len(solid) != 0:
-		logger.V(2).Info("item has at least one existing owner, will not garbage collect", "owner", solid)
 		if len(dangling) == 0 && len(waitingForDependentsDeletion) == 0 {
 			return nil
 		}
@@ -545,7 +550,11 @@ func (gc *GarbageCollector) deleteOwnerReferences(ctx context.Context, item *nod
 	return gc.patchObject(ctx, item.identity, patch)
 }
 
-func (c *GarbageCollector) processGraphChanges(ctx context.Context, event *event) error {
+func (c *GarbageCollector) processGraphChangesResult(ctx context.Context, event *event) (controller.Result, error) {
+	return controller.Result{}, c.processGraphChanges(ctx, event)
+}
+
+func (c *GarbageCollector) processGraphChanges(_ context.Context, event *event) error {
 	existingNode, found := c.graph.getNode(event.identity.UID)
 	// If the node exists in the graph and is not observed, mark it as observed.
 	if found && !event.virtual && !existingNode.isObserved() {

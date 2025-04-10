@@ -12,6 +12,11 @@ import (
 )
 
 type Reconciler[T store.Object] interface {
+	Sync(ctx context.Context, obj T) (Result, error)
+	Remove(ctx context.Context, obj T) (Result, error)
+}
+
+type SimpleResourceReconciler[T store.Object] interface {
 	Sync(ctx context.Context, obj T) error
 	Remove(ctx context.Context, obj T) error
 }
@@ -72,7 +77,7 @@ func (r *BetterReconciler[T]) Initialize(ctx context.Context) error {
 }
 
 // nolint: funlen,gocognit
-func (r *BetterReconciler[T]) Reconcile(ctx context.Context, key ScopedKey) error {
+func (r *BetterReconciler[T]) Reconcile(ctx context.Context, key ScopedKey) (Result, error) {
 	log := log.FromContext(ctx).WithValues("key", key)
 
 	log.Info("start reconcile")
@@ -85,42 +90,43 @@ func (r *BetterReconciler[T]) Reconcile(ctx context.Context, key ScopedKey) erro
 		// if object not found , just ignore it
 		// if a post handler needed after object deleted, consider to add a finalizer instead
 		if errors.IsNotFound(err) {
-			return nil
+			return Result{}, nil
 		}
-		return err
+		return Result{}, err
 	}
 
 	finalizer := r.Options.finalizer
 	if obj.GetDeletionTimestamp() != nil {
 		log.Info("is being deleted")
 		if finalizer != "" && !ContainsFinalizer(obj, finalizer) {
-			return nil
+			return Result{}, nil
 		}
 		// remove
-		if err := r.processWithPostFunc(ctx, condStorage, obj, r.Reconciler.Remove); err != nil {
-			return err
+		result, err := r.processWithPostFunc(ctx, condStorage, obj, r.Reconciler.Remove)
+		if err != nil {
+			return result, err
 		}
 		if finalizer != "" && RemoveFinalizer(obj, finalizer) {
 			if err := condStorage.Status().Update(ctx, obj); err != nil {
-				return err
+				return Result{}, err
 			}
 		}
-		return nil
+		return result, nil
 	}
 	if finalizer != "" && AddFinalizer(obj, finalizer) {
 		if err := condStorage.Status().Update(ctx, obj); err != nil {
-			return err
+			return Result{}, err
 		}
 	}
 	// sync
 	return r.processWithPostFunc(ctx, condStorage, obj, r.Reconciler.Sync)
 }
 
-func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStorage store.Store, obj T, fun func(ctx context.Context, obj T) error) error {
+func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStorage store.Store, obj T, fun TypedReconcilerFunc[T]) (Result, error) {
 	log := log.FromContext(ctx)
 	original := DeepCopyObject(obj)
 
-	requeueAfter, funcerr := unwrapReQueueError(fun(ctx, obj))
+	result, funcerr := fun(ctx, obj)
 	if funcerr != nil {
 		r.setStatusMessage(obj, funcerr)
 		if !reflect.DeepEqual(original, obj) {
@@ -128,39 +134,18 @@ func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStora
 				log.Error(updateerr, "unable to update status")
 			}
 		}
-		if requeueAfter > 0 {
-			log.Info("requeue after", "duration", requeueAfter)
-			return WithReQueue(requeueAfter, nil)
-		}
-		return funcerr
-	}
-	// success reconciled
-	// clear message
-	r.setStatusMessage(obj, nil)
-	if !reflect.DeepEqual(original, obj) {
-		if updateerr := condStorage.Status().Update(ctx, obj); updateerr != nil {
-			log.Error(updateerr, "unable to update status")
-			return updateerr
+	} else {
+		// success reconciled
+		// clear message
+		r.setStatusMessage(obj, nil)
+		if !reflect.DeepEqual(original, obj) {
+			if updateerr := condStorage.Status().Update(ctx, obj); updateerr != nil {
+				log.Error(updateerr, "unable to update status")
+				return Result{}, updateerr
+			}
 		}
 	}
-	if requeueAfter == 0 {
-		requeueAfter = r.Options.requeueOnSuccess
-	}
-	if requeueAfter > 0 {
-		log.Info("requeue after", "duration", requeueAfter)
-		return WithReQueue(requeueAfter, nil)
-	}
-	return funcerr
-}
-
-func unwrapReQueueError(err error) (time.Duration, error) {
-	if err == nil {
-		return 0, nil
-	}
-	if re, ok := err.(ReQueueError); ok {
-		return re.Atfer, re.Err
-	}
-	return 0, err
+	return result, nil
 }
 
 func NewObject[T any](t reflect.Type) T {
