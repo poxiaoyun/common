@@ -3,8 +3,6 @@ package store
 import (
 	"reflect"
 	"testing"
-
-	"k8s.io/apimachinery/pkg/selection"
 )
 
 func TestParseRequirements(t *testing.T) {
@@ -29,7 +27,7 @@ func TestParseRequirements(t *testing.T) {
 				RequirementEqual("key1", "value1"),
 				Requirement{
 					Key:      "key2",
-					Operator: selection.In,
+					Operator: In,
 					Values:   []any{"value2", "value3"},
 				},
 			},

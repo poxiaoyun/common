@@ -124,6 +124,12 @@ func WithGetLabelRequirements(reqs ...Requirement) GetOption {
 	}
 }
 
+func WithUpdateFieldRequirements(reqs ...Requirement) UpdateOption {
+	return func(o *UpdateOptions) {
+		o.FieldRequirements = append(o.FieldRequirements, reqs...)
+	}
+}
+
 func WithCountFieldRequirementsFromSet(kvs map[string]string) CountOption {
 	return func(o *CountOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, RequirementsFromMap(kvs)...)

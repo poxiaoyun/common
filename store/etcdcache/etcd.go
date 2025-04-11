@@ -346,7 +346,7 @@ func ConvertPredicate(l store.Requirements, f store.Requirements) (storage.Selec
 func requirementsToLabelsSelector(reqs store.Requirements) (labels.Selector, error) {
 	selector := labels.Everything()
 	for _, req := range reqs {
-		labelreq, err := labels.NewRequirement(req.Key, req.Operator, store.AnyToStrings(req.Values))
+		labelreq, err := labels.NewRequirement(req.Key, selection.Operator(req.Operator), store.AnyToStrings(req.Values))
 		if err != nil {
 			return nil, err
 		}
@@ -359,9 +359,9 @@ func requirementsToFieldsSelector(reqs store.Requirements) (fields.Selector, err
 	selectors := make([]fields.Selector, 0, len(reqs))
 	for _, req := range reqs {
 		switch req.Operator {
-		case selection.Equals, selection.DoubleEquals:
+		case store.Equals, store.DoubleEquals:
 			selectors = append(selectors, fields.OneTermEqualSelector(req.Key, store.AnyToString(req.Values[0])))
-		case selection.NotEquals:
+		case store.NotEquals:
 			selectors = append(selectors, fields.OneTermNotEqualSelector(req.Key, store.AnyToString(req.Values[0])))
 		default:
 			return nil, fmt.Errorf("unsupported field selector operator: %s", req.Operator)

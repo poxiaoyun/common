@@ -20,7 +20,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/selection"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	libreflect "xiaoshiai.cn/common/reflect"
@@ -579,7 +578,7 @@ func sortstage(sort string) bson.M {
 func scopesmatch(match bson.D, scopes []store.Scope) bson.D {
 	conds := store.Requirements{}
 	for _, scope := range scopes {
-		conds = append(conds, store.Requirement{Operator: selection.Equals, Key: scope.Resource, Values: []any{scope.Name}})
+		conds = append(conds, store.Requirement{Operator: store.Equals, Key: scope.Resource, Values: []any{scope.Name}})
 	}
 	return conditionsmatch(match, conds)
 }
@@ -588,7 +587,7 @@ func conditionsmatch(match bson.D, conds store.Requirements) bson.D {
 	for _, cond := range conds {
 		key, values := cond.Key, cond.Values
 		switch cond.Operator {
-		case selection.Equals:
+		case store.Equals:
 			if len(values) == 0 {
 				match = append(match, bson.E{Key: key, Value: nil})
 			} else if values[0] == "" {
@@ -596,24 +595,35 @@ func conditionsmatch(match bson.D, conds store.Requirements) bson.D {
 			} else {
 				match = append(match, bson.E{Key: key, Value: values[0]})
 			}
-		case selection.NotEquals:
+		case store.NotEquals:
 			match = append(match, bson.E{Key: key, Value: bson.M{"$ne": values[0]}})
-		case selection.In:
+		case store.In:
 			// https://www.mongodb.com/docs/manual/reference/operator/query/in/
 			// { field: { $in: [<value1>, <value2>, ... <valueN> ] } }
 			match = append(match, bson.E{Key: key, Value: bson.M{"$in": values}})
-		case selection.NotIn:
+		case store.NotIn:
 			// https://www.mongodb.com/docs/manual/reference/operator/query/nin/
 			// { field: { $nin: [ <value1>, <value2> ... <valueN> ] } }
 			match = append(match, bson.E{Key: key, Value: bson.M{"$nin": values}})
-		case selection.Exists:
+		case store.Exists:
 			match = append(match, bson.E{Key: key, Value: bson.M{"$ne": nil}})
-		case selection.DoesNotExist:
+		case store.DoesNotExist:
 			match = append(match, bson.E{Key: key, Value: bson.M{"$exists": false}})
-		case selection.GreaterThan:
+		case store.GreaterThan:
 			match = append(match, bson.E{Key: key, Value: bson.M{"$gt": values[0]}})
-		case selection.LessThan:
+		case store.LessThan:
 			match = append(match, bson.E{Key: key, Value: bson.M{"$lt": values[0]}})
+		case store.GreaterThanOrEqual:
+			match = append(match, bson.E{Key: key, Value: bson.M{"$gte": values[0]}})
+		case store.LessThanOrEqual:
+			match = append(match, bson.E{Key: key, Value: bson.M{"$lte": values[0]}})
+		case store.Contains:
+			if false {
+				match = append(match, bson.E{Key: key, Value: bson.M{"$regex": values[0]}})
+			} else {
+				// https://www.mongodb.com/docs/manual/reference/operator/query/all/
+				match = append(match, bson.E{Key: key, Value: bson.M{"$all": values}})
+			}
 		case "like", "~=":
 			match = append(match, searchStage(key, store.AnyToString(values[0])))
 		}

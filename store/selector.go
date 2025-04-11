@@ -9,7 +9,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/selection"
 )
 
 type Requirements []Requirement
@@ -28,29 +27,47 @@ func (r Requirements) String() string {
 func RequirementEqual(key string, value any) Requirement {
 	return Requirement{
 		Key:      key,
-		Operator: selection.Equals,
+		Operator: Equals,
 		Values:   []any{value},
 	}
 }
 
-func NewRequirement(key string, operator selection.Operator, values ...any) Requirement {
+func NewRequirement(key string, operator Operator, values ...any) Requirement {
 	return Requirement{Key: key, Operator: operator, Values: values}
 }
 
 func NewCreationRangeRequirement(start, end time.Time) []Requirement {
 	ret := make([]Requirement, 0, 2)
 	if !start.IsZero() {
-		ret = append(ret, NewRequirement("creationTimestamp", selection.GreaterThan, start))
+		ret = append(ret, NewRequirement("creationTimestamp", GreaterThanOrEqual, start))
 	}
 	if !end.IsZero() {
-		ret = append(ret, NewRequirement("creationTimestamp", selection.LessThan, end))
+		ret = append(ret, NewRequirement("creationTimestamp", LessThanOrEqual, end))
 	}
 	return ret
 }
 
+type Operator string
+
+const (
+	DoesNotExist       Operator = "!"
+	Equals             Operator = "="
+	DoubleEquals       Operator = "=="
+	In                 Operator = "in"
+	NotEquals          Operator = "!="
+	NotIn              Operator = "notin"
+	Exists             Operator = "exists"
+	GreaterThan        Operator = "gt"
+	LessThan           Operator = "lt"
+	GreaterThanOrEqual Operator = "gte"
+	LessThanOrEqual    Operator = "lte"
+	Contains           Operator = "contains" // slice contains element, string contains substring
+	Like               Operator = "like"       // string contains substring
+)
+
 type Requirement struct {
 	Key      string
-	Operator selection.Operator
+	Operator Operator
 	Values   []any
 }
 
@@ -63,32 +80,32 @@ func (r Requirement) String() string {
 			len(r.Operator) + 2 +
 			// length of 'r.strValues' slice times. Heuristically 5 chars per word
 			+5*len(r.Values))
-	if r.Operator == selection.DoesNotExist {
+	if r.Operator == DoesNotExist {
 		sb.WriteString("!")
 	}
 	sb.WriteString(r.Key)
 
 	switch r.Operator {
-	case selection.Equals:
+	case Equals:
 		sb.WriteString("=")
-	case selection.DoubleEquals:
+	case DoubleEquals:
 		sb.WriteString("==")
-	case selection.NotEquals:
+	case NotEquals:
 		sb.WriteString("!=")
-	case selection.In:
+	case In:
 		sb.WriteString(" in ")
-	case selection.NotIn:
+	case NotIn:
 		sb.WriteString(" notin ")
-	case selection.GreaterThan:
+	case GreaterThan:
 		sb.WriteString(">")
-	case selection.LessThan:
+	case LessThan:
 		sb.WriteString("<")
-	case selection.Exists, selection.DoesNotExist:
+	case Exists, DoesNotExist:
 		return sb.String()
 	}
 
 	switch r.Operator {
-	case selection.In, selection.NotIn:
+	case In, NotIn:
 		sb.WriteString("(")
 	}
 	if len(r.Values) == 1 {
@@ -102,7 +119,7 @@ func (r Requirement) String() string {
 		sb.WriteString(strings.Join(strValues, ","))
 	}
 	switch r.Operator {
-	case selection.In, selection.NotIn:
+	case In, NotIn:
 		sb.WriteString(")")
 	}
 	return sb.String()
@@ -120,7 +137,7 @@ func LabelsSelectorToReqirements(labels labels.Selector) Requirements {
 	reqs, _ := labels.Requirements()
 	list := make([]Requirement, 0, len(reqs))
 	for _, r := range reqs {
-		list = append(list, Requirement{Key: r.Key(), Operator: r.Operator(), Values: StringsToAny(r.Values().List())})
+		list = append(list, Requirement{Key: r.Key(), Operator: Operator(r.Operator()), Values: StringsToAny(r.Values().List())})
 	}
 	return list
 }
@@ -129,7 +146,7 @@ func FieldsSelectorToReqirements(fields fields.Selector) Requirements {
 	reqs := fields.Requirements()
 	list := make([]Requirement, 0, len(reqs))
 	for _, r := range reqs {
-		list = append(list, Requirement{Key: r.Field, Operator: r.Operator, Values: []any{r.Value}})
+		list = append(list, Requirement{Key: r.Field, Operator: Operator(r.Operator), Values: []any{r.Value}})
 	}
 	return list
 }
@@ -176,23 +193,23 @@ func RequirementsMatchLabels(r Requirements, labels map[string]string) bool {
 
 func RequirementMatchLabels(r Requirement, obj map[string]string) bool {
 	switch r.Operator {
-	case selection.DoesNotExist:
+	case DoesNotExist:
 		_, ok := obj[r.Key]
 		return !ok
-	case selection.Exists:
+	case Exists:
 		_, ok := obj[r.Key]
 		return ok
-	case selection.Equals, selection.DoubleEquals:
+	case Equals, DoubleEquals:
 		return len(r.Values) == 1 && obj[r.Key] == r.Values[0]
-	case selection.In:
+	case In:
 		return RequirementMatchIn(r.Values, obj[r.Key])
-	case selection.NotEquals:
+	case NotEquals:
 		return len(r.Values) == 1 && obj[r.Key] != r.Values[0]
-	case selection.NotIn:
+	case NotIn:
 		return !RequirementMatchIn(r.Values, obj[r.Key])
-	case selection.GreaterThan:
+	case GreaterThan:
 		return requirementValueCompare(obj[r.Key], r.Values[0]) > 0
-	case selection.LessThan:
+	case LessThan:
 		return requirementValueCompare(obj[r.Key], r.Values[0]) < 0
 	}
 	return false
@@ -238,39 +255,39 @@ func MatchUnstructuredFieldRequirments(obj *Unstructured, reqs Requirements) boo
 	for _, req := range reqs {
 		val, ok := GetNestedField(obj.Object, strings.Split(req.Key, ".")...)
 		if !ok {
-			if req.Operator == selection.DoesNotExist {
+			if req.Operator == DoesNotExist {
 				continue
 			}
 			return false
 		}
-		if req.Operator == selection.DoesNotExist {
+		if req.Operator == DoesNotExist {
 			return false
 		}
-		if req.Operator == selection.Exists {
+		if req.Operator == Exists {
 			continue
 		}
 		switch req.Operator {
-		case selection.Equals, selection.DoubleEquals:
+		case Equals, DoubleEquals:
 			if val != req.Values[0] {
 				return false
 			}
-		case selection.NotEquals:
+		case NotEquals:
 			if val == req.Values[0] {
 				return false
 			}
-		case selection.In:
+		case In:
 			if !slices.Contains(req.Values, val) {
 				return false
 			}
-		case selection.NotIn:
+		case NotIn:
 			if slices.Contains(req.Values, val) {
 				return false
 			}
-		case selection.GreaterThan:
+		case GreaterThan:
 			if requirementValueCompare(val, req.Values[0]) <= 0 {
 				return false
 			}
-		case selection.LessThan:
+		case LessThan:
 			if requirementValueCompare(val, req.Values[0]) >= 0 {
 				return false
 			}
