@@ -11,6 +11,11 @@ type StrategyStore struct {
 	Stratage Strategy
 }
 
+// DeleteBatch implements store.Store.
+func (s *StrategyStore) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
+	return s.Store.DeleteBatch(ctx, obj, opts...)
+}
+
 type FinishFunc func(ctx context.Context, success bool)
 
 type Strategy struct {

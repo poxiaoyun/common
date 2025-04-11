@@ -125,6 +125,12 @@ type generic struct {
 	scopes []store.Scope
 }
 
+// DeleteBatch implements store.Store.
+func (c *generic) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
+	//panic("unimplemented")
+	return errors.NewNotImplemented("delete batch is not supported")
+}
+
 // Count implements store.Store.
 func (c *generic) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
 	options := store.CountOptions{}

@@ -40,6 +40,11 @@ type Client struct {
 	scopesPrefix string
 }
 
+// DeleteBatch implements store.Store.
+func (c *Client) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
+	return errors.NewNotImplemented("delete batch is not supported")
+}
+
 // Count implements store.Store.
 func (c Client) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
 	resource, err := store.GetResource(obj)

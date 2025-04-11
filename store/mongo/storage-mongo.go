@@ -364,20 +364,20 @@ func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...sto
 }
 
 // DeleteAllOf implements Storage.
-// func (m *MongoStorage) DeleteAllOf(ctx context.Context, obj store.ObjectList, opts ...store.DeleteAllOfOption) error {
-// 	options := store.DeleteAllOfOptions{}
-// 	for _, opt := range opts {
-// 		opt(&options)
-// 	}
-// 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-// 		filter = conditionsmatch(filter, options.Cond)
-// 		m.core.logger.V(5).Info("delete all", "collection", col.Name(), "filter", filter)
-// 		if _, err := col.DeleteMany(ctx, filter); err != nil {
-// 			return warpMongoError(err, col, nil)
-// 		}
-// 		return nil
-// 	})
-// }
+func (m *MongoStorage) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
+	options := store.DeleteBatchOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		filter = conditionsmatch(filter, options.FieldRequirements)
+		m.core.logger.V(5).Info("delete all", "collection", col.Name(), "filter", filter)
+		if _, err := col.DeleteMany(ctx, filter); err != nil {
+			return WarpMongoError(err, col, nil)
+		}
+		return nil
+	})
+}
 
 // Get implements Storage.
 func (m *MongoStorage) Get(ctx context.Context, name string, obj store.Object, opts ...store.GetOption) error {

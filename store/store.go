@@ -63,6 +63,12 @@ type (
 	}
 	DeleteOption func(*DeleteOptions)
 
+	DeleteBatchOptions struct {
+		FieldRequirements Requirements
+	}
+
+	DeleteBatchOption func(*DeleteBatchOptions)
+
 	UpdateOptions struct {
 		TTL time.Duration
 		// FieldRequirements is a list of conditions that must be true for the update to occur.
@@ -156,6 +162,12 @@ func WithFieldRequirementsFromSet(kvs map[string]string) ListOption {
 
 func WithFieldRequirements(reqs ...Requirement) ListOption {
 	return func(o *ListOptions) {
+		o.FieldRequirements = append(o.FieldRequirements, reqs...)
+	}
+}
+
+func WithDeleteBatchFieldRequirements(reqs ...Requirement) DeleteBatchOption {
+	return func(o *DeleteBatchOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, reqs...)
 	}
 }
@@ -256,6 +268,7 @@ type Store interface {
 	Count(ctx context.Context, obj Object, opts ...CountOption) (int, error)
 	Create(ctx context.Context, obj Object, opts ...CreateOption) error
 	Delete(ctx context.Context, obj Object, opts ...DeleteOption) error
+	DeleteBatch(ctx context.Context, obj ObjectList, opts ...DeleteBatchOption) error
 	Update(ctx context.Context, obj Object, opts ...UpdateOption) error
 	Patch(ctx context.Context, obj Object, patch Patch, opts ...PatchOption) error
 	Watch(ctx context.Context, obj ObjectList, opts ...WatchOption) (Watcher, error)

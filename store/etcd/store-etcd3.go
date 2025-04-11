@@ -128,6 +128,11 @@ type EtcdStore struct {
 	core   *etcdStoreCore
 }
 
+// DeleteBatch implements store.Store.
+func (e *EtcdStore) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
+	return errors.NewNotImplemented("etcd does not support delete batch")
+}
+
 // Count implements Store.
 func (e *EtcdStore) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
 	resource, err := store.GetResource(obj)

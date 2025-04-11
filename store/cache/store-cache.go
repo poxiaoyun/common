@@ -33,6 +33,11 @@ type CacheStore struct {
 	core   *cacheStoreCore
 }
 
+// DeleteBatch implements store.Store.
+func (g *CacheStore) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
+	return g.core.store.Scope(g.scopes...).DeleteBatch(ctx, obj, opts...)
+}
+
 // Count implements Store.
 func (c *CacheStore) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
 	resource, err := store.GetResource(obj)
