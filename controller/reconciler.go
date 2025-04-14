@@ -130,8 +130,8 @@ func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStora
 	if funcerr != nil {
 		r.setStatusMessage(obj, funcerr)
 		if !reflect.DeepEqual(original, obj) {
-			if updateerr := condStorage.Status().Update(ctx, obj); updateerr != nil {
-				log.Error(updateerr, "unable to update status")
+			if updateerr := condStorage.Status().Patch(ctx, original, store.MergePatchFrom(obj)); updateerr != nil {
+				log.Error(updateerr, "unable to patch status")
 			}
 		}
 	} else {
@@ -139,8 +139,7 @@ func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStora
 		// clear message
 		r.setStatusMessage(obj, nil)
 		if !reflect.DeepEqual(original, obj) {
-			if updateerr := condStorage.Status().Update(ctx, obj); updateerr != nil {
-				log.Error(updateerr, "unable to update status")
+			if updateerr := condStorage.Status().Patch(ctx, original, store.MergePatchFrom(obj)); updateerr != nil {
 				return Result{}, updateerr
 			}
 		}
