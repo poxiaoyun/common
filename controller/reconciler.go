@@ -144,6 +144,9 @@ func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStora
 				return Result{}, updateerr
 			}
 		}
+		if !result.Requeue && r.Options.requeueOnSuccess != 0 {
+			return Result{Requeue: true, RequeueAfter: r.Options.requeueOnSuccess}, nil
+		}
 	}
 	return result, nil
 }
