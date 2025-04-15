@@ -35,6 +35,7 @@ type BetterReconcilerOptions struct {
 	finalizer        string
 	requeueOnSuccess time.Duration
 	autosetStatus    bool
+	usePatchStatus   bool
 }
 
 // WithFinalizer auto add finalizer to the object if it is not exist.
@@ -42,6 +43,13 @@ type BetterReconcilerOptions struct {
 func WithFinalizer(finalizer string) BetterReconcilerOption {
 	return func(o *BetterReconcilerOptions) {
 		o.finalizer = finalizer
+	}
+}
+
+// WithPatchStatus use patch to update the status instead of update.
+func WithPatchStatus() BetterReconcilerOption {
+	return func(o *BetterReconcilerOptions) {
+		o.usePatchStatus = true
 	}
 }
 
@@ -130,8 +138,14 @@ func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStora
 	if funcerr != nil {
 		r.setStatusMessage(obj, funcerr)
 		if !reflect.DeepEqual(original, obj) {
-			if updateerr := condStorage.Status().Patch(ctx, original, store.MergePatchFrom(obj)); updateerr != nil {
-				log.Error(updateerr, "unable to patch status")
+			if r.Options.usePatchStatus {
+				if updateerr := condStorage.Status().Patch(ctx, obj, store.MergePatchFrom(original)); updateerr != nil {
+					log.Error(updateerr, "unable to patch status")
+				}
+			} else {
+				if updateerr := condStorage.Status().Update(ctx, obj); updateerr != nil {
+					log.Error(updateerr, "unable to update status")
+				}
 			}
 		}
 	} else {
@@ -139,8 +153,14 @@ func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStora
 		// clear message
 		r.setStatusMessage(obj, nil)
 		if !reflect.DeepEqual(original, obj) {
-			if updateerr := condStorage.Status().Patch(ctx, original, store.MergePatchFrom(obj)); updateerr != nil {
-				return Result{}, updateerr
+			if r.Options.usePatchStatus {
+				if updateerr := condStorage.Status().Patch(ctx, obj, store.MergePatchFrom(original)); updateerr != nil {
+					return Result{}, updateerr
+				}
+			} else {
+				if updateerr := condStorage.Status().Update(ctx, obj); updateerr != nil {
+					return Result{}, updateerr
+				}
 			}
 		}
 		if !result.Requeue && r.Options.requeueOnSuccess != 0 {
