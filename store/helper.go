@@ -40,13 +40,14 @@ func (r ObjectReference) Equals(other ObjectReference) bool {
 }
 
 type ResourcedObjectReference struct {
+	UID      string  `json:"uid,omitempty"`
 	Name     string  `json:"name,omitempty"`
 	Scopes   []Scope `json:"scopes,omitempty"`
 	Resource string  `json:"resource,omitempty"`
 }
 
 func (r ResourcedObjectReference) Equals(other ResourcedObjectReference) bool {
-	return r.Name == other.Name && r.Resource == other.Resource && ScopesEquals(r.Scopes, other.Scopes)
+	return r.UID == r.UID && r.Name == other.Name && r.Resource == other.Resource && ScopesEquals(r.Scopes, other.Scopes)
 }
 
 func (r ResourcedObjectReference) String() string {
@@ -61,6 +62,7 @@ func (r ResourcedObjectReference) String() string {
 
 func ResourcedObjectReferenceFrom(obj Object) ResourcedObjectReference {
 	return ResourcedObjectReference{
+		UID:      obj.GetUID(),
 		Name:     obj.GetName(),
 		Scopes:   obj.GetScopes(),
 		Resource: obj.GetResource(),
