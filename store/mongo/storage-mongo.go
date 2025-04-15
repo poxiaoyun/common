@@ -353,8 +353,13 @@ loop:
 
 // Delete implements Storage.
 func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
+	options := store.DeleteOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
 		m.core.logger.V(5).Info("delete", "collection", col.Name(), "filter", filter)
 		if err := col.FindOneAndDelete(ctx, filter).Decode(obj); err != nil {
 			return WarpMongoError(err, col, obj)
@@ -370,7 +375,7 @@ func (m *MongoStorage) DeleteBatch(ctx context.Context, obj store.ObjectList, op
 		opt(&options)
 	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = conditionsmatch(filter, options.FieldRequirements)
+		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
 		m.core.logger.V(5).Info("delete all", "collection", col.Name(), "filter", filter)
 		if _, err := col.DeleteMany(ctx, filter); err != nil {
 			return WarpMongoError(err, col, nil)
@@ -462,7 +467,7 @@ func (m *MongoStorage) List(ctx context.Context, list store.ObjectList, opts ...
 	// if projection is empty, set projection from list object
 	// currently, we don't use this feature
 	return m.on(ctx, list, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		pipeline := listPipeline(filter, nil, options, nil)
+		pipeline := listPipeline(filter, nil, options, options.Fields, nil)
 		m.core.logger.V(5).Info("list", "collection", col.Name(), "pipeline", pipeline)
 		cur, err := col.Aggregate(ctx, pipeline)
 		if err != nil {
@@ -515,7 +520,7 @@ func listProjectionFromList(list store.ObjectList) []string {
 	return fields
 }
 
-func listPipeline(match bson.D, pre []any, opts store.ListOptions, post []any) bson.A {
+func listPipeline(match bson.D, pre []any, opts store.ListOptions, fields []string, post []any) bson.A {
 	if search := opts.Search; search != "" {
 		match = append(match, searchStage("name", search))
 	}
@@ -527,6 +532,14 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, post []any) b
 	pipeline = append(pipeline, bson.M{"$match": match})
 	// sort
 	pipeline = append(pipeline, sortstage(opts.Sort))
+	// project
+	if len(fields) > 0 {
+		project := bson.M{}
+		for _, field := range fields {
+			project[field] = 1
+		}
+		pipeline = append(pipeline, bson.M{"$project": project})
+	}
 	// post conditions
 	pipeline = append(pipeline, post...)
 	// pagination

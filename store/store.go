@@ -40,6 +40,8 @@ type (
 		//  IncludeSubScopes is a flag to include resources in subscopes of current scope.
 		IncludeSubScopes bool
 		Continue         string
+		// Fields is a list of fields to return.  If empty, all fields are returned.
+		Fields []string
 	}
 	ListOption func(*ListOptions)
 
@@ -59,14 +61,18 @@ type (
 	CreateOption func(*CreateOptions)
 
 	DeleteOptions struct {
+		// FieldRequirements is not supported by all databases on deletion.
+		LabelRequirements Requirements
+		// FieldRequirements is not supported by all databases on deletion.
+		FieldRequirements Requirements
 		PropagationPolicy *DeletionPropagation
 	}
 	DeleteOption func(*DeleteOptions)
 
 	DeleteBatchOptions struct {
+		LabelRequirements Requirements
 		FieldRequirements Requirements
 	}
-
 	DeleteBatchOption func(*DeleteBatchOptions)
 
 	UpdateOptions struct {
@@ -166,9 +172,51 @@ func WithFieldRequirements(reqs ...Requirement) ListOption {
 	}
 }
 
+func WithFields(fields ...string) ListOption {
+	return func(o *ListOptions) {
+		o.Fields = append(o.Fields, fields...)
+	}
+}
+
+func WithPatchFieldRequirements(reqs ...Requirement) PatchOption {
+	return func(o *PatchOptions) {
+		o.FieldRequirements = append(o.FieldRequirements, reqs...)
+	}
+}
+
+func WithPatchLabelRequirements(reqs ...Requirement) PatchOption {
+	return func(o *PatchOptions) {
+		o.LabelRequirements = append(o.LabelRequirements, reqs...)
+	}
+}
+
 func WithDeleteBatchFieldRequirements(reqs ...Requirement) DeleteBatchOption {
 	return func(o *DeleteBatchOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, reqs...)
+	}
+}
+
+func WithDeleteBatchLabelRequirements(reqs ...Requirement) DeleteBatchOption {
+	return func(o *DeleteBatchOptions) {
+		o.LabelRequirements = append(o.LabelRequirements, reqs...)
+	}
+}
+
+func WithDeleteFieldRequirements(reqs ...Requirement) DeleteOption {
+	return func(o *DeleteOptions) {
+		o.FieldRequirements = append(o.FieldRequirements, reqs...)
+	}
+}
+
+func WithDeleteLabelRequirements(reqs ...Requirement) DeleteOption {
+	return func(o *DeleteOptions) {
+		o.LabelRequirements = append(o.LabelRequirements, reqs...)
+	}
+}
+
+func WithTTL(ttl time.Duration) CreateOption {
+	return func(o *CreateOptions) {
+		o.TTL = ttl
 	}
 }
 
