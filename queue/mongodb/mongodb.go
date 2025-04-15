@@ -2,6 +2,7 @@ package mongodb
 
 import (
 	"context"
+	stderrors "errors"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -36,9 +37,9 @@ type MongoQueue struct {
 }
 
 type QueueItem struct {
-	ID       primitive.ObjectID `json:"_id,omitempty" bson:"_id"`
-	Payload  string             `json:"payload,omitempty" bson:"payload"`
-	Statuses []QueueItemStatus  `json:"statuses,omitempty" bson:"statuses"`
+	ID       string            `json:"_id,omitempty" bson:"_id"`
+	Payload  []byte            `json:"payload,omitempty" bson:"payload"`
+	Statuses []QueueItemStatus `json:"statuses,omitempty" bson:"statuses"`
 }
 
 type QueueItemStatus struct {
@@ -55,14 +56,18 @@ const (
 	QueueItemStatusFailed     = "Failed"
 )
 
-func (q *MongoQueue) Enqueue(ctx context.Context, data string, options queue.EnqueueOptions) error {
+func (q *MongoQueue) Enqueue(ctx context.Context, id string, data []byte, opt queue.EnqueueOptions) error {
+	if id == "" {
+		id = primitive.NewObjectID().Hex()
+	}
+	// replace exists if exists
 	result, err := q.col.InsertOne(ctx, QueueItem{
-		ID:       primitive.NewObjectID(),
+		ID:       id,
 		Payload:  data,
 		Statuses: []QueueItemStatus{{Status: QueueItemStatusEnqueued, Timestamp: time.Now(), NextRetry: nil}},
 	})
 	if err != nil {
-		return err
+		return ConvetMongoError(err, q.col.Name(), id)
 	}
 	_ = result.InsertedID
 	return nil
@@ -72,7 +77,7 @@ func (q *MongoQueue) Consume(ctx context.Context, fn queue.QueueHandleFunc, opti
 	if err := q.initConsumes(ctx, fn); err != nil {
 		return err
 	}
-	changed := make(chan primitive.ObjectID, 1)
+	changed := make(chan string, 1)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
 		return q.checkStreamChange(ctx, changed)
@@ -95,7 +100,7 @@ func (q *MongoQueue) Consume(ctx context.Context, fn queue.QueueHandleFunc, opti
 					tim.Reset(time.Second)
 				}
 			case <-tim.C:
-				ok, err := q.tryProcess(ctx, primitive.NilObjectID, fn)
+				ok, err := q.tryProcess(ctx, "", fn)
 				if err != nil {
 					return err
 				}
@@ -137,8 +142,8 @@ func (q *MongoQueue) initConsumes(ctx context.Context, hand queue.QueueHandleFun
 
 func (q *MongoQueue) process(ctx context.Context, item *QueueItem, hand queue.QueueHandleFunc) error {
 	log := log.FromContext(ctx)
-	if err := hand(ctx, item.ID.Hex(), item.Payload); err != nil {
-		log.Error(err, "handle queue item failed", "id", item.ID.Hex())
+	if err := hand(ctx, item.ID, item.Payload); err != nil {
+		log.Error(err, "handle queue item failed", "id", item.ID)
 		if err := q.nack(ctx, item.ID, err.Error()); err != nil {
 			return err
 		}
@@ -150,7 +155,7 @@ func (q *MongoQueue) process(ctx context.Context, item *QueueItem, hand queue.Qu
 	return nil
 }
 
-func (q *MongoQueue) tryProcess(ctx context.Context, id primitive.ObjectID, hand queue.QueueHandleFunc) (bool, error) {
+func (q *MongoQueue) tryProcess(ctx context.Context, id string, hand queue.QueueHandleFunc) (bool, error) {
 	item, ok, err := q.dequeueWithID(ctx, id)
 	if err != nil {
 		return false, err
@@ -170,15 +175,15 @@ func (q *MongoQueue) tryProcess(ctx context.Context, id primitive.ObjectID, hand
 }
 
 func (q *MongoQueue) dequeue(ctx context.Context) (*QueueItem, bool, error) {
-	return q.dequeueWithID(ctx, primitive.NilObjectID)
+	return q.dequeueWithID(ctx, "")
 }
 
-func (q *MongoQueue) dequeueWithID(ctx context.Context, id primitive.ObjectID) (*QueueItem, bool, error) {
+func (q *MongoQueue) dequeueWithID(ctx context.Context, id string) (*QueueItem, bool, error) {
 	conds := []bson.M{
 		{"statuses.0.status": QueueItemStatusEnqueued},
 		{"statuses.0.nextRetry": nil},
 	}
-	if !id.IsZero() {
+	if id != "" {
 		conds = append(conds, bson.M{"_id": id})
 	}
 	result := q.col.FindOneAndUpdate(ctx,
@@ -202,7 +207,7 @@ func (q *MongoQueue) dequeueWithID(ctx context.Context, id primitive.ObjectID) (
 		if err == mongo.ErrNoDocuments {
 			return nil, false, nil
 		}
-		return nil, false, err
+		return nil, false, ConvetMongoError(err, q.col.Name(), id)
 	}
 	if err := result.Decode(&item); err != nil {
 		return nil, false, err
@@ -217,7 +222,7 @@ func (q *MongoQueue) dequeueWithID(ctx context.Context, id primitive.ObjectID) (
 	return &item, true, nil
 }
 
-func (q *MongoQueue) ack(ctx context.Context, id primitive.ObjectID) error {
+func (q *MongoQueue) ack(ctx context.Context, id string) error {
 	_, err := q.col.UpdateByID(ctx, id, bson.M{
 		"$push": bson.M{
 			"statuses": bson.M{
@@ -235,7 +240,7 @@ func (q *MongoQueue) ack(ctx context.Context, id primitive.ObjectID) error {
 	return err
 }
 
-func (q *MongoQueue) nack(ctx context.Context, id primitive.ObjectID, msg string) error {
+func (q *MongoQueue) nack(ctx context.Context, id string, msg string) error {
 	_, err := q.col.UpdateByID(ctx, id, bson.M{
 		"$push": bson.M{
 			"statuses": bson.M{
@@ -254,13 +259,13 @@ func (q *MongoQueue) nack(ctx context.Context, id primitive.ObjectID, msg string
 	return err
 }
 
-func (q *MongoQueue) checkStreamChange(ctx context.Context, changed chan primitive.ObjectID) error {
+func (q *MongoQueue) checkStreamChange(ctx context.Context, changed chan string) error {
 	stream, err := q.col.Watch(ctx, bson.A{}, options.ChangeStream())
 	if err != nil {
 		return errors.NewInternalError(err)
 	}
 	type DocumentKey struct {
-		ID primitive.ObjectID `json:"_id" bson:"_id"`
+		ID string `json:"_id" bson:"_id"`
 	}
 	type rawMongoEvent struct {
 		OperationType            string      `json:"operationType"`
@@ -287,4 +292,14 @@ func (q *MongoQueue) checkStreamChange(ctx context.Context, changed chan primiti
 		return errors.NewInternalError(err)
 	}
 	return nil
+}
+
+func ConvetMongoError(err error, resource, name string) error {
+	if stderrors.Is(err, mongo.ErrNoDocuments) {
+		return errors.NewNotFound(resource, name)
+	}
+	if mongo.IsDuplicateKeyError(err) {
+		return errors.NewAlreadyExists(resource, name)
+	}
+	return errors.NewInternalError(err)
 }
