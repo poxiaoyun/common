@@ -43,8 +43,8 @@ func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store
 	if err != nil {
 		return nil, err
 	}
-	prefix := getlistkey(c.scopes, resource)
-	storageOptions := storage.ListOptions{Predicate: preficate, Recursive: true}
+
+	storageOptions := storage.ListOptions{Predicate: preficate}
 	// allow watch bookmarks to enabled watchlist
 	if options.SendInitialEvents {
 		storageOptions.SendInitialEvents = ptr.To(true)
@@ -53,8 +53,17 @@ func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store
 	if options.ResourceVersion != 0 {
 		storageOptions.ResourceVersion = strconv.FormatInt(options.ResourceVersion, 10)
 	}
+
+	var watchkey string
+	if options.Name != "" {
+		watchkey = getObjectKey(c.scopes, resource, options.Name)
+	} else {
+		watchkey = getlistkey(c.scopes, resource)
+		storageOptions.Recursive = true
+	}
+
 	db := c.core.getResource(resource)
-	watcher, err := db.storage.Watch(ctx, prefix, storageOptions)
+	watcher, err := db.storage.Watch(ctx, watchkey, storageOptions)
 	if err != nil {
 		err = storeerr.InterpretWatchError(err, db.resource, "")
 		return nil, err

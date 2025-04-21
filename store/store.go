@@ -91,6 +91,7 @@ type (
 	PatchOption func(*PatchOptions)
 
 	WatchOptions struct {
+		Name              string
 		LabelRequirements Requirements
 		FieldRequirements Requirements
 		ResourceVersion   int64
@@ -109,6 +110,12 @@ func WithSendInitialEvents() WatchOption {
 func WithWatchSubscopes() WatchOption {
 	return func(o *WatchOptions) {
 		o.IncludeSubScopes = true
+	}
+}
+
+func WithWatchName(name string) WatchOption {
+	return func(o *WatchOptions) {
+		o.Name = name
 	}
 }
 

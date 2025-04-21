@@ -22,7 +22,7 @@ func (s *MongoStorage) Transcation(ctx context.Context,
 		ctx = timoutctx
 	}
 	return s.core.db.Client().UseSessionWithOptions(ctx, &options.SessionOptions{}, func(sessionContext mongo.SessionContext) error {
-		_, err := sessionContext.WithTransaction(sessionContext, func(sessionContext mongo.SessionContext) (interface{}, error) {
+		_, err := sessionContext.WithTransaction(sessionContext, func(sessionContext mongo.SessionContext) (any, error) {
 			return nil, fn(sessionContext, s)
 		})
 		return err

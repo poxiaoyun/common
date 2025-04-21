@@ -54,6 +54,10 @@ func (m *MongoStorage) Watch(ctx context.Context, obj store.ObjectList, opts ...
 	var watcher store.Watcher
 	err = m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
+		if options.Name != "" {
+			filter = append(filter, bson.E{Key: "name", Value: options.Name})
+		}
+		filter = toWatchFilter(filter)
 		newwatcher, err := NewMongoWatcher(ctx, col, m.core.bsonOptions, m.core.bsonRegistry, newObjFunc, filter)
 		if err != nil {
 			return err
@@ -62,6 +66,19 @@ func (m *MongoStorage) Watch(ctx context.Context, obj store.ObjectList, opts ...
 		return nil
 	})
 	return watcher, err
+}
+
+func toWatchFilter(filter bson.D) bson.D {
+	ret := bson.D{
+		bson.E{Key: "fullDocument", Value: bson.M{"$exists": true}},
+		bson.E{Key: "operationType", Value: bson.M{"$in": bson.A{"insert", "update", "replace", "delete"}}},
+	}
+	// https://www.mongodb.com/docs/manual/reference/change-events/
+	for _, f := range filter {
+		f.Key = "fullDocument." + f.Key
+		ret = append(ret, f)
+	}
+	return ret
 }
 
 var _ store.Watcher = &MongoWatcher{}
@@ -73,15 +90,15 @@ func NewMongoWatcher(ctx context.Context,
 	newobj func() store.Object,
 	filter any,
 ) (*MongoWatcher, error) {
-	// check support full document on delete
-	// https://www.mongodb.com/docs/manual/reference/change-events/delete/#document-pre--and-post-images
 	stream, err := col.Watch(ctx,
 		mongo.Pipeline{
 			bson.D{{Key: "$match", Value: filter}},
 		},
+		// check support full document on delete
+		// https://www.mongodb.com/docs/manual/reference/change-events/delete/#document-pre--and-post-images
 		options.ChangeStream().
-			SetFullDocument(options.Required).
-			SetFullDocumentBeforeChange(options.Required))
+			SetFullDocument(options.UpdateLookup).
+			SetFullDocumentBeforeChange(options.UpdateLookup))
 	if err != nil {
 		return nil, errors.NewInternalError(err)
 	}
