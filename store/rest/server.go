@@ -83,21 +83,21 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 				}
 				defer watcher.Stop()
 
-				ssew := api.NewSSEWriter(w)
+				ssew := api.NewSSEWriter[any](w)
 				for {
 					select {
 					case <-ctx.Done():
 						return nil, nil
 					case event, ok := <-watcher.Events():
 						if !ok {
-							ssew.WriteEvent("error", fmt.Errorf("watcher closed"))
+							ssew.Encode("error", fmt.Errorf("watcher closed"))
 							return nil, nil
 						}
 						if event.Error != nil {
-							ssew.WriteEvent("error", event.Error)
+							ssew.Encode("error", event.Error)
 							return nil, nil
 						}
-						if err := ssew.WriteEvent(string(event.Type), event.Object); err != nil {
+						if err := ssew.Encode(string(event.Type), event.Object); err != nil {
 							log.Error(err, "write event")
 							return nil, nil
 						}

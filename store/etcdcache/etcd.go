@@ -127,7 +127,7 @@ type generic struct {
 
 // DeleteBatch implements store.Store.
 func (c *generic) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
-	//panic("unimplemented")
+	// panic("unimplemented")
 	return errors.NewNotImplemented("delete batch is not supported")
 }
 
@@ -653,10 +653,13 @@ func (e *core) validateObject(obj any) error {
 }
 
 func (c *core) getResource(resource string) *db {
-	c.resourcesLock.Lock()
-	defer c.resourcesLock.Unlock()
+	c.resourcesLock.RLock()
 	resourceStorage, ok := c.resources[resource]
+	c.resourcesLock.RUnlock()
 	if !ok {
+		c.resourcesLock.Lock()
+		defer c.resourcesLock.Unlock()
+
 		fields := c.resourceFields[resource]
 		groupResource := schema.GroupResource{Resource: resource}
 		newresourceStorage, err := newResourceStorage(c.cli, c.storagePrefix, groupResource, fields)

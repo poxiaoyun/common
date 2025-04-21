@@ -116,7 +116,14 @@ func RunListWatch(ctx context.Context, storage store.Store, resource string, sub
 		wo.ResourceVersion = list.ResourceVersion
 		wo.SendInitialEvents = true
 	}
-	watcher, err := storage.Watch(ctx, list, inlcudesubscope)
+	return RunWatch(ctx, storage, resource, handler, inlcudesubscope)
+}
+
+func RunWatch(ctx context.Context, storage store.Store, resource string, handler EventHandler[*store.Unstructured], options ...store.WatchOption) error {
+	list := &store.List[store.Unstructured]{}
+	list.SetResource(resource)
+
+	watcher, err := storage.Watch(ctx, list, options...)
 	if err != nil {
 		return err
 	}

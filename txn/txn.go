@@ -1,46 +1,48 @@
 package txn
 
+// Package txn provides a simple transaction mechanism for managing operations
+// that need to be committed or reverted as a group.
+
 // Transaction represents something that may need to be finalized on success or
 // failure of the larger transaction.
 type Transaction interface {
 	// Commit tells the transaction to finalize any changes it may have
 	// pending.  This cannot fail, so errors must be handled internally.
-	Commit()
+	Commit() error
 
 	// Revert tells the transaction to abandon or undo any changes it may have
 	// pending.  This cannot fail, so errors must be handled internally.
-	Revert()
+	Revert() error
 }
 
 // CallbackTransaction is a transaction which calls arbitrary functions.
 type CallbackTransaction struct {
-	CommitFunc func()
-	RevertFunc func()
+	CommitFunc func() error
+	RevertFunc func() error
 }
 
-func (cb CallbackTransaction) Commit() {
+func (cb CallbackTransaction) Commit() error {
 	if cb.CommitFunc != nil {
-		cb.CommitFunc()
+		return cb.CommitFunc()
 	}
+	return nil
 }
 
-func (cb CallbackTransaction) Revert() {
+func (cb CallbackTransaction) Revert() error {
 	if cb.RevertFunc != nil {
-		cb.RevertFunc()
+		return cb.RevertFunc()
 	}
+	return nil
 }
 
-// metaTransaction is a collection of transactions.
-type Transactions []Transaction
-
-func (mt Transactions) Commit() {
-	for _, t := range mt {
-		t.Commit()
+func Execute(txns ...Transaction) error {
+	for i, txn := range txns {
+		if err := txn.Commit(); err != nil {
+			for j := i - 1; j >= 0; j-- {
+				txns[j].Revert()
+			}
+			return err
+		}
 	}
-}
-
-func (mt Transactions) Revert() {
-	for _, t := range mt {
-		t.Revert()
-	}
+	return nil
 }

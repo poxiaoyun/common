@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
@@ -57,6 +58,10 @@ func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store
 	var watchkey string
 	if options.Name != "" {
 		watchkey = getObjectKey(c.scopes, resource, options.Name)
+		// must specify metadata.name when watch on single object
+		storageOptions.Predicate.Field = fields.AndSelectors(
+			fields.OneTermEqualSelector("metadata.name", options.Name),
+		)
 	} else {
 		watchkey = getlistkey(c.scopes, resource)
 		storageOptions.Recursive = true
