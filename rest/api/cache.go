@@ -28,3 +28,10 @@ func (c LRUCache[T]) GetOrAdd(key string, fn func() (T, error)) (T, error) {
 	c.cache.Add(key, info)
 	return info, nil
 }
+
+func (c LRUCache[T]) Remove(key string) bool {
+	if c.cache == nil {
+		return false
+	}
+	return c.cache.Remove(key)
+}
