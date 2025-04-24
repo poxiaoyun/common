@@ -62,7 +62,7 @@ const (
 	GreaterThanOrEqual Operator = "gte"
 	LessThanOrEqual    Operator = "lte"
 	Contains           Operator = "contains" // slice contains element, string contains substring
-	Like               Operator = "like"       // string contains substring
+	Like               Operator = "like"     // string contains substring
 )
 
 type Requirement struct {

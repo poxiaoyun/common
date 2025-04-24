@@ -295,9 +295,10 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 		// search
 		if options.Search != "" {
 			filtered = slices.DeleteFunc(filtered, func(uns unstructured.Unstructured) bool {
-				// allow search alias
-				alias, _, _ := unstructured.NestedString(uns.Object, UnstructuredObjectField, "alias")
-				return !strings.Contains(uns.GetName(), options.Search) && !strings.Contains(alias, options.Search)
+				if len(options.SearchFileds) != 0 {
+					return !searchObject(&uns, options.SearchFileds, options.Search)
+				}
+				return !searchObject(&uns, []string{"name", "alias"}, options.Search)
 			})
 		}
 		// sort
@@ -323,6 +324,19 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 		list.SetResource(db.resource.String())
 		return nil
 	})
+}
+
+func searchObject(uns *unstructured.Unstructured, fields []string, val string) bool {
+	if len(fields) == 0 {
+		return true
+	}
+	for _, field := range fields {
+		strval, ok := getStringField(uns, field)
+		if ok && strings.Contains(strval, val) {
+			return true
+		}
+	}
+	return false
 }
 
 func ConvertPredicate(l store.Requirements, f store.Requirements) (storage.SelectionPredicate, error) {
@@ -672,11 +686,37 @@ func (c *core) getResource(resource string) *db {
 	return resourceStorage
 }
 
-func getUnstructuredFieldIndex(uns *unstructured.Unstructured, field string) (string, error) {
-	val, ok, err := unstructured.NestedFieldNoCopy(uns.Object, append([]string{UnstructuredObjectField}, strings.Split(field, ".")...)...)
-	if err != nil {
-		return "", fmt.Errorf("error getting field %s: %v", field, err)
+func getStringField(uns *unstructured.Unstructured, field string) (string, bool) {
+	val, ok := getField(uns, field)
+	if !ok {
+		return "", false
 	}
+	if s, ok := val.(string); ok {
+		return s, true
+	}
+	return "", false
+}
+
+func getField(uns *unstructured.Unstructured, field string) (any, bool) {
+	val := uns.Object[UnstructuredObjectField]
+	for _, field := range strings.Split(field, ".") {
+		if val == nil {
+			return nil, false
+		}
+		if m, ok := val.(map[string]interface{}); ok {
+			val, ok = m[field]
+			if !ok {
+				return nil, false
+			}
+		} else {
+			return nil, false
+		}
+	}
+	return val, true
+}
+
+func getUnstructuredFieldIndex(uns *unstructured.Unstructured, field string) (string, error) {
+	val, ok := getField(uns, field)
 	if !ok {
 		return "", nil
 	}

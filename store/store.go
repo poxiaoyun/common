@@ -24,9 +24,10 @@ type (
 	GetOption func(*GetOptions)
 
 	ListOptions struct {
-		Page   int
-		Size   int
-		Search string
+		Page         int
+		Size         int
+		Search       string
+		SearchFileds []string
 		// Sort is the sort order of the list.  The format is a comma separated list of fields, optionally
 		// prefixed by "+" or "-".  The default is "+metadata.name", which sorts by the object's name.
 		// For example, "-metadata.name,metadata.creationTimestamp" sorts first by descending name, and then by
@@ -243,6 +244,12 @@ func WithSort(sort string) ListOption {
 func WithSearch(search string) ListOption {
 	return func(o *ListOptions) {
 		o.Search = search
+	}
+}
+
+func WithSearchFields(fields ...string) ListOption {
+	return func(o *ListOptions) {
+		o.SearchFileds = append(o.SearchFileds, fields...)
 	}
 }
 

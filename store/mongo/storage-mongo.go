@@ -522,7 +522,11 @@ func listProjectionFromList(list store.ObjectList) []string {
 
 func listPipeline(match bson.D, pre []any, opts store.ListOptions, fields []string, post []any) bson.A {
 	if search := opts.Search; search != "" {
-		match = append(match, searchStage("name", search))
+		if len(opts.SearchFileds) > 0 {
+			match = append(match, searchStage(opts.SearchFileds, search))
+		} else {
+			match = append(match, searchStage([]string{"name"}, search))
+		}
 	}
 	match = conditionsmatch(match, SelectorToReqirements(opts.LabelRequirements, opts.FieldRequirements))
 	pipeline := bson.A{}
@@ -638,20 +642,27 @@ func conditionsmatch(match bson.D, conds store.Requirements) bson.D {
 				match = append(match, bson.E{Key: key, Value: bson.M{"$all": values}})
 			}
 		case "like", "~=":
-			match = append(match, searchStage(key, store.AnyToString(values[0])))
+			match = append(match, searchStage(strings.Split(key, ","), store.AnyToString(values[0])))
 		}
 	}
 	return match
 }
 
-func searchStage(key, search string) bson.E {
-	if search == "" {
+func searchStage(keys []string, search string) bson.E {
+	if search == "" || len(keys) == 0 {
 		return bson.E{}
 	}
 	// do not support regex, it raise error when search is invalid regex
 	search = escapeRegex(search)
+	if len(keys) > 1 {
+		fields := []bson.A{}
+		for _, key := range keys {
+			fields = append(fields, bson.A{key, bson.M{"$regex": search, "$options": "i"}})
+		}
+		return bson.E{Key: "$or", Value: fields}
+	}
 	// https://www.mongodb.com/docs/manual/reference/operator/query/regex/
-	return bson.E{Key: key, Value: bson.M{"$regex": search, "$options": "i"}}
+	return bson.E{Key: keys[0], Value: bson.M{"$regex": search, "$options": "i"}}
 }
 
 var escapeRegexReplacer = strings.NewReplacer(
