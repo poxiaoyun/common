@@ -15,9 +15,6 @@ type LRUCache[T any] struct {
 }
 
 func (c LRUCache[T]) GetOrAdd(key string, fn func() (T, error)) (T, error) {
-	if c.cache == nil {
-		return fn()
-	}
 	if info, ok := c.cache.Get(key); ok {
 		return info, nil
 	}
@@ -30,8 +27,21 @@ func (c LRUCache[T]) GetOrAdd(key string, fn func() (T, error)) (T, error) {
 }
 
 func (c LRUCache[T]) Remove(key string) bool {
-	if c.cache == nil {
-		return false
-	}
 	return c.cache.Remove(key)
+}
+
+func (c LRUCache[T]) Add(key string, value T) {
+	c.cache.Add(key, value)
+}
+
+func (c LRUCache[T]) Get(key string) (T, bool) {
+	return c.cache.Get(key)
+}
+
+func (c LRUCache[T]) Len() int {
+	return c.cache.Len()
+}
+
+func (c LRUCache[T]) Keys() []string {
+	return c.cache.Keys()
 }
