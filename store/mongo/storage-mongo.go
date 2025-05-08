@@ -71,7 +71,16 @@ type BsonTimeCodec struct{}
 func (b BsonTimeCodec) DecodeValue(ctx bsoncodec.DecodeContext, vr bsonrw.ValueReader, v reflect.Value) error {
 	t, err := vr.ReadDateTime()
 	if err != nil {
-		return err
+		strval, err := vr.ReadString()
+		if err != nil {
+			return err
+		}
+		tim, err := time.Parse(time.RFC3339, strval)
+		if err != nil {
+			return err
+		}
+		v.Set(reflect.ValueOf(store.Time{Time: tim}))
+		return nil
 	}
 	tim := store.Time{Time: primitive.DateTime(t).Time()}
 	v.Set(reflect.ValueOf(tim))
@@ -325,6 +334,9 @@ func (m *MongoStorage) beforeSave(data bson.D) bson.D {
 }
 
 func (m *MongoStorage) mergeConditionOnChange(into any, exludes []string) (bson.D, error) {
+	if uns, ok := into.(*store.Unstructured); ok {
+		into = uns.Object
+	}
 	data, err := FlattenData(into, 1, exludes, nil)
 	if err != nil {
 		return nil, errors.NewBadRequest("invalid object")
@@ -643,6 +655,9 @@ func conditionsmatch(match bson.D, conds store.Requirements) bson.D {
 			}
 		case "like", "~=":
 			match = append(match, searchStage(strings.Split(key, ","), store.AnyToString(values[0])))
+		default:
+			// support raw mongo expression
+			match = append(match, bson.E{Key: key, Value: bson.M{string(cond.Operator): values[0]}})
 		}
 	}
 	return match

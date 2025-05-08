@@ -75,13 +75,13 @@ func (s StoreSource[T]) Run(ctx context.Context, queue TypedQueue[T]) error {
 	}))
 }
 
-type EventHandler[T store.Object] interface {
+type EventHandler[T any] interface {
 	OnEvent(ctx context.Context, kind store.WatchEventType, obj T) error
 }
 
-var _ EventHandler[store.Object] = EventHandlerFunc[store.Object](nil)
+var _ EventHandler[any] = EventHandlerFunc[any](nil)
 
-type EventHandlerFunc[T store.Object] func(ctx context.Context, kind store.WatchEventType, obj T) error
+type EventHandlerFunc[T any] func(ctx context.Context, kind store.WatchEventType, obj T) error
 
 func (f EventHandlerFunc[T]) OnEvent(ctx context.Context, kind store.WatchEventType, obj T) error {
 	return f(ctx, kind, obj)
@@ -120,6 +120,8 @@ func RunListWatch(ctx context.Context, storage store.Store, resource string, sub
 }
 
 func RunWatch(ctx context.Context, storage store.Store, resource string, handler EventHandler[*store.Unstructured], options ...store.WatchOption) error {
+	log := log.FromContext(ctx)
+
 	list := &store.List[store.Unstructured]{}
 	list.SetResource(resource)
 
@@ -151,6 +153,81 @@ func RunWatch(ctx context.Context, storage store.Store, resource string, handler
 					return event.Error
 				}
 				log.V(5).Info("watch event", "type", event.Type, "name", obj.GetName(), "resource", obj.GetResource())
+				if err := handler.OnEvent(ctx, event.Type, obj); err != nil {
+					log.Error(err, "handle error")
+					return err
+				}
+			case store.WatchEventBookmark:
+				// ignore
+			default:
+				log.Info("unknown event type", "type", event.Type)
+			}
+		}
+	}
+}
+
+type WatchFuncSource[S any, T comparable] struct {
+	WatchOptions []store.WatchOption
+	Store        store.Store
+	KeyFunc      func(ctx context.Context, kind store.WatchEventType, obj *S) ([]T, error)
+}
+
+func (s WatchFuncSource[S, T]) Run(ctx context.Context, queue TypedQueue[T]) error {
+	log := log.FromContext(ctx)
+	fn := EventHandlerFunc[*S](func(ctx context.Context, kind store.WatchEventType, obj *S) error {
+		keys, err := s.KeyFunc(ctx, kind, obj)
+		if err != nil {
+			log.Error(err, "key error")
+			return nil
+		}
+		for i := range keys {
+			log.Info("add key", "key", keys[i])
+			queue.Add(keys[i])
+		}
+		return nil
+	})
+	return RunTypedListWatchContext(ctx, s.Store, fn, s.WatchOptions...)
+}
+
+func RunTypedListWatchContext[T any](ctx context.Context, storage store.Store, handler EventHandler[*T], options ...store.WatchOption) error {
+	return retry.OnError(ctx, func(ctx context.Context) error {
+		return RunTypedWatch(ctx, storage, handler, options...)
+	})
+}
+
+func RunTypedWatch[T any](ctx context.Context, storage store.Store, handler EventHandler[*T], options ...store.WatchOption) error {
+	log := log.FromContext(ctx)
+
+	list := &store.List[T]{}
+	watcher, err := storage.Watch(ctx, list, options...)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		watcher.Stop()
+		log.Info("watcher stoped")
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case event, ok := <-watcher.Events():
+			if !ok {
+				return fmt.Errorf("watcher channel closed")
+			}
+			switch event.Type {
+			case store.WatchEventCreate, store.WatchEventUpdate, store.WatchEventDelete:
+				obj, ok := any(event.Object).(*T)
+				if !ok {
+					log.Error(errors.New("watch event value is not *T"), "watch error")
+					return errors.New("watch event value is not *T")
+				}
+				if event.Error != nil {
+					log.Error(event.Error, "watch error")
+					return event.Error
+				}
+				log.V(5).Info("watch event", "type", event.Type, "data", event.Object)
 				if err := handler.OnEvent(ctx, event.Type, obj); err != nil {
 					log.Error(err, "handle error")
 					return err

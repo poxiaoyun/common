@@ -24,7 +24,7 @@ func RandomHex(size int) string {
 
 func RandomFromCandidates(size int, candidates string) string {
 	result := make([]byte, size)
-	for i := 0; i < size; i++ {
+	for i := range size {
 		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(candidates))))
 		if err != nil {
 			panic(err) // handle error appropriately

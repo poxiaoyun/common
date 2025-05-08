@@ -17,6 +17,16 @@ func RawPatch(typ PatchType, data []byte) Patch {
 	return &rawPatch{typ: typ, data: data}
 }
 
+type MapMergePatch map[string]any
+
+func (m MapMergePatch) Data(obj Object) ([]byte, error) {
+	return json.Marshal(m)
+}
+
+func (m MapMergePatch) Type() PatchType {
+	return PatchTypeMergePatch
+}
+
 func JSONPointerUnescape(s string) string {
 	return strings.NewReplacer("~1", "/", "~0", "~").Replace(s)
 }

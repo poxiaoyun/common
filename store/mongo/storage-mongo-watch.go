@@ -12,26 +12,9 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
 	"xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
 )
-
-type Watcher interface {
-	Close() error
-	Events() <-chan WatchEvent
-}
-type WatchEventType string
-
-const (
-	WatchEventAdd    WatchEventType = "add"
-	WatchEventUpdate WatchEventType = "update"
-	WatchEventDelete WatchEventType = "delete"
-)
-
-type WatchEvent struct {
-	Type  WatchEventType
-	Error error
-	Value store.Object
-}
 
 func NewObject[T any](t reflect.Type) T {
 	if t.Kind() == reflect.Ptr {
@@ -57,8 +40,7 @@ func (m *MongoStorage) Watch(ctx context.Context, obj store.ObjectList, opts ...
 		if options.Name != "" {
 			filter = append(filter, bson.E{Key: "name", Value: options.Name})
 		}
-		filter = toWatchFilter(filter)
-		newwatcher, err := NewMongoWatcher(ctx, col, m.core.bsonOptions, m.core.bsonRegistry, newObjFunc, filter)
+		newwatcher, err := NewMongoWatcher(ctx, col, m.core.bsonOptions, m.core.bsonRegistry, newObjFunc, options, filter)
 		if err != nil {
 			return err
 		}
@@ -88,31 +70,40 @@ func NewMongoWatcher(ctx context.Context,
 	bsonOptions *mongooptions.BSONOptions,
 	bsonRegistry *bsoncodec.Registry,
 	newobj func() store.Object,
-	filter any,
+	opts store.WatchOptions,
+	filter bson.D,
 ) (*MongoWatcher, error) {
+	var cur *mongo.Cursor
+	if opts.SendInitialEvents {
+		log.FromContext(ctx).Info("send initial events", "filter", filter)
+		newcur, err := col.Find(ctx, filter)
+		if err != nil {
+			return nil, err
+		}
+		cur = newcur
+	}
 	stream, err := col.Watch(ctx,
 		mongo.Pipeline{
-			bson.D{{Key: "$match", Value: filter}},
+			bson.D{{Key: "$match", Value: toWatchFilter(filter)}},
 		},
 		// check support full document on delete
 		// https://www.mongodb.com/docs/manual/reference/change-events/delete/#document-pre--and-post-images
 		options.ChangeStream().
-			SetFullDocument(options.UpdateLookup).
-			SetFullDocumentBeforeChange(options.UpdateLookup))
+			SetFullDocument(options.Required).
+			SetFullDocumentBeforeChange(options.WhenAvailable),
+	)
 	if err != nil {
 		return nil, errors.NewInternalError(err)
 	}
-
 	w := &MongoWatcher{
 		col:           col,
 		bsonRegistry:  bsonRegistry,
 		bsonOptions:   bsonOptions,
 		newObjectFunc: newobj,
-		stream:        stream,
 		closed:        false,
 		results:       make(chan store.WatchEvent, 64),
 	}
-	go w.run(ctx)
+	go w.run(ctx, cur, stream)
 	return w, nil
 }
 
@@ -121,7 +112,7 @@ type MongoWatcher struct {
 	bsonRegistry *bsoncodec.Registry
 	bsonOptions  *mongooptions.BSONOptions
 
-	stream        *mongo.ChangeStream
+	opts          store.WatchOptions
 	closed        bool
 	newObjectFunc func() store.Object
 	results       chan store.WatchEvent
@@ -133,20 +124,45 @@ func (w *MongoWatcher) Events() <-chan store.WatchEvent {
 	return w.results
 }
 
-func (w *MongoWatcher) run(ctx context.Context) {
+func (w *MongoWatcher) runlist(ctx context.Context, cur *mongo.Cursor) error {
+	defer cur.Close(ctx)
+	for cur.Next(ctx) {
+		item := w.newObjectFunc()
+		if err := cur.Decode(item); err != nil {
+			return errors.NewInternalError(err)
+		}
+		item.SetResource(w.col.Name())
+		w.send(store.WatchEvent{Type: store.WatchEventCreate, Object: item})
+	}
+	if err := cur.Err(); err != nil {
+		return errors.NewInternalError(err)
+	}
+	w.send(store.WatchEvent{Type: store.WatchEventBookmark})
+	return nil
+}
+
+func (w *MongoWatcher) run(ctx context.Context, cur *mongo.Cursor, stream *mongo.ChangeStream) {
+	if cur != nil {
+		if err := w.runlist(ctx, cur); err != nil {
+			w.results <- store.WatchEvent{Error: err}
+			return
+		}
+	}
 	type rawMongoEvent struct {
 		OperationType            string   `json:"operationType"`
 		FullDocument             bson.Raw `json:"fullDocument"`
 		FullDocumentBeforeChange bson.Raw `json:"fullDocumentBeforeChange"`
 		DocumentKey              bson.Raw `json:"documentKey"`
 	}
-	for w.stream.Next(ctx) {
+	defer stream.Close(ctx)
+
+	for stream.Next(ctx) {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 			raw := rawMongoEvent{}
-			if err := w.stream.Decode(&raw); err != nil {
+			if err := stream.Decode(&raw); err != nil {
 				w.results <- store.WatchEvent{Error: errors.NewInternalError(err)}
 				return
 			}
@@ -183,7 +199,7 @@ func (w *MongoWatcher) run(ctx context.Context) {
 			w.send(event)
 		}
 	}
-	if err := w.stream.Err(); err != nil {
+	if err := stream.Err(); err != nil {
 		if stderrors.Is(err, context.Canceled) {
 			return
 		}
@@ -221,5 +237,4 @@ func (w *MongoWatcher) Stop() {
 		return
 	}
 	close(w.results)
-	w.stream.Close(nil)
 }
