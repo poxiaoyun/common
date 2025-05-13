@@ -221,7 +221,18 @@ func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], sy
 					result, err := syncfunc(ctx, val)
 					if err != nil {
 						log.Error(err, "sync", "key", val)
-						queue.AddRateLimited(val)
+						if result.Requeue {
+							// if retry wait is longer than requeueAfter, use requeueAfter
+							// the case it when a resource is expiring but the retry wait is longer than time to expire
+							// leads to a resource not being processed when expired immediately
+							if nexttry := min(queue.When(val), result.RequeueAfter); nexttry > 0 {
+								queue.AddAfter(val, nexttry)
+							} else {
+								queue.AddRateLimited(val)
+							}
+						} else {
+							queue.AddRateLimited(val)
+						}
 					} else {
 						if result.Requeue {
 							queue.AddAfter(val, result.RequeueAfter)

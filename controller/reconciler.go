@@ -167,7 +167,7 @@ func (r *BetterReconciler[T]) processWithPostFunc(ctx context.Context, condStora
 			return Result{Requeue: true, RequeueAfter: r.Options.requeueOnSuccess}, nil
 		}
 	}
-	return result, nil
+	return result, funcerr
 }
 
 func NewObject[T any](t reflect.Type) T {
