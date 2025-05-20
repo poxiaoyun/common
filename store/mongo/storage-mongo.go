@@ -451,7 +451,7 @@ func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
 		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
-		update, err := patchToMongoUpdate(patch, []string{"status"}, nil)
+		update, err := convertPatch(patch, obj, []string{"status"}, nil)
 		if err != nil {
 			return err
 		}
@@ -462,6 +462,26 @@ func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.
 		result := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions)
 		if err := result.Decode(obj); err != nil {
 			return WarpMongoError(err, col, obj)
+		}
+		return nil
+	})
+}
+
+// PatchBatch implements store.Store.
+func (m *MongoStorage) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
+	options := store.PatchBatchOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
+		update, err := convertBatchPatch(patch, []string{"status"}, nil)
+		if err != nil {
+			return err
+		}
+		m.core.logger.V(5).Info("batch patch", "collection", col.Name(), "filter", filter, "update", update)
+		if _, err := col.UpdateMany(ctx, filter, update); err != nil {
+			return ConvetMongoListError(err, col)
 		}
 		return nil
 	})
@@ -700,12 +720,22 @@ func escapeRegex(input string) string {
 	return escapeRegexReplacer.Replace(input)
 }
 
-func patchToMongoUpdate(patch store.Patch, excludes []string, includes []string) (bson.D, error) {
-	data, err := patch.Data(nil)
+func convertPatch(patch store.Patch, orginal store.Object, excludes []string, includes []string) (bson.D, error) {
+	data, err := patch.Data(orginal)
 	if err != nil {
 		return nil, err
 	}
 	patchtype := patch.Type()
+	return patchToMongoUpdate(patchtype, data, excludes, includes)
+}
+
+func convertBatchPatch(patch store.PatchBatch, excludes []string, includes []string) (bson.D, error) {
+	data := patch.Data()
+	patchtype := patch.Type()
+	return patchToMongoUpdate(patchtype, data, excludes, includes)
+}
+
+func patchToMongoUpdate(patchtype store.PatchType, data []byte, excludes []string, includes []string) (bson.D, error) {
 	switch patchtype {
 	case store.PatchTypeMergePatch:
 		patchmap := map[string]any{}
@@ -776,7 +806,7 @@ type MongoStorageStatus struct {
 func (m *MongoStorageStatus) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
-		update, err := patchToMongoUpdate(patch, nil, []string{"status"})
+		update, err := convertPatch(patch, obj, nil, []string{"status"})
 		if err != nil {
 			return err
 		}

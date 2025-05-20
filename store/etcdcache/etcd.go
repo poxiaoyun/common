@@ -125,6 +125,11 @@ type generic struct {
 	scopes []store.Scope
 }
 
+// PatchBatch implements store.Store.
+func (c *generic) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
+	return errors.NewNotImplemented("batch patch is not supported")
+}
+
 // DeleteBatch implements store.Store.
 func (c *generic) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
 	// panic("unimplemented")

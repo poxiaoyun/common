@@ -33,6 +33,11 @@ type CacheStore struct {
 	core   *cacheStoreCore
 }
 
+// PatchBatch implements store.Store.
+func (g *CacheStore) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
+	return g.core.store.Scope(g.scopes...).PatchBatch(ctx, obj, patch, opts...)
+}
+
 // DeleteBatch implements store.Store.
 func (g *CacheStore) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
 	return g.core.store.Scope(g.scopes...).DeleteBatch(ctx, obj, opts...)

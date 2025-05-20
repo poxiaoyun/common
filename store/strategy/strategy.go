@@ -11,6 +11,11 @@ type StrategyStore struct {
 	Stratage Strategy
 }
 
+// PatchBatch implements store.Store.
+func (s *StrategyStore) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
+	return s.Store.PatchBatch(ctx, obj, patch, opts...)
+}
+
 // DeleteBatch implements store.Store.
 func (s *StrategyStore) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
 	return s.Store.DeleteBatch(ctx, obj, opts...)

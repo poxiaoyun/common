@@ -18,6 +18,11 @@ type InMemory struct {
 	status bool
 }
 
+// PatchBatch implements store.Store.
+func (i *InMemory) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
+	return errors.NewNotImplemented("batch patch is not supported")
+}
+
 func (i *InMemory) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
 	return 0, errors.NewNotImplemented("count is not supported")
 }

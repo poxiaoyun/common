@@ -91,6 +91,14 @@ type (
 	}
 	PatchOption func(*PatchOptions)
 
+	PatchBatchOptions struct {
+		// FieldRequirements is a list of conditions that must be true for the update to occur.
+		// it apply to fields.
+		FieldRequirements Requirements
+		LabelRequirements Requirements
+	}
+	PatchBatchOption func(*PatchBatchOptions)
+
 	WatchOptions struct {
 		Name              string
 		LabelRequirements Requirements
@@ -198,6 +206,18 @@ func WithPatchLabelRequirements(reqs ...Requirement) PatchOption {
 	}
 }
 
+func WithPatchBatchFieldRequirements(reqs ...Requirement) PatchBatchOption {
+	return func(o *PatchBatchOptions) {
+		o.FieldRequirements = append(o.FieldRequirements, reqs...)
+	}
+}
+
+func WithPatchBatchLabelRequirements(reqs ...Requirement) PatchBatchOption {
+	return func(o *PatchBatchOptions) {
+		o.LabelRequirements = append(o.LabelRequirements, reqs...)
+	}
+}
+
 func WithDeleteBatchFieldRequirements(reqs ...Requirement) DeleteBatchOption {
 	return func(o *DeleteBatchOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, reqs...)
@@ -299,6 +319,11 @@ type Patch interface {
 	Data(obj Object) ([]byte, error)
 }
 
+type PatchBatch interface {
+	Type() PatchType
+	Data() []byte
+}
+
 type Watcher interface {
 	Stop()
 	Events() <-chan WatchEvent
@@ -333,6 +358,9 @@ type Store interface {
 	DeleteBatch(ctx context.Context, obj ObjectList, opts ...DeleteBatchOption) error
 	Update(ctx context.Context, obj Object, opts ...UpdateOption) error
 	Patch(ctx context.Context, obj Object, patch Patch, opts ...PatchOption) error
+	// PatchBatch applies the patch to all objects in the list.
+	// the patch is applied to each object in the list.
+	PatchBatch(ctx context.Context, obj ObjectList, patch PatchBatch, opts ...PatchBatchOption) error
 	Watch(ctx context.Context, obj ObjectList, opts ...WatchOption) (Watcher, error)
 	Status() StatusStorage
 	Scope(scope ...Scope) Store

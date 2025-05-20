@@ -150,24 +150,43 @@ const PatchDataLimit = 5 * 1024 * 1024 // 5MB
 
 func (s *Server) Patch(w http.ResponseWriter, r *http.Request) {
 	s.on(w, r, func(ctx context.Context, ref store.ResourcedObjectReference) (any, error) {
-		if ref.Name == "" {
-			return nil, errors.NewBadRequest("name is required")
-		}
 		patchtype, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil {
 			return nil, fmt.Errorf("invalid content type: %s", err)
+		}
+		labelsel, fildsel, err := decodeSelector(r)
+		if err != nil {
+			return nil, err
 		}
 		patchdata, err := io.ReadAll(io.LimitReader(r.Body, PatchDataLimit))
 		if err != nil {
 			return nil, err
 		}
+
+		if ref.Name == "" {
+			// batch patch
+			batchPatch := store.RawPatchBatch(store.PatchType(patchtype), patchdata)
+			options := store.PatchBatchOptions{
+				LabelRequirements: labelsel,
+				FieldRequirements: fildsel,
+			}
+			opts := []store.PatchBatchOption{
+				func(bpo *store.PatchBatchOptions) {
+					*bpo = options
+				},
+			}
+			list := store.List[store.Unstructured]{}
+			list.Resource = ref.Resource
+			if err := s.Store.Scope(ref.Scopes...).PatchBatch(ctx, &list, batchPatch, opts...); err != nil {
+				return nil, err
+			}
+			return list, nil
+		}
+
 		patch := store.RawPatch(store.PatchType(patchtype), patchdata)
 
 		options := store.PatchOptions{}
-		labelsel, fildsel, err := decodeSelector(r)
-		if err != nil {
-			return nil, err
-		}
+
 		options.LabelRequirements = labelsel
 		options.FieldRequirements = fildsel
 
@@ -235,7 +254,23 @@ func (s *Server) Update(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Delete(w http.ResponseWriter, r *http.Request) {
 	s.on(w, r, func(ctx context.Context, ref store.ResourcedObjectReference) (any, error) {
 		if ref.Name == "" {
-			return nil, errors.NewBadRequest("name is required")
+			// batch delete
+			labelsel, fildsel, err := decodeSelector(r)
+			if err != nil {
+				return nil, err
+			}
+			options := store.DeleteBatchOptions{
+				LabelRequirements: labelsel,
+				FieldRequirements: fildsel,
+			}
+			list := store.List[store.Unstructured]{}
+			list.Resource = ref.Resource
+			if err := s.Store.Scope(ref.Scopes...).DeleteBatch(ctx, &list, func(do *store.DeleteBatchOptions) {
+				*do = options
+			}); err != nil {
+				return nil, err
+			}
+			return list, nil
 		}
 		options := store.DeleteOptions{}
 		if propagationPolicy := api.Query(r, "propagationPolicy", ""); propagationPolicy != "" {

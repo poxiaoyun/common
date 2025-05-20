@@ -40,9 +40,51 @@ type Client struct {
 	scopesPrefix string
 }
 
+// PatchBatch implements store.Store.
+func (c *Client) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
+	resource, err := store.GetResource(obj)
+	if err != nil {
+		return errors.NewBadRequest(err.Error())
+	}
+	patchdata := patch.Data()
+	patchtype := patch.Type()
+
+	options := store.PatchBatchOptions{}
+	for _, o := range opts {
+		o(&options)
+	}
+	queries := url.Values{}
+	if len(options.LabelRequirements) != 0 {
+		queries.Add("labelSelector", options.LabelRequirements.String())
+	}
+	if len(options.FieldRequirements) != 0 {
+		queries.Add("fieldSelector", options.FieldRequirements.String())
+	}
+	return c.cli.Patch(c.getPath(resource, "")).
+		Query("batch", "true").
+		Query("status", strconv.FormatBool(false)).
+		Body(bytes.NewReader(patchdata), string(patchtype)).
+		Return(obj).Send(ctx)
+}
+
 // DeleteBatch implements store.Store.
 func (c *Client) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
-	return errors.NewNotImplemented("delete batch is not supported")
+	resource, err := store.GetResource(obj)
+	if err != nil {
+		return errors.NewBadRequest(err.Error())
+	}
+	options := store.DeleteBatchOptions{}
+	for _, o := range opts {
+		o(&options)
+	}
+	queries := url.Values{}
+	if len(options.LabelRequirements) != 0 {
+		queries.Add("labelSelector", options.LabelRequirements.String())
+	}
+	if len(options.FieldRequirements) != 0 {
+		queries.Add("fieldSelector", options.FieldRequirements.String())
+	}
+	return c.cli.Delete(c.getPath(resource, "")).Queries(queries).Return(obj).Send(ctx)
 }
 
 // Count implements store.Store.

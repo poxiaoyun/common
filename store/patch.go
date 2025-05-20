@@ -50,6 +50,34 @@ func (r *rawPatch) Type() PatchType {
 	return r.typ
 }
 
+func RawPatchBatch(typ PatchType, data []byte) PatchBatch {
+	return rawBatchPatch{typ: typ, data: data}
+}
+
+type rawBatchPatch struct {
+	typ  PatchType
+	data []byte
+}
+
+func (p rawBatchPatch) Type() PatchType {
+	return p.typ
+}
+
+func (p rawBatchPatch) Data() []byte {
+	return p.data
+}
+
+type MapMergePatchBacth map[string]any
+
+func (m MapMergePatchBacth) Data() []byte {
+	val, _ := json.Marshal(m)
+	return val
+}
+
+func (m MapMergePatchBacth) Type() PatchType {
+	return PatchTypeMergePatch
+}
+
 func MergePatchFrom(obj Object) Patch {
 	mergePatchFunc := func(originalJSON, modifiedJSON []byte, dataStruct interface{}) ([]byte, error) {
 		return jsonpatch.CreateMergePatch(originalJSON, modifiedJSON)
