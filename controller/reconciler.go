@@ -3,7 +3,10 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"regexp"
+	"slices"
 	"time"
 
 	"xiaoshiai.cn/common/errors"
@@ -212,7 +215,7 @@ func (r *BetterReconciler[T]) setStatusMessage(obj T, err error) {
 	}
 	if msgv.CanSet() {
 		if err != nil {
-			msgv.SetString(err.Error())
+			msgv.SetString(CensorError(err))
 		} else {
 			msgv.SetString("")
 		}
@@ -221,13 +224,7 @@ func (r *BetterReconciler[T]) setStatusMessage(obj T, err error) {
 
 // ContainsFinalizer checks an Object that the provided finalizer is present.
 func ContainsFinalizer(o store.Object, finalizer string) bool {
-	f := o.GetFinalizers()
-	for _, e := range f {
-		if e == finalizer {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(o.GetFinalizers(), finalizer)
 }
 
 // RemoveFinalizer accepts an Object and removes the provided finalizer if present.
@@ -237,7 +234,7 @@ func RemoveFinalizer(o store.Object, finalizer string) (finalizersUpdated bool) 
 	length := len(f)
 
 	index := 0
-	for i := 0; i < length; i++ {
+	for i := range length {
 		if f[i] == finalizer {
 			continue
 		}
@@ -250,11 +247,26 @@ func RemoveFinalizer(o store.Object, finalizer string) (finalizersUpdated bool) 
 
 func AddFinalizer(o store.Object, finalizer string) (finalizersUpdated bool) {
 	f := o.GetFinalizers()
-	for _, e := range f {
-		if e == finalizer {
-			return false
-		}
+	if slices.Contains(f, finalizer) {
+		return false
 	}
 	o.SetFinalizers(append(f, finalizer))
 	return true
+}
+
+var netErrRegexp = regexp.MustCompile(`(?i)(.*?)(read|write) (tcp|udp) [^ ]+->[^ ]+: (.+)`)
+
+// CensorError 清理错误字符串中敏感的 IP 和端口，仅保留错误描述部分。
+func CensorError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return CensorErrorStr(err.Error())
+}
+
+func CensorErrorStr(errStr string) string {
+	if matches := netErrRegexp.FindStringSubmatch(errStr); matches != nil {
+		return fmt.Sprintf("%s%s %s: %s", matches[1], matches[2], matches[3], matches[4])
+	}
+	return errStr
 }
