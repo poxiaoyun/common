@@ -1,11 +1,9 @@
-package sets
+package collections
 
 import (
 	"cmp"
 	"slices"
 )
-
-type Empty struct{}
 
 type Set[T comparable] map[T]Empty
 

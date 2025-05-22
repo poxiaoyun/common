@@ -116,3 +116,14 @@ func WithAttributes(ctx context.Context, attributes *Attributes) context.Context
 func AttributesFromContext(ctx context.Context) *Attributes {
 	return GetContextValue[*Attributes](ctx, "attributes")
 }
+
+// InjectAttrName use to set name for current request attribute
+// it usually called when a creation operation is successful
+// it help audit to record what name this creation operation created
+func InjectAttrName(ctx context.Context, name string) {
+	attributes := AttributesFromContext(ctx)
+	if len(attributes.Resources) == 0 {
+		return
+	}
+	attributes.Resources[len(attributes.Resources)-1].Name = name
+}

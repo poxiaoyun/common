@@ -104,3 +104,11 @@ func setContentTypeIfNotSet(hds http.Header, val string) {
 		hds.Set("Content-Type", val)
 	}
 }
+
+func Redirect(w http.ResponseWriter, r *http.Request) {
+	var queryPart string
+	if len(r.URL.RawQuery) > 0 {
+		queryPart = "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, r.URL.Path+"/"+queryPart, http.StatusMovedPermanently)
+}

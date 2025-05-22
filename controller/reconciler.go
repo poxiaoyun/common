@@ -270,3 +270,25 @@ func CensorErrorStr(errStr string) string {
 	}
 	return errStr
 }
+
+type ReQueueError struct {
+	After time.Duration
+}
+
+func (r ReQueueError) Error() string {
+	return fmt.Sprintf("retry after %s", r.After)
+}
+
+func ReQueue(after time.Duration) error {
+	return ReQueueError{After: after}
+}
+
+func UnwrapReQueueError(err error) (Result, error) {
+	if err == nil {
+		return Result{}, nil
+	}
+	if requeue, ok := err.(ReQueueError); ok {
+		return Result{Requeue: true, RequeueAfter: requeue.After}, nil
+	}
+	return Result{}, err
+}
