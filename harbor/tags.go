@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -34,16 +35,18 @@ func (o ListTagOptions) ToQuery() url.Values {
 	return q
 }
 
-func (c *Client) ListTags(ctx context.Context, project, repository string, reference string, o ListTagOptions) ([]Tag, error) {
+func (c *Client) ListTags(ctx context.Context, project, repository string, reference string, o ListTagOptions) (List[Tag], error) {
 	var tags []Tag
-	if err := c.cli.
+	resp, err := c.cli.
 		Get(fmt.Sprintf("/projects/%s/repositories/%s/artifacts/%s/tags", project, repository, reference)).
 		Queries(o.ToQuery()).
 		Return(&tags).
-		Send(ctx); err != nil {
-		return nil, err
+		Do(ctx)
+	if err != nil {
+		return List[Tag]{}, err
 	}
-	return tags, nil
+	total, _ := strconv.Atoi(resp.Header.Get("X-Total-Count"))
+	return List[Tag]{Total: total, Items: tags}, nil
 }
 
 func (c *Client) DeleteTag(ctx context.Context, project, repository string, reference string, tag string) error {

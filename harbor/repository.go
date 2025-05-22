@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 )
 
@@ -29,16 +28,13 @@ type Repository struct {
 	UpdateTime     time.Time `json:"update_time"`
 }
 
-func (c *Client) ListRepositories(ctx context.Context, project string,
-	options ListRepositoryOptions,
-) ([]Repository, int, error) {
+func (c *Client) ListRepositories(ctx context.Context, project string, options ListRepositoryOptions) (List[Repository], error) {
 	var repositories []Repository
 	resp, err := c.cli.Request(http.MethodGet, fmt.Sprintf("/projects/%s/repositories", project)).Queries(options.ToQuery()).Return(&repositories).Do(ctx)
 	if err != nil {
-		return nil, 0, err
+		return List[Repository]{}, err
 	}
-	total, _ := strconv.Atoi(resp.Header.Get("X-Total-Count"))
-	return repositories, total, nil
+	return List[Repository]{Total: GetHeaderTotalCount(resp), Items: repositories}, nil
 }
 
 func (c *Client) GetRepository(ctx context.Context, project, repository string) (*Repository, error) {

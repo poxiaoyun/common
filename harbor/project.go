@@ -55,12 +55,13 @@ func (o ListProjectOptions) ToQuery() url.Values {
 	return q
 }
 
-func (c *Client) ListProjects(ctx context.Context, options ListProjectOptions) ([]Project, error) {
+func (c *Client) ListProjects(ctx context.Context, options ListProjectOptions) (List[Project], error) {
 	var projects []Project
-	if err := c.cli.Get("/projects").Queries(options.ToQuery()).Return(&projects).Send(ctx); err != nil {
-		return nil, err
+	resp, err := c.cli.Get("/projects").Queries(options.ToQuery()).Return(&projects).Do(ctx)
+	if err != nil {
+		return List[Project]{}, err
 	}
-	return projects, nil
+	return List[Project]{Total: GetHeaderTotalCount(resp), Items: projects}, nil
 }
 
 func (c *Client) GetProject(ctx context.Context, nameOrID string) (*Project, error) {

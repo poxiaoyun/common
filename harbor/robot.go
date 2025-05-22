@@ -107,7 +107,7 @@ type CreateRobot struct {
 
 func (c *Client) CreateRobotAccount(ctx context.Context, robot CreateRobot) (*Robot, error) {
 	var r Robot
-	if err := c.cli.Post("robots").JSON(robot).Return(&r).Send(ctx); err != nil {
+	if err := c.cli.Post("/robots").JSON(robot).Return(&r).Send(ctx); err != nil {
 		return nil, err
 	}
 	return &r, nil
@@ -117,55 +117,37 @@ func (c *Client) UpdateRobotAccount(ctx context.Context, robot *Robot) error {
 	return c.cli.Put(fmt.Sprintf("/robots/%d", robot.ID)).JSON(robot).Send(ctx)
 }
 
-func (c *Client) ListRobotAccounts(ctx context.Context, o ListRobotOptions) ([]Robot, error) {
+func (c *Client) ListRobotAccounts(ctx context.Context, o ListRobotOptions) (List[Robot], error) {
 	var robots []Robot
-	if err := c.cli.Get("/robots").Queries(o.ToQuery()).Return(&robots).Send(ctx); err != nil {
-		return nil, err
+	resp, err := c.cli.Get("/robots").Queries(o.ToQuery()).Return(&robots).Do(ctx)
+	if err != nil {
+		return List[Robot]{}, err
 	}
-	return robots, nil
+	return List[Robot]{Total: GetHeaderTotalCount(resp), Items: robots}, nil
 }
 
-func (c *Client) ListProjectRobotAccounts(ctx context.Context, project string, o ListRobotOptions) ([]Robot, error) {
-	var robots []Robot
-	if err := c.cli.Get("/projects/" + project + "/robots").Queries(o.ToQuery()).Return(&robots).Send(ctx); err != nil {
-		return nil, err
-	}
-	return robots, nil
-}
-
-// https://github.com/goharbor/harbor/issues/10672
-func (c *Client) CreateProjectRobotAccount(ctx context.Context, project string, robot CreateRobot) (*Robot, error) {
-	var r Robot
-	if err := c.cli.Post("/projects/" + project + "/robots").JSON(robot).Return(&r).Send(ctx); err != nil {
-		return nil, err
-	}
-	return &r, nil
-}
-
-func (c *Client) GetProjectRobotAccount(ctx context.Context, project string, id int) (*Robot, error) {
-	var r Robot
-	if err := c.cli.Get(fmt.Sprintf("/projects/%s/robots/%d", project, id)).Return(&r).Send(ctx); err != nil {
-		return nil, err
-	}
-	return &r, nil
-}
-
-func (c *Client) GetProjectRobotAccountByName(ctx context.Context, project string, name string) (*Robot, error) {
-	encodedname := fmt.Sprintf("%s+%s", project, name)
-	opt := ListRobotOptions{
-		CommonOptions: CommonOptions{Q: fmt.Sprintf("name=%s", encodedname)},
-	}
-	robots, err := c.ListProjectRobotAccounts(ctx, project, opt)
+func (c *Client) GetProjectRobotAccountByName(ctx context.Context, projectname string, robotname string) (*Robot, error) {
+	// get project id
+	project, err := c.GetProject(ctx, projectname)
 	if err != nil {
 		return nil, err
 	}
-
-	for _, robot := range robots {
-		if robot.Name == "robot$"+encodedname {
+	formatedName := fmt.Sprintf("%s+%s", projectname, robotname)
+	opt := ListRobotOptions{
+		CommonOptions: CommonOptions{
+			Q: fmt.Sprintf("Level=project,ProjectID=%d,name=%s", project.ProjectID, formatedName),
+		},
+	}
+	robots, err := c.ListRobotAccounts(ctx, opt)
+	if err != nil {
+		return nil, err
+	}
+	for _, robot := range robots.Items {
+		if robot.Name == "robot$"+formatedName {
 			return &robot, nil
 		}
 	}
-	return nil, errors.NewNotFound("robot account", name)
+	return nil, errors.NewNotFound("robot account", robotname)
 }
 
 func (c *Client) DeleteProjectRobotAccount(ctx context.Context, project string, id int) error {

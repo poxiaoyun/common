@@ -3,7 +3,6 @@ package harbor
 import (
 	"context"
 	"net/url"
-	"strconv"
 	"time"
 )
 
@@ -89,7 +88,7 @@ type ReferencePlatform struct {
 	Variant      string   `json:"variant"`
 }
 
-func (c *Client) ListArtifacts(ctx context.Context, project string, repository string, options ListArtifactOptions) ([]Artifacrt, int, error) {
+func (c *Client) ListArtifacts(ctx context.Context, project string, repository string, options ListArtifactOptions) (List[Artifacrt], error) {
 	var artifacts []Artifacrt
 	resp, err := c.cli.
 		Get("/projects/" + project + "/repositories/" + repository + "/artifacts").
@@ -97,10 +96,9 @@ func (c *Client) ListArtifacts(ctx context.Context, project string, repository s
 		Return(&artifacts).
 		Do(ctx)
 	if err != nil {
-		return nil, 0, err
+		return List[Artifacrt]{}, err
 	}
-	total, _ := strconv.Atoi(resp.Header.Get("X-Total-Count"))
-	return artifacts, total, nil
+	return List[Artifacrt]{Total: GetHeaderTotalCount(resp), Items: artifacts}, nil
 }
 
 func (c *Client) GetArtifact(ctx context.Context, project string, repository string, reference string, options GetArtifactOptions) (*Artifacrt, error) {

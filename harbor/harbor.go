@@ -14,6 +14,8 @@ import (
 
 const APIPREFIX = "/api/v2.0"
 
+const HeaderXTotalCount = "X-Total-Count"
+
 type Client struct {
 	cli       *httpclient.Client
 	csrftoken string
@@ -42,6 +44,18 @@ func NewClient(o *Options) (*Client, error) {
 }
 
 const csrfTokenHeader = "X-Harbor-CSRF-Token"
+
+func GetHeaderTotalCount(resp *http.Response) int {
+	if resp == nil {
+		return 0
+	}
+	if totalCount := resp.Header.Get(HeaderXTotalCount); totalCount != "" {
+		if count, err := strconv.Atoi(totalCount); err == nil {
+			return count
+		}
+	}
+	return 0
+}
 
 func (c *Client) onRequest(req *http.Request) error {
 	if req.Method != http.MethodGet {
@@ -79,6 +93,12 @@ func (c *Client) onResponse(req *http.Request, resp *http.Response) error {
 }
 
 type CommonOptions struct {
+	// Query string to query resources.
+	// Supported query patterns are "exact match(k=v)", "fuzzy match(k=~v)", "range(k=[min~max])",
+	//  "list with union releationship(k={v1 v2 v3})" and "list with intersetion relationship(k=(v1 v2 v3))".
+	// The value of range and list can be string(enclosed by " or '),
+	// integer or time(in format "2020-04-09 02:36:00").
+	// All of these query patterns should be put in the query string "q=xxx" and splitted by ",". e.g. q=k1=v1,k2=~v2,k3=[min~max]
 	Q        string
 	Sort     string
 	Page     int
@@ -101,4 +121,9 @@ func (o CommonOptions) ToQuery() url.Values {
 		q.Set("page_size", strconv.Itoa(o.PageSize))
 	}
 	return q
+}
+
+type List[T any] struct {
+	Total int `json:"total"`
+	Items []T `json:"items"`
 }
