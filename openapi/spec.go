@@ -3,6 +3,7 @@ package openapi
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 
 	"github.com/go-openapi/spec"
 	"github.com/go-openapi/swag"
@@ -117,6 +118,55 @@ func (properties SchemaProperties) MarshalJSON() ([]byte, error) {
 	}
 	buf.WriteString("}")
 	return buf.Bytes(), nil
+}
+
+func (properties *SchemaProperties) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, []byte("null")) {
+		*properties = nil
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if tok != json.Delim('{') {
+		return &json.UnmarshalTypeError{
+			Value:  "object",
+			Type:   reflect.TypeOf(properties),
+			Struct: "SchemaProperties",
+			Field:  "SchemaProperties",
+		}
+	}
+	var props SchemaProperties
+	for dec.More() {
+		// Read property name
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		name, ok := tok.(string)
+		if !ok {
+			return &json.UnmarshalTypeError{
+				Value:  "non-string property name",
+				Type:   reflect.TypeOf(""),
+				Struct: "SchemaProperties",
+				Field:  "SchemaProperties",
+			}
+		}
+		// Read property value
+		var schema Schema
+		if err := dec.Decode(&schema); err != nil {
+			return err
+		}
+		props = append(props, SchemaProperty{Name: name, Schema: schema})
+	}
+	// Consume closing '}'
+	if _, err := dec.Token(); err != nil {
+		return err
+	}
+	*properties = props
+	return nil
 }
 
 // SchemaOrArray represents a value that can either be a Schema
