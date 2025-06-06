@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strings"
 
 	"github.com/go-openapi/spec"
 	"github.com/go-openapi/swag"
@@ -82,6 +83,51 @@ func (s Schema) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return swag.ConcatJSON(props, extjson, extprops), nil
+}
+
+func (s *Schema) UnmarshalJSON(data []byte) error {
+	props := struct {
+		SchemaProps `json:",inline"`
+	}{}
+	if err := json.Unmarshal(data, &props); err != nil {
+		return err
+	}
+	sch := Schema{
+		SchemaProps: props.SchemaProps,
+	}
+	dict := map[string]any{}
+	if err := json.Unmarshal(data, &dict); err != nil {
+		return err
+	}
+	schemanames := []string{
+		"$ref", "$schema", "id", "description", "type", "nullable", "format",
+		"title", "default", "maximum", "exclusiveMaximum", "minimum",
+		"exclusiveMinimum", "maxLength", "minLength", "pattern", "maxItems",
+		"minItems", "uniqueItems", "multipleOf", "enum", "maxProperties",
+		"minProperties", "required", "allOf", "oneOf", "anyOf", "not",
+		"properties", "additionalProperties", "patternProperties",
+		"dependencies", "additionalItems", "definitions", "items",
+		"example", "discriminator", "readOnly", "xml", "externalDocs",
+	}
+	// Remove the known schema properties from the dict
+	for _, name := range schemanames {
+		delete(dict, name)
+	}
+	for k, v := range dict {
+		if strings.HasPrefix(strings.ToLower(k), "x-") {
+			if sch.Extensions == nil {
+				sch.Extensions = map[string]any{}
+			}
+			sch.Extensions[k] = v
+			continue
+		}
+		if sch.ExtraProps == nil {
+			sch.ExtraProps = map[string]any{}
+		}
+		sch.ExtraProps[k] = v
+	}
+	*s = sch
+	return nil
 }
 
 // SchemaProperties is a map representing the properties of a Schema object.
