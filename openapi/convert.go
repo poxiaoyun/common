@@ -73,7 +73,7 @@ func convertSchemaPtr(s *Schema) *spec.Schema {
 func convertSchemaProperties(props SchemaProperties) spec.SchemaProperties {
 	result := make(spec.SchemaProperties, len(props))
 	for _, v := range props {
-		result[v.Name] = ConvertSchemaToSpecSchema(v.Schema)
+		result[v.Key] = ConvertSchemaToSpecSchema(v.Value)
 	}
 	return result
 }

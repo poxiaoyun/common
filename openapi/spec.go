@@ -3,11 +3,11 @@ package openapi
 import (
 	"bytes"
 	"encoding/json"
-	"reflect"
 	"strings"
 
 	"github.com/go-openapi/spec"
 	"github.com/go-openapi/swag"
+	"xiaoshiai.cn/common/collections"
 )
 
 type Schema struct {
@@ -131,89 +131,7 @@ func (s *Schema) UnmarshalJSON(data []byte) error {
 }
 
 // SchemaProperties is a map representing the properties of a Schema object.
-// It knows how to transform its keys into an ordered slice.
-type SchemaProperties []SchemaProperty
-
-type SchemaProperty struct {
-	Name   string
-	Schema Schema
-}
-
-// MarshalJSON produces properties as json, keeping their order.
-func (properties SchemaProperties) MarshalJSON() ([]byte, error) {
-	if properties == nil {
-		return []byte("null"), nil
-	}
-	var buf bytes.Buffer
-	buf.WriteString("{")
-	for i, kv := range properties {
-		if i != 0 {
-			buf.WriteString(",")
-		}
-		key, err := json.Marshal(kv.Name)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(key)
-		buf.WriteString(": ")
-		val, err := json.Marshal(kv.Schema)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(val)
-	}
-	buf.WriteString("}")
-	return buf.Bytes(), nil
-}
-
-func (properties *SchemaProperties) UnmarshalJSON(data []byte) error {
-	if bytes.Equal(data, []byte("null")) {
-		*properties = nil
-		return nil
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	tok, err := dec.Token()
-	if err != nil {
-		return err
-	}
-	if tok != json.Delim('{') {
-		return &json.UnmarshalTypeError{
-			Value:  "object",
-			Type:   reflect.TypeOf(properties),
-			Struct: "SchemaProperties",
-			Field:  "SchemaProperties",
-		}
-	}
-	var props SchemaProperties
-	for dec.More() {
-		// Read property name
-		tok, err := dec.Token()
-		if err != nil {
-			return err
-		}
-		name, ok := tok.(string)
-		if !ok {
-			return &json.UnmarshalTypeError{
-				Value:  "non-string property name",
-				Type:   reflect.TypeOf(""),
-				Struct: "SchemaProperties",
-				Field:  "SchemaProperties",
-			}
-		}
-		// Read property value
-		var schema Schema
-		if err := dec.Decode(&schema); err != nil {
-			return err
-		}
-		props = append(props, SchemaProperty{Name: name, Schema: schema})
-	}
-	// Consume closing '}'
-	if _, err := dec.Token(); err != nil {
-		return err
-	}
-	*properties = props
-	return nil
-}
+type SchemaProperties = collections.OrderedMap[string, Schema]
 
 // SchemaOrArray represents a value that can either be a Schema
 // or an array of Schema. Mainly here for serialization purposes
