@@ -157,7 +157,7 @@ func (h *TypedController[T]) Run(ctx context.Context) error {
 
 	ctx = log.NewContext(ctx, logger)
 	if h.options.LeaderElection != nil {
-		return h.options.LeaderElection.OnLeader(ctx, 30*time.Second, func(ctx context.Context) error {
+		return h.options.LeaderElection.OnLeader(ctx, func(ctx context.Context) error {
 			logger.Info("starting controller on leader")
 			return h.run(ctx)
 		})

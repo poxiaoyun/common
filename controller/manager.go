@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 	"xiaoshiai.cn/common/log"
@@ -25,9 +26,9 @@ type ControllerManagerOptions struct {
 	LeaderElectionKey string `json:"leaderElectionKey"`
 }
 
-func (c *ControllerManager) WithStoreLeaderElection(storage store.Store, key string) *ControllerManager {
+func (c *ControllerManager) WithStoreLeaderElection(storage store.Store, key string, ttl time.Duration) *ControllerManager {
 	storage = storage.Scope(store.Scope{Resource: "namespaces", Name: "leader-election"})
-	c.LedaerElection = NewStoreLeaderElection(storage, key)
+	c.LedaerElection = NewStoreLeaderElection(storage, key, ttl)
 	return c
 }
 
@@ -62,7 +63,7 @@ func (c *ControllerManager) Run(ctx context.Context) error {
 	log := log.FromContext(ctx)
 	if c.LedaerElection != nil {
 		log.Info("controller manager run with leader election")
-		return c.LedaerElection.OnLeader(ctx, 0, func(ctx context.Context) error {
+		return c.LedaerElection.OnLeader(ctx, func(ctx context.Context) error {
 			log.Info("controller manager run on leader elected")
 			return c.run(ctx)
 		})

@@ -10,13 +10,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	"xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
 )
 
 type OnLeaderElected func(ctx context.Context) error
 
 type LeaderElection interface {
-	OnLeader(ctx context.Context, ttl time.Duration, onLeaderElected OnLeaderElected) error
+	OnLeader(ctx context.Context, onLeaderElected OnLeaderElected) error
 }
 
 type Lease struct {
@@ -28,29 +29,36 @@ type Lease struct {
 	LeaderTransitions    int        `json:"leaderTransitions"`
 }
 
-func NewStoreLeaderElection(store store.Store, key string) LeaderElection {
-	return &StorageLeaderElection{Storage: store, Key: key}
+func NewStoreLeaderElection(store store.Store, key string, ttl time.Duration) LeaderElection {
+	if ttl == 0 {
+		ttl = 30 * time.Second
+	}
+	if ttl < 10*time.Second {
+		ttl = 10 * time.Second
+	}
+	return &StorageLeaderElection{Storage: store, Key: key, TTL: ttl}
 }
 
 type StorageLeaderElection struct {
 	Storage store.Store
 	Key     string
+	TTL     time.Duration
 }
 
-func (le *StorageLeaderElection) OnLeader(ctx context.Context, ttl time.Duration, onLeaderElected OnLeaderElected) error {
-	if ttl < 10*time.Second {
-		ttl = 10 * time.Second
-	}
+func (le *StorageLeaderElection) OnLeader(ctx context.Context, onLeaderElected OnLeaderElected) error {
 	lock := &StorageLeaderElectionLock{
-		LeaseDuration:   ttl,
-		RetryPeriod:     ttl / 2,
+		LeaseDuration:   le.TTL,
+		RetryPeriod:     le.TTL / 2,
 		RenewDeadline:   10 * time.Second,
 		OnLeaderElected: onLeaderElected,
 		ReleaseOnCancel: true,
 		Name:            le.Key,
 		Storage:         le.Storage,
 	}
-	return lock.run(ctx)
+	if err := lock.run(ctx); err != nil {
+		return fmt.Errorf("leader election failed: %w", err)
+	}
+	return nil
 }
 
 type StorageLeaderElectionLock struct {
@@ -88,7 +96,7 @@ func (le *StorageLeaderElectionLock) run(ctx context.Context) error {
 	defer cancel()
 	go func() {
 		if err := le.OnLeaderElected(ctx); err != nil {
-			klog.Errorf("error running OnLeaderElected: %v", err)
+			log.FromContext(ctx).Error(err, "OnLeaderElected failed")
 			cancel()
 		}
 	}()
