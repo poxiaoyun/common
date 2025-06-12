@@ -3,11 +3,9 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 	"xiaoshiai.cn/common/log"
-	"xiaoshiai.cn/common/retry"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -64,11 +62,9 @@ func (c *ControllerManager) Run(ctx context.Context) error {
 	log := log.FromContext(ctx)
 	if c.LedaerElection != nil {
 		log.Info("controller manager run with leader election")
-		return retry.Fixed(ctx, 10*time.Second, func(ctx context.Context) error {
-			return c.LedaerElection.OnLeader(ctx, 0, func(ctx context.Context) error {
-				log.Info("controller manager run on leader elected")
-				return c.run(ctx)
-			})
+		return c.LedaerElection.OnLeader(ctx, 0, func(ctx context.Context) error {
+			log.Info("controller manager run on leader elected")
+			return c.run(ctx)
 		})
 	} else {
 		log.Info("controller manager run without leader election")
