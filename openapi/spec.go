@@ -3,12 +3,15 @@ package openapi
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/go-openapi/spec"
 	"github.com/go-openapi/swag"
 	"xiaoshiai.cn/common/collections"
 )
+
+const XOrder = "x-order"
 
 type Schema struct {
 	SchemaProps `json:",inline"`
@@ -18,6 +21,9 @@ type Schema struct {
 }
 
 func (s Schema) GetExtension(name string) any {
+	if s.Extensions == nil {
+		return nil
+	}
 	return s.Extensions[name]
 }
 
@@ -86,15 +92,11 @@ func (s Schema) MarshalJSON() ([]byte, error) {
 }
 
 func (s *Schema) UnmarshalJSON(data []byte) error {
-	props := struct {
-		SchemaProps `json:",inline"`
-	}{}
+	props := SchemaProps{}
 	if err := json.Unmarshal(data, &props); err != nil {
 		return err
 	}
-	sch := Schema{
-		SchemaProps: props.SchemaProps,
-	}
+	sch := Schema{SchemaProps: props}
 	dict := map[string]any{}
 	if err := json.Unmarshal(data, &dict); err != nil {
 		return err
@@ -131,7 +133,35 @@ func (s *Schema) UnmarshalJSON(data []byte) error {
 }
 
 // SchemaProperties is a map representing the properties of a Schema object.
-type SchemaProperties = collections.OrderedMap[string, Schema]
+type SchemaProperties collections.OrderedMap[string, Schema]
+
+func (s SchemaProperties) MarshalJSON() ([]byte, error) {
+	return json.Marshal(collections.OrderedMap[string, Schema](s))
+}
+
+func (s *SchemaProperties) UnmarshalJSON(data []byte) error {
+	var props collections.OrderedMap[string, Schema]
+	if err := json.Unmarshal(data, &props); err != nil {
+		return err
+	}
+	// must use stable sort to ensure the order of properties
+	slices.SortStableFunc(props, func(a, b collections.OrderedMapEntry[string, Schema]) int {
+		aOrder, _ := a.Value.GetExtension(XOrder).(float64)
+		bOrder, _ := b.Value.GetExtension(XOrder).(float64)
+		return CompareFloat(aOrder, bOrder)
+	})
+	*s = SchemaProperties(props)
+	return nil
+}
+
+func CompareFloat[T float64](a, b T) int {
+	if a < b {
+		return -1
+	} else if a > b {
+		return 1
+	}
+	return 0
+}
 
 // SchemaOrArray represents a value that can either be a Schema
 // or an array of Schema. Mainly here for serialization purposes

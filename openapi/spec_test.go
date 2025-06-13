@@ -13,7 +13,7 @@ func TestSchema_UnmarshalJSON(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			data: `{"type":"object","properties":{"property1":{"type":"string"},"property2":{"type":"integer"}}}`,
+			data: `{"type":"object","properties":{"property1":{"type":"string"},"property0":{"type":"integer"}}}`,
 			name: "valid object",
 			want: &Schema{
 				SchemaProps: SchemaProps{
@@ -23,7 +23,7 @@ func TestSchema_UnmarshalJSON(t *testing.T) {
 							Value: Schema{SchemaProps: SchemaProps{Type: []string{"string"}}},
 						},
 						{
-							Key:   "property2",
+							Key:   "property0",
 							Value: Schema{SchemaProps: SchemaProps{Type: []string{"integer"}}},
 						},
 					},
