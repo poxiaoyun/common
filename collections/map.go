@@ -27,12 +27,15 @@ func (a *Any) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, []byte("null")) {
 		a.List = nil
 		a.Dict = nil
+		a.Value = nil
 		return nil
 	}
 	if data[0] == '[' {
+		a.List = []Any{}
 		return json.Unmarshal(data, &a.List)
 	}
 	if data[0] == '{' {
+		a.Dict = OrderedMap[string, Any]{}
 		return json.Unmarshal(data, &a.Dict)
 	}
 	return json.Unmarshal(data, &a.Value)
@@ -136,7 +139,8 @@ func (m *OrderedMap[K, V]) UnmarshalJSON(data []byte) error {
 	if tok != json.Delim('{') {
 		return &json.UnmarshalTypeError{Value: "object", Type: reflect.TypeOf(m)}
 	}
-	var entries []OrderedMapEntry[K, V]
+	// must not nil slice, non-nil slice is not a nil map
+	entries := []OrderedMapEntry[K, V]{}
 	for dec.More() {
 		// Read key
 		tok, err := dec.Token()
