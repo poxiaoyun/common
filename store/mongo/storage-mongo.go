@@ -35,18 +35,18 @@ type MongoDBOptions struct {
 	Direct     bool   `json:"direct,omitempty"`
 }
 
-func NewDefaultMongoOptions() *MongoDBOptions {
+func NewDefaultMongoOptions(dbname string) *MongoDBOptions {
 	return &MongoDBOptions{
 		Address:    "localhost:27017",
 		Username:   "admin",
 		Password:   "",
-		Database:   "default",
+		Database:   dbname,
 		ReplicaSet: "",
 		Direct:     false,
 	}
 }
 
-var _ store.Store = &MongoStorage{}
+var _ store.TransactionStore = &MongoStorage{}
 
 var GlobalBsonRegistry = bson.NewRegistry()
 
@@ -210,6 +210,19 @@ func (m *MongoStorageCore) initCollections(ctx context.Context) error {
 				Options: mongooptions.Index().SetName(strings.Join(uniq, "_")).SetUnique(true),
 			})
 		}
+		// partial indexes
+		for _, nulluniq := range defination.NullableUniques {
+			// unique index is under scopes
+			nulluniq = append(nulluniq, scopesKeys...)
+			indexes = append(indexes, mongo.IndexModel{
+				Keys: listToBsonD(nulluniq),
+				Options: mongooptions.
+					Index().
+					SetName(strings.Join(nulluniq, "_")).
+					SetUnique(true).
+					SetPartialFilterExpression(PartialFilterExpression(nulluniq)),
+			})
+		}
 		// normal indexes
 		for _, index := range defination.Indexes {
 			// indexes is under scopes
@@ -234,6 +247,14 @@ func (m *MongoStorageCore) initCollections(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func PartialFilterExpression(fields []string) bson.M {
+	expression := bson.M{}
+	for _, field := range fields {
+		expression[field] = bson.M{"$exists": true, "$ne": nil}
+	}
+	return bson.M{"$or": []bson.M{expression, {}}}
 }
 
 var commonFindOneAndUpdateOptions = mongooptions.FindOneAndUpdate().SetReturnDocument(mongooptions.After)

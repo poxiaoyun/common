@@ -15,10 +15,12 @@ import (
 type UnionFields []string
 
 type ObjectDefination struct {
-	Uniques   []UnionFields
-	Indexes   []UnionFields
-	ScopeKeys []string
-	Schema    *spec.Schema
+	Uniques []UnionFields
+	// NullableUniques are unique fields that can be null
+	NullableUniques []UnionFields
+	Indexes         []UnionFields
+	ScopeKeys       []string
+	Schema          *spec.Schema
 }
 
 var GlobalObjectsScheme = NewObjectScheme()

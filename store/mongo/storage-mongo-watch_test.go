@@ -15,7 +15,7 @@ type Message struct {
 func TestMongoStorage_Watch(t *testing.T) {
 	ctx := context.Background()
 
-	opt := NewDefaultMongoOptions()
+	opt := NewDefaultMongoOptions("")
 	opt.Address = "bob-mongodb-headless.bob:27017"
 	opt.Database = "bob"
 	opt.Username = "root"

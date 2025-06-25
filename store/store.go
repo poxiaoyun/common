@@ -391,7 +391,7 @@ func WithTransactionMaxRetries(retries int) TransactionOption {
 
 type TransactionStore interface {
 	Store
-	Transcation(ctx context.Context, fn func(ctx context.Context, store Store) error, opts ...TransactionOption) error
+	Transaction(ctx context.Context, fn func(ctx context.Context, store Store) error, opts ...TransactionOption) error
 }
 
 // AutoIncrementID is a type for auto increment id

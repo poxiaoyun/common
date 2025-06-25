@@ -8,7 +8,7 @@ import (
 	"xiaoshiai.cn/common/store"
 )
 
-func (s *MongoStorage) Transcation(ctx context.Context,
+func (s *MongoStorage) Transaction(ctx context.Context,
 	fn func(ctx context.Context, store store.Store) error,
 	opts ...store.TransactionOption,
 ) error {
