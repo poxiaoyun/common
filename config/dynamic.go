@@ -3,29 +3,38 @@ package config
 import (
 	"context"
 
-	"xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/controller"
 	"xiaoshiai.cn/common/store"
 )
 
 type DynamicConfig interface {
-	// Get get the value of the key.
-	// if the key is not exist, return an empty string.
+	Set(ctx context.Context, key string, val string) error
 	Get(ctx context.Context, key string) (string, error)
-	// Set set the value of the key.
-	Set(ctx context.Context, key, value string) error
-
-	// AutoUpdate will update the value passed in config object when the config changed.
-	// it use the key to watch the config change event.
-	// default using json to marshal the config object.
-	AutoUpdate(ctx context.Context, key string, config any) error
+	List(ctx context.Context) (map[string]string, error)
+	Watch(ctx context.Context, onChanged func(ctx context.Context, key string, val string)) error
 }
 
-func NewStoreDynamicConfig(store store.Store) DynamicConfig {
-	return &StoreDynamicConfig{store: store}
+type DynamicConfigOptions struct {
+	// Server is the server address for the dynamic configuration service.
+	Server string `json:"server" description:"Server address for the dynamic configuration service, e.g., 'http://localhost:8080'"`
+	// Token is the authentication token for accessing the dynamic configuration service.
+	Token string `json:"token" description:"Authentication token for the dynamic configuration service, used for secure access"`
+	// Component is the name of the component that this config belongs to.
+	// It is used to distinguish configs for different components in the same configuration store.
+	Component string `json:"component" description:"Name of the component that this config belongs to, used for distinguishing configs in the same store"`
 }
 
-type StoreDynamicConfig struct {
-	store store.Store
+func NewDefaultDynamicConfigOptions(component string) *DynamicConfigOptions {
+	return &DynamicConfigOptions{
+		Server:    "http://config-server:8080",
+		Token:     "",
+		Component: component,
+	}
+}
+
+func NewStoreDynamicConfig(storage store.Store, options *DynamicConfigOptions) DynamicConfig {
+	storage = storage.Scope(store.Scope{Resource: "configs", Name: options.Component})
+	return &StoreDynamicConfig{Storage: storage}
 }
 
 type Setting struct {
@@ -33,35 +42,59 @@ type Setting struct {
 	Value            string `json:"value"`
 }
 
-// AutoUpdate implements DynamicConfig.
-func (s *StoreDynamicConfig) AutoUpdate(ctx context.Context, key string, config any) error {
-	if _, err := store.EnforcePtr(config); err != nil {
-		return err
-	}
-	return errors.NewNotImplemented("auto update is not implemented")
+type StoreDynamicConfig struct {
+	Storage store.Store
 }
 
-// Get implements DynamicConfig.
+// List implements DynamicConfigUpdater.
+func (s *StoreDynamicConfig) List(ctx context.Context) (map[string]string, error) {
+	settings := &store.List[Setting]{}
+	if err := s.Storage.List(ctx, settings); err != nil {
+		return nil, store.IgnoreNotFound(err)
+	}
+	result := make(map[string]string, len(settings.Items))
+	for _, setting := range settings.Items {
+		result[setting.Name] = setting.Value
+	}
+	return result, nil
+}
+
+// Get implements DynamicConfigUpdater.
 func (s *StoreDynamicConfig) Get(ctx context.Context, key string) (string, error) {
 	setting := &Setting{}
-	if err := s.store.Get(ctx, key, setting); err != nil {
-		if errors.IsNotFound(err) {
-			return "", nil
-		}
-		return "", err
+	if err := s.Storage.Get(ctx, key, setting); err != nil {
+		return "", store.IgnoreNotFound(err)
 	}
 	return setting.Value, nil
 }
 
-// Set implements DynamicConfig.
-func (s *StoreDynamicConfig) Set(ctx context.Context, key string, value string) error {
+// Set implements DynamicConfigUpdater.
+func (s *StoreDynamicConfig) Set(ctx context.Context, key string, val string) error {
 	setting := &Setting{
 		ObjectMeta: store.ObjectMeta{Name: key},
+		Value:      val,
 	}
-	return store.CreateOrUpdate(ctx, s.store, setting, func() error {
-		setting.Value = value
+	return store.CreateOrUpdate(ctx, s.Storage, setting, func() error {
+		setting.Value = val
 		return nil
 	})
 }
 
-var _ DynamicConfig = &StoreDynamicConfig{}
+// Watch implements DynamicConfigUpdater.
+func (s *StoreDynamicConfig) Watch(ctx context.Context, onChanged func(ctx context.Context, key string, val string)) error {
+	handler := func(ctx context.Context, kind store.WatchEventType, obj *Setting) error {
+		switch kind {
+		case store.WatchEventCreate, store.WatchEventUpdate:
+			if obj == nil {
+				return nil
+			}
+			onChanged(ctx, obj.Name, obj.Value)
+		case store.WatchEventDelete:
+			onChanged(ctx, obj.Name, "")
+		}
+		return nil
+	}
+	return controller.RunTypedListWatchContext(ctx, s.Storage,
+		controller.EventHandlerFunc[*Setting](handler),
+		store.WithSendInitialEvents())
+}
