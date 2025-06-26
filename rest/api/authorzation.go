@@ -10,12 +10,12 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-type Decision int
+type Decision string
 
 const (
-	DecisionNoOpinion Decision = iota
-	DecisionDeny
-	DecisionAllow
+	DecisionNoOpinion Decision = "NoOpinion"
+	DecisionDeny      Decision = "Deny"
+	DecisionAllow     Decision = "Allow"
 )
 
 var DecisionDenyStatusNotFoundMessage = "not found"
