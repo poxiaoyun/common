@@ -9,35 +9,92 @@ import (
 
 	"github.com/gorilla/websocket"
 	"xiaoshiai.cn/common/log"
+	libtls "xiaoshiai.cn/common/tls"
 )
 
+type Config struct {
+	Server                string `json:"server,omitempty"`
+	ProxyURL              string `json:"proxyURL,omitempty"`
+	Token                 string `json:"token,omitempty"`
+	Username              string `json:"username,omitempty"`
+	Password              string `json:"password,omitempty"`
+	CertFile              string `json:"certFile,omitempty"`
+	KeyFile               string `json:"keyFile,omitempty"`
+	CAFile                string `json:"caFile,omitempty"`
+	InsecureSkipTLSVerify bool   `json:"insecureSkipTLSVerify,omitempty"`
+}
+
+func (c *Config) ToClientConfig(ctx context.Context) (*ClientConfig, error) {
+	serverURL, err := url.Parse(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	httptransport := NewDefaultHTTPTransport()
+	// tls
+	tlsconfig, err := libtls.NewDynamicTLSConfig(ctx, &libtls.DynamicTLSConfigOptions{
+		CertFile: c.CertFile, KeyFile: c.KeyFile, CAFile: c.CAFile,
+	})
+	if err != nil {
+		return nil, err
+	}
+	httptransport.TLSClientConfig = tlsconfig
+	// proxy
+	if c.ProxyURL != "" {
+		proxyURL, err := url.Parse(c.ProxyURL)
+		if err != nil {
+			return nil, err
+		}
+		httptransport.Proxy = http.ProxyURL(proxyURL)
+	}
+	tp := http.RoundTripper(httptransport)
+	if c.Token != "" {
+		tp = NewBearerTokenRoundTripper(c.Token, tp)
+	}
+	if c.Username != "" && c.Password != "" {
+		tp = NewBasicAuthRoundTripper(c.Username, c.Password, tp)
+	}
+	return &ClientConfig{Server: serverURL, RoundTripper: tp}, nil
+}
+
 type ClientConfig struct {
-	Server       url.URL
+	Server       *url.URL
 	RoundTripper http.RoundTripper
 	DialContext  func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 type Client struct {
 	Client       *http.Client
-	Server       string
+	Server       *url.URL
 	RoundTripper http.RoundTripper
 	OnRequest    func(req *http.Request) error
 	OnResponse   func(req *http.Request, resp *http.Response) error
 	Debug        bool
 }
 
-func NewClientFromConfig(cfg *ClientConfig) *Client {
+func NewClientFromConfig(ctx context.Context, cfg *Config) (*Client, error) {
+	clientConfig, err := cfg.ToClientConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return NewClientFromClientConfig(clientConfig), nil
+}
+
+func NewClientFromClientConfig(cfg *ClientConfig) *Client {
 	var transport http.RoundTripper
 	if cfg.DialContext != nil {
 		transport = &http.Transport{DialContext: cfg.DialContext}
 	} else {
 		transport = cfg.RoundTripper
 	}
-	return &Client{RoundTripper: transport, Server: cfg.Server.String()}
+	return &Client{RoundTripper: transport, Server: cfg.Server}
 }
 
-func NewClient(server string) *Client {
-	return &Client{Server: server}
+func NewClient(server string) (*Client, error) {
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+	return NewClientFromClientConfig(&ClientConfig{Server: serverURL}), nil
 }
 
 func (c *Client) Get(path string) *Builder {
@@ -90,7 +147,7 @@ type WebSocketOptions struct {
 
 func GetWebSocketOptions(ctx context.Context, cliconfig *ClientConfig, reqpath string, options WebSocketOptions) error {
 	log := log.FromContext(ctx).WithValues("path", reqpath, "queries", options.Queries)
-	u := MergeURL(cliconfig.Server, reqpath, options.Queries)
+	u := MergeURL(*cliconfig.Server, reqpath, options.Queries)
 	switch u.Scheme {
 	case "http":
 		u.Scheme = "ws"

@@ -53,7 +53,7 @@ func (r *Builder) RoundTripper(tp http.RoundTripper) *Builder {
 	return r
 }
 
-func (r *Builder) BaseAddr(addr string) *Builder {
+func (r *Builder) BaseAddr(addr *url.URL) *Builder {
 	r.R.BaseAddr = addr
 	return r
 }

@@ -1,18 +1,24 @@
-package httpclient
+package proxy
 
 import (
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"path/filepath"
 	"strings"
 
-	libproxy "xiaoshiai.cn/common/rest/proxy"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	liberrors "xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/httpclient"
+	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/rest/api"
 )
 
 type Proxy struct {
 	// ClientConfig is the client configuration to use for the proxy
-	ClientConfig *ClientConfig
+	ClientConfig *httpclient.ClientConfig
 	// RemovePrefix is the prefix to remove from the request path
 	// it only useful when request proxy via a kubernetes service proxy,
 	// it add a useless prefix /v1/namespaces/{namespace}/services/{service}:{port}/proxy/
@@ -34,7 +40,7 @@ func (p Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Path = requestpath
-			pr.SetURL(&p.ClientConfig.Server)
+			pr.SetURL(p.ClientConfig.Server)
 		},
 		Transport: p.ClientConfig.RoundTripper,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -53,10 +59,29 @@ func (p Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// /proxy is our front end proxy path
 		prefix = filepath.Join(p.ProxyPrefix, prefix)
 	}
-	rp.Transport = &libproxy.Transport{
+	rp.Transport = &Transport{
 		PathPrepend:  prefix,
 		PathRemove:   p.RemovePrefix,
 		RoundTripper: rp.Transport,
 	}
 	rp.ServeHTTP(w, req)
+}
+
+type ErrorResponser struct{}
+
+func (ErrorResponser) Error(w http.ResponseWriter, req *http.Request, err error) {
+	dnse := &net.DNSError{}
+	if errors.As(err, &dnse) {
+		err = liberrors.NewServiceUnavailable(err.Error())
+	}
+	statuserr := &apierrors.StatusError{}
+	if errors.As(err, &statuserr) {
+		api.Error(w, liberrors.NewCustomError(
+			int(statuserr.ErrStatus.Code),
+			liberrors.StatusReason(statuserr.ErrStatus.Reason),
+			statuserr.ErrStatus.Message))
+		return
+	}
+	api.Error(w, err)
+	log.Error(err, "proxy error", "url", req.URL.String())
 }

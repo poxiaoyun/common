@@ -24,7 +24,7 @@ type Request struct {
 	Err          error
 	Client       *http.Client
 	RoundTripper http.RoundTripper
-	BaseAddr     string
+	BaseAddr     *url.URL
 	Method       string
 	Path         string
 	Queries      url.Values
@@ -45,14 +45,10 @@ func BuildRequest(ctx context.Context, r Request) (*http.Request, error) {
 		return nil, r.Err
 	}
 	serveraddr := r.BaseAddr
-	if serveraddr == "" {
+	if serveraddr == nil {
 		return nil, errors.NewBadRequest("empty base address on http request")
 	}
-	serveru, err := url.Parse(serveraddr)
-	if err != nil {
-		return nil, err
-	}
-	u := MergeURL(*serveru, r.Path, r.Queries)
+	u := MergeURL(*serveraddr, r.Path, r.Queries)
 
 	req, err := http.NewRequestWithContext(ctx, r.Method, u.String(), r.Body)
 	if err != nil {

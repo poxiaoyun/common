@@ -18,7 +18,7 @@ import (
 
 var _ store.Store = &Client{}
 
-func NewRemoteStore(server string) *Client {
+func NewRemoteStore(server *url.URL) *Client {
 	return &Client{cli: &httpclient.Client{
 		Server: server,
 		OnResponse: func(req *http.Request, resp *http.Response) error {

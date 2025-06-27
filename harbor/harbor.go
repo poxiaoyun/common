@@ -34,10 +34,11 @@ func NewClient(o *Options) (*Client, error) {
 		addr = "https://" + addr
 	}
 	addr = strings.TrimRight(addr, "/") + APIPREFIX
-	c := &Client{
-		cli:     &httpclient.Client{Server: addr},
-		options: o,
+	cli, err := httpclient.NewClient(addr)
+	if err != nil {
+		return nil, fmt.Errorf("error in harbor when create client %w", err)
 	}
+	c := &Client{cli: cli, options: o}
 	c.cli.OnRequest = c.onRequest
 	c.cli.OnResponse = c.onResponse
 	return c, nil
