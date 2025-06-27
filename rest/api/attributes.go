@@ -12,6 +12,8 @@ type AttrbuteResource struct {
 }
 
 type Attributes struct {
+	// Service is the name of the service that the request is targeting.
+	Service   string             `json:"service,omitempty"`
 	Action    string             `json:"action,omitempty"`
 	Resources []AttrbuteResource `json:"resources,omitempty"`
 	Path      string             `json:"path,omitempty"`

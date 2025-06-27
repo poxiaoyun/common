@@ -69,7 +69,7 @@ func (h MethodsHandler) NotAllowed(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h MethodsHandler) selectHandler(r *http.Request) http.Handler {
-	if h == nil || len(h) == 0 {
+	if len(h) == 0 {
 		return nil
 	}
 	for _, candidate := range []string{r.Method, ""} {
@@ -83,11 +83,15 @@ func (h MethodsHandler) selectHandler(r *http.Request) http.Handler {
 type Mux struct {
 	NotFound         http.Handler
 	MethodNotAllowed http.Handler
-	Tree             matcher.Node[MethodsHandler]
+	HostsTree        map[string]*matcher.Node[MethodsHandler]
+	Tree             *matcher.Node[MethodsHandler]
 }
 
 func NewMux() *Mux {
-	return &Mux{}
+	return &Mux{
+		HostsTree: make(map[string]*matcher.Node[MethodsHandler]),
+		Tree:      &matcher.Node[MethodsHandler]{},
+	}
 }
 
 func (m *Mux) Handle(method, pattern string, handler http.Handler) error {
@@ -115,7 +119,29 @@ func (m *Mux) SetMethodNotAllowed(handler http.Handler) {
 
 func (m *Mux) Register(route *Route) error {
 	method, pattern := route.Method, route.Path
-	sections, node, err := m.Tree.Get(pattern)
+	if len(route.Hosts) > 0 {
+		for _, host := range route.Hosts {
+			tree, ok := m.HostsTree[host]
+			if !ok {
+				tree = &matcher.Node[MethodsHandler]{}
+				m.HostsTree[host] = tree
+			}
+			if err := m.register(route, tree); err != nil {
+				return fmt.Errorf("register route %s %s for host %s: %w", method, pattern, host, err)
+			}
+		}
+		return nil
+	} else {
+		if err := m.register(route, m.Tree); err != nil {
+			return fmt.Errorf("register route %s %s: %w", method, pattern, err)
+		}
+		return nil
+	}
+}
+
+func (m *Mux) register(route *Route, tree *matcher.Node[MethodsHandler]) error {
+	method, pattern := route.Method, route.Path
+	sections, node, err := tree.Get(pattern)
 	if err != nil {
 		return err
 	}

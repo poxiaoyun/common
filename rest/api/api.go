@@ -58,10 +58,8 @@ func (m *API) NotFound(handler http.Handler) *API {
 
 func (m *API) Group(groups ...Group) *API {
 	for _, group := range groups {
-		for _, routes := range group.Build() {
-			for _, route := range routes {
-				m.Route(route)
-			}
+		for _, route := range group.Build() {
+			m.Route(route)
 		}
 	}
 	return m

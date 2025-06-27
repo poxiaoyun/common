@@ -25,6 +25,7 @@ type Route struct {
 	OperationName  string
 	Path           string
 	Method         string
+	Hosts          []string // request must match this host
 	IsDeprecated   bool
 	Handler        http.Handler
 	Filters        Filters
@@ -143,6 +144,11 @@ func (n Route) ResponseStatus(status int, body any, desc ...string) Route {
 	return n
 }
 
+func (n Route) Host(host ...string) Route {
+	n.Hosts = append(n.Hosts, host...)
+	return n
+}
+
 func (n Route) Property(k string, v any) Route {
 	if n.Properties == nil {
 		n.Properties = make(map[string]any)
@@ -246,6 +252,7 @@ type Group struct {
 	Path        string
 	IsDeprcated bool
 	Filters     Filters
+	Hosts       []string // request must match this host
 	Tags        []string
 	Params      []Param // common params apply to all routes in the group
 	Routes      []Route
@@ -260,6 +267,11 @@ func NewGroup(path string) Group {
 
 func (g Group) Tag(name string) Group {
 	g.Tags = append(g.Tags, name)
+	return g
+}
+
+func (g Group) Host(host ...string) Group {
+	g.Hosts = append(g.Hosts, host...)
 	return g
 }
 
@@ -300,21 +312,21 @@ func (g Group) Filter(filters ...Filter) Group {
 	return g
 }
 
-func (t Group) Build() map[string]map[string]Route {
-	// path -> method -> route
-	items := map[string]map[string]Route{}
-	buildRoutes(items, Group{}, t)
-	return items
+func (t Group) Build() []Route {
+	return buildRoutes(Group{}, t)
 }
 
-func buildRoutes(items map[string]map[string]Route, merged Group, group Group) {
+func buildRoutes(merged Group, group Group) []Route {
 	merged.Path = path.Join(merged.Path, group.Path)
 	merged.Params = append(merged.Params, group.Params...)
 	merged.Tags = append(merged.Tags, group.Tags...)
 	merged.Consumes = append(merged.Consumes, group.Consumes...)
 	merged.Produces = append(merged.Produces, group.Produces...)
 	merged.Filters = append(merged.Filters, group.Filters...)
+	merged.IsDeprcated = merged.IsDeprcated || group.IsDeprcated
+	merged.Hosts = append(merged.Hosts, group.Hosts...)
 
+	var ret []Route
 	for _, route := range group.Routes {
 		route.Tags = append(merged.Tags, route.Tags...)
 		route.Params = append(merged.Params, route.Params...)
@@ -322,17 +334,12 @@ func buildRoutes(items map[string]map[string]Route, merged Group, group Group) {
 		route.Consumes = append(group.Consumes, route.Consumes...)
 		route.Produces = append(group.Produces, route.Produces...)
 		route.Filters = append(merged.Filters, route.Filters...)
-		if !route.IsDeprecated && group.IsDeprcated {
-			route.IsDeprecated = true
-		}
-		pathmethods, ok := items[route.Path]
-		if !ok {
-			pathmethods = map[string]Route{}
-			items[route.Path] = pathmethods
-		}
-		pathmethods[route.Method] = route
+		route.Hosts = append(merged.Hosts, route.Hosts...)
+		route.IsDeprecated = route.IsDeprecated || group.IsDeprcated
+		ret = append(ret, route)
 	}
 	for _, group := range group.SubGroups {
-		buildRoutes(items, merged, group)
+		ret = append(ret, buildRoutes(merged, group)...)
 	}
+	return ret
 }

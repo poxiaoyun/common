@@ -143,7 +143,7 @@ type AuditOptions struct {
 func NewDefaultAuditOptions() *AuditOptions {
 	return &AuditOptions{
 		RecordMethods:             []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
-		RecordRequestContentTypes: []string{"application/json", "application/xml", "application/x-www-form-urlencoded"},
+		RecordRequestContentTypes: []string{"application/json", "application/yaml", "application/xml", "application/x-www-form-urlencoded"},
 		RecordRequestBody:         true,
 		RecordResponseBody:        true,
 		MaxRecordBodySize:         1 * MB,
