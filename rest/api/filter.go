@@ -110,6 +110,8 @@ func NoopFilter() Filter {
 func LoggingFilter(log log.Logger) Filter {
 	return FilterFunc(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		start := time.Now()
+		// simply set the start time in the context, it init the filter context
+		// so that we can use it in other filters
 		r = r.WithContext(SetContextValue(r.Context(), "start-time", start))
 		next.ServeHTTP(w, r)
 		reqpath := r.URL.Path
@@ -119,7 +121,7 @@ func LoggingFilter(log log.Logger) Filter {
 		}
 		auditlog := AuditLogFromContext(r.Context())
 		if auditlog != nil && auditlog.Response.StatusCode != 0 {
-			log.Info(reqpath, "method", r.Method, "ip", auditlog.Request.ClientIP, "status", auditlog.Response.StatusCode, "duration", time.Since(start).String())
+			log.Info(reqpath, "method", r.Method, "service", auditlog.Service, "ip", auditlog.Request.ClientIP, "status", auditlog.Response.StatusCode, "duration", time.Since(start).String())
 		} else {
 			log.Info(reqpath, "method", r.Method, "remote", r.RemoteAddr, "duration", time.Since(start).String())
 		}

@@ -84,18 +84,18 @@ type Mux struct {
 	NotFound         http.Handler
 	MethodNotAllowed http.Handler
 	HostsTree        map[string]*matcher.Node[MethodsHandler]
-	Tree             *matcher.Node[MethodsHandler]
+	GlobalTree       *matcher.Node[MethodsHandler]
 }
 
 func NewMux() *Mux {
 	return &Mux{
-		HostsTree: make(map[string]*matcher.Node[MethodsHandler]),
-		Tree:      &matcher.Node[MethodsHandler]{},
+		HostsTree:  make(map[string]*matcher.Node[MethodsHandler]),
+		GlobalTree: &matcher.Node[MethodsHandler]{},
 	}
 }
 
 func (m *Mux) Handle(method, pattern string, handler http.Handler) error {
-	_, node, err := m.Tree.Get(pattern)
+	_, node, err := m.GlobalTree.Get(pattern)
 	if err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func (m *Mux) Register(route *Route) error {
 		}
 		return nil
 	} else {
-		if err := m.register(route, m.Tree); err != nil {
+		if err := m.register(route, m.GlobalTree); err != nil {
 			return fmt.Errorf("register route %s %s: %w", method, pattern, err)
 		}
 		return nil
@@ -204,7 +204,20 @@ func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawPath != "" {
 		matchpath = r.URL.RawPath
 	}
-	node, vars := m.Tree.Match(matchpath, DefaultMatchCandidateFunc)
+	host := r.Host
+	if idx := strings.IndexRune(host, ':'); idx != -1 {
+		host = host[:idx] // remove port if present
+	}
+	// select the tree based on host
+	var tree *matcher.Node[MethodsHandler]
+	if hosttree, ok := m.HostsTree[host]; ok {
+		// match with host tree first
+		tree = hosttree
+	} else {
+		// if no host tree, use the global tree
+		tree = m.GlobalTree
+	}
+	node, vars := tree.Match(matchpath, DefaultMatchCandidateFunc)
 	if node == nil || node.Value == nil {
 		if m.NotFound == nil {
 			http.NotFound(w, r)

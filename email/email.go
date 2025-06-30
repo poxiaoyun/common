@@ -6,11 +6,12 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"net"
 	"net/smtp"
 	"net/url"
 	"strings"
 	"time"
+
+	libnet "xiaoshiai.cn/common/net"
 )
 
 type EmailAddress struct {
@@ -120,10 +121,7 @@ func SendMail(ctx context.Context, smtpOptions SMTPOptions, email *Email) error 
 			return err
 		}
 	}
-	host, _, err := net.SplitHostPort(u.Host)
-	if err != nil {
-		return err
-	}
+	host, _ := libnet.SplitHostPort(u.Host)
 	if smtpOptions.Username != "" && smtpOptions.Password != "" {
 		auth := smtp.PlainAuth(smtpOptions.Identity, smtpOptions.Username, smtpOptions.Password, host)
 		if ok, _ := cli.Extension("AUTH"); !ok {

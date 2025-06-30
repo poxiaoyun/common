@@ -28,7 +28,7 @@ func NewRequestHeaderAuthenticator(opts *RequestHeaderAuthenticatorOptions) *Req
 	return &RequestHeaderAuthenticator{Options: opts}
 }
 
-func (a *RequestHeaderAuthenticator) Authenticate(r *http.Request) (*AuthenticateInfo, error) {
+func (a *RequestHeaderAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
 	header := r.Header
 	name := header.Get(a.Options.NameHeader)
 	if name == "" {

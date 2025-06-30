@@ -3,6 +3,8 @@ package api
 import (
 	"net"
 	"net/http"
+
+	libnet "xiaoshiai.cn/common/net"
 )
 
 func NewAllowCIDRAuthorizer(cidrs []string, defaultDec Decision) RequestAuthorizer {
@@ -15,7 +17,7 @@ func NewAllowCIDRAuthorizer(cidrs []string, defaultDec Decision) RequestAuthoriz
 }
 
 func RequestSourceIPInCIDR(cidrs []string, r *http.Request) bool {
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	ip, _ := libnet.SplitHostPort(r.RemoteAddr)
 	return InCIDR(ip, cidrs)
 }
 

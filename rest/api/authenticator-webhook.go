@@ -22,6 +22,8 @@ type TokenWebhookAuthenticatorOptions struct {
 
 type TokenAuthenticationRequest struct {
 	Token     string   `json:"token"`
+	Username  string   `json:"username,omitempty"`
+	Password  string   `json:"password,omitempty"`
 	Audiences []string `json:"audiences,omitempty"`
 }
 
@@ -61,6 +63,51 @@ type TokenWebhookAuthenticator struct {
 func (t *TokenWebhookAuthenticator) Authenticate(ctx context.Context, token string) (*AuthenticateInfo, error) {
 	req := &TokenAuthenticationRequest{
 		Token: token,
+	}
+	resp := &TokenAuthenticationResponse{}
+	if err := t.httpclient.Post("").JSON(req).Return(resp).Send(ctx); err != nil {
+		return nil, err
+	}
+	if !resp.Authenticated {
+		return nil, errors.NewUnauthorized(resp.Error)
+	}
+	info := &AuthenticateInfo{
+		User:      resp.UserInfo,
+		Audiences: resp.Audiences,
+	}
+	return info, nil
+}
+
+var _ BasicAuthenticator = &BasicAuthWebhookAuthenticator{}
+
+func NewBasicAuthWebhookAuthenticator(opts *TokenWebhookAuthenticatorOptions) (*BasicAuthWebhookAuthenticator, error) {
+	config := &httpclient.Config{
+		Server:                opts.Server,
+		ProxyURL:              opts.ProxyURL,
+		Token:                 opts.Token,
+		Username:              opts.Username,
+		Password:              opts.Password,
+		CertFile:              opts.CertFile,
+		KeyFile:               opts.KeyFile,
+		CAFile:                opts.CAFile,
+		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
+	}
+	cli, err := httpclient.NewClientFromConfig(context.Background(), config)
+	if err != nil {
+		return nil, err
+	}
+	return &BasicAuthWebhookAuthenticator{httpclient: cli}, nil
+}
+
+type BasicAuthWebhookAuthenticator struct {
+	httpclient *httpclient.Client
+}
+
+// Authenticate implements TokenAuthenticator.
+func (t *BasicAuthWebhookAuthenticator) Authenticate(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
+	req := &TokenAuthenticationRequest{
+		Username: username,
+		Password: password,
 	}
 	resp := &TokenAuthenticationResponse{}
 	if err := t.httpclient.Post("").JSON(req).Return(resp).Send(ctx); err != nil {

@@ -177,7 +177,7 @@ func Test_matcher_Match(t *testing.T) {
 					t.Error(err)
 				}
 			}
-			node, vars := m.Tree.Match(tt.req, DefaultMatchCandidateFunc)
+			node, vars := m.GlobalTree.Match(tt.req, DefaultMatchCandidateFunc)
 			matched := (node != nil && node.Value != nil)
 			if matched != tt.matched {
 				t.Errorf("matcher.Match() matched = %v, want %v", matched, tt.matched)

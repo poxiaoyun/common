@@ -8,6 +8,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"xiaoshiai.cn/common/errors"
 )
 
 type Decision string
@@ -56,7 +57,7 @@ func NewAuthorizationFilter(authorizer Authorizer) Filter {
 		user := AuthenticateFromContext(r.Context()).User
 		decision, message, err := authorizer.Authorize(r.Context(), user, *attributes)
 		if err != nil {
-			return DecisionDeny, "error", err
+			return DecisionDeny, message, errors.NewForbidden("", "", err)
 		}
 		if message == "" {
 			act, res := ShowMessage(attributes)

@@ -132,20 +132,20 @@ func (c *CachedAuditSink) Save(log *AuditLog) error {
 const MB = 1 << 20
 
 type AuditOptions struct {
-	RecordMethods             []string
-	RecordRequestContentTypes []string
-	RecordRequestBody         bool
-	RecordResponseBody        bool
+	RecordStatusMethods       []string // methods to record status code, default is empty, means record all methods
+	RecordBodyContentTypes    []string // content types to record request/response body
+	RecordRequestBodyMethods  []string // methods to record request body
+	RecordResponseBodyMethods []string // methods to record response body
 	MaxRecordBodySize         int
 	WhiteList                 []string // list of paths to exclude from audit, allow wildcard
 }
 
 func NewDefaultAuditOptions() *AuditOptions {
 	return &AuditOptions{
-		RecordMethods:             []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
-		RecordRequestContentTypes: []string{"application/json", "application/yaml", "application/xml", "application/x-www-form-urlencoded"},
-		RecordRequestBody:         true,
-		RecordResponseBody:        true,
+		RecordStatusMethods:       []string{},
+		RecordBodyContentTypes:    []string{"application/json", "application/yaml", "application/xml", "application/x-www-form-urlencoded"},
+		RecordRequestBodyMethods:  []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
+		RecordResponseBodyMethods: []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
 		MaxRecordBodySize:         1 * MB,
 		WhiteList:                 []string{},
 	}
@@ -185,6 +185,7 @@ type AuditExtraMetadata map[string]string
 
 type AuditLog struct {
 	RequestID string `json:"requestID,omitempty"` // request id
+	Service   string `json:"service,omitempty"`   // service name, e.g. "cloud", "iam" etc.
 	// request
 	Request  AuditRequest  `json:"request,omitempty"`
 	Response AuditResponse `json:"response,omitempty"`
@@ -241,7 +242,7 @@ func (a *SimpleAuditor) Process(w http.ResponseWriter, r *http.Request, next htt
 		uid = uuid.NewString()
 		r.Header.Set(RequestIDHeader, uid)
 	}
-	if !slices.Contains(a.Options.RecordMethods, r.Method) {
+	if !matchMethod(r.Method, a.Options.RecordStatusMethods) {
 		next.ServeHTTP(w, r)
 		return
 	}
@@ -260,12 +261,19 @@ func (a *SimpleAuditor) Process(w http.ResponseWriter, r *http.Request, next htt
 		ww = w
 	}
 	// save audit log to context
-	r = r.WithContext(WithAuditLog(r.Context(), auditlog))
+	WithAuditLog(r.Context(), auditlog)
 	next.ServeHTTP(ww, r)
 	a.OnResponse(ww, r, auditlog)
 	if err := a.Sink.Save(auditlog); err != nil {
 		log.FromContext(r.Context()).Error(err, "save audit log")
 	}
+}
+
+func matchMethod(method string, methods []string) bool {
+	if len(methods) == 0 {
+		return true // no method filter, match all methods
+	}
+	return slices.Contains(methods, method)
 }
 
 func (a *SimpleAuditor) OnRequest(w http.ResponseWriter, r *http.Request) (http.ResponseWriter, *AuditLog) {
@@ -280,13 +288,13 @@ func (a *SimpleAuditor) OnRequest(w http.ResponseWriter, r *http.Request) (http.
 		},
 		StartTime: time.Now(),
 	}
-	if a.Options.RecordRequestBody {
-		auditlog.Request.Body = ReadBodySafely(r, a.Options.RecordRequestContentTypes, a.Options.MaxRecordBodySize)
+	if matchMethod(r.Method, a.Options.RecordStatusMethods) {
+		auditlog.Request.Body = ReadBodySafely(r, a.Options.RecordBodyContentTypes, a.Options.MaxRecordBodySize)
 	}
 
 	var responseBodyCache *bytes.Buffer
 	respcachesize := 0
-	if a.Options.RecordResponseBody {
+	if a.Options.MaxRecordBodySize > 0 && matchMethod(r.Method, a.Options.RecordResponseBodyMethods) {
 		respcachesize = a.Options.MaxRecordBodySize
 	}
 	w = httpsnoop.Wrap(w, httpsnoop.Hooks{
@@ -330,6 +338,7 @@ func (a *SimpleAuditor) OnRequest(w http.ResponseWriter, r *http.Request) (http.
 
 func (a *SimpleAuditor) OnResponse(w http.ResponseWriter, r *http.Request, auditlog *AuditLog) {
 	if attr := AttributesFromContext(r.Context()); attr != nil {
+		auditlog.Service = attr.Service
 		auditlog.Action = attr.Action
 		if size := len(attr.Resources); size > 0 {
 			parents, last := attr.Resources[:size-1], attr.Resources[size-1]
@@ -362,7 +371,7 @@ func ExtractClientIP(r *http.Request) string {
 func HttpHeaderToMap(header http.Header) map[string]string {
 	m := make(map[string]string)
 	for k, v := range header {
-		m[k] = strings.Join(v, ",")
+		m[k] = strings.Join(v, ", ")
 	}
 	return m
 }

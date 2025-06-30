@@ -11,8 +11,31 @@ func UnsetCookie(w http.ResponseWriter, name string) {
 	w.Header().Add("Set-Cookie", cookie.String())
 }
 
+func UnsetCookieWithDomain(w http.ResponseWriter, name, domain string, insecure bool) {
+	cookie := &http.Cookie{
+		Name:     name,
+		MaxAge:   -1,        // delete the cookie
+		HttpOnly: true,      // make it HttpOnly for security
+		Secure:   !insecure, // use Secure flag if served over HTTPS
+		Domain:   domain,
+	}
+	SetCookieHeader(w.Header(), cookie)
+}
+
 func SetCookie(w http.ResponseWriter, name, value string, expires time.Time) {
 	SetCookieHeader(w.Header(), &http.Cookie{Name: name, Value: value, Expires: expires})
+}
+
+func SetCookieWithDomain(w http.ResponseWriter, name, value string, expires time.Time, domain string, insecure bool) {
+	cookie := &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Expires:  expires,
+		HttpOnly: true,      // make it HttpOnly for security
+		Secure:   !insecure, // use Secure flag if served over HTTPS
+		Domain:   domain,
+	}
+	SetCookieHeader(w.Header(), cookie)
 }
 
 func GetCookie(r *http.Request, name string) string {
