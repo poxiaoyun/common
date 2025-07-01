@@ -56,9 +56,9 @@ func (s *OpenAPIPlugin) Install(m *API) error {
 		To(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Query().Get("provider") {
 			case "swagger", "":
-				renderHTML(w, swaggerui)
+				RenderHTML(w, swaggerui)
 			case "redoc":
-				renderHTML(w, redocui)
+				RenderHTML(w, redocui)
 			}
 		}),
 	)
@@ -67,11 +67,11 @@ func (s *OpenAPIPlugin) Install(m *API) error {
 
 // OnRoute implements Plugin.
 func (s *OpenAPIPlugin) OnRoute(route *Route) error {
-	addSwaggerOperation(s.Swagger, *route, s.Builder)
+	AddSwaggerOperation(s.Swagger, *route, s.Builder)
 	return nil
 }
 
-func addSwaggerOperation(swagger *spec.Swagger, route Route, builder *openapi.Builder) {
+func AddSwaggerOperation(swagger *spec.Swagger, route Route, builder *openapi.Builder) {
 	operation := buildRouteOperation(route, builder)
 	if swagger.Paths == nil {
 		swagger.Paths = &spec.Paths{}
@@ -281,7 +281,7 @@ func render(specPath string, htmltemplate string) []byte {
 	return buf.Bytes()
 }
 
-func renderHTML(w http.ResponseWriter, html []byte) {
+func RenderHTML(w http.ResponseWriter, html []byte) {
 	w.Header().Set("Content-Type", "text/html")
 	w.Write(html)
 }
