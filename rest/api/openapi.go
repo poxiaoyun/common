@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path"
 	"reflect"
+	"strings"
 
 	"github.com/go-openapi/spec"
 	"xiaoshiai.cn/common/rest/openapi"
@@ -49,7 +50,7 @@ func (s *OpenAPIPlugin) Install(m *API) error {
 		Raw(w, http.StatusOK, s.Swagger, nil)
 	}))
 	// UI
-	swaggerui, redocui := NewSwaggerUI(specpath), NewRedocUI(specpath)
+	swaggerui, redocui, stoplight := NewSwaggerUI(specpath), NewRedocUI(specpath), NewStoplightElementsUI(specpath)
 	m.Route(GET(s.Basepath).
 		Doc("swagger api html").
 		Param(QueryParam("provider", "UI provider").In("swagger", "redoc")).
@@ -59,6 +60,8 @@ func (s *OpenAPIPlugin) Install(m *API) error {
 				RenderHTML(w, swaggerui)
 			case "redoc":
 				RenderHTML(w, redocui)
+			case "stoplight":
+				RenderHTML(w, stoplight)
 			}
 		}),
 	)
@@ -106,7 +109,7 @@ func buildRouteOperation(route Route, builder *openapi.Builder) *spec.Operation 
 	}
 	return &spec.Operation{
 		OperationProps: spec.OperationProps{
-			ID: route.Method + " " + route.Path,
+			ID: operationID(route),
 			Tags: func() []string {
 				if len(route.Tags) > 0 {
 					// only use the last tag
@@ -175,6 +178,16 @@ func buildRouteOperation(route Route, builder *openapi.Builder) *spec.Operation 
 			},
 		},
 	}
+}
+
+func operationID(route Route) string {
+	if route.OperationName != "" {
+		return strings.ReplaceAll(route.OperationName, " ", "_")
+	}
+	if route.Summary != "" {
+		return strings.ReplaceAll(route.Summary, " ", "_")
+	}
+	return strings.ToLower(route.Method) + "_" + route.Path
 }
 
 const (
@@ -262,6 +275,26 @@ const (
 	  </body>
 	</html>
 	`
+	StoplightElementsTemplate = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>Elements in HTML</title>
+    <!-- Embed elements Elements via Web Component -->
+    <script src="https://unpkg.com/@stoplight/elements/web-components.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/@stoplight/elements/styles.min.css">
+  </head>
+  <body>
+
+    <elements-api
+      apiDescriptionUrl="{{ .SpecURL }}"
+      router="hash"
+      layout="sidebar"
+    />
+
+  </body>
+</html>`
 )
 
 func NewSwaggerUI(specPath string) []byte {
@@ -272,6 +305,10 @@ func NewRedocUI(specPath string) []byte {
 	return render(specPath, RedocTemplate)
 }
 
+func NewStoplightElementsUI(specPath string) []byte {
+	return render(specPath, StoplightElementsTemplate)
+}
+
 func render(specPath string, htmltemplate string) []byte {
 	tmpl := template.Must(template.New("ui").Parse(htmltemplate))
 	buf := bytes.NewBuffer(nil)
@@ -279,19 +316,4 @@ func render(specPath string, htmltemplate string) []byte {
 		"SpecURL": specPath,
 	})
 	return buf.Bytes()
-}
-
-func RenderHTML(w http.ResponseWriter, html []byte) {
-	w.Header().Set("Content-Type", "text/html")
-	w.Write(html)
-}
-
-var PageParams = []Param{
-	QueryParam("limit", "size limit").Optional(),
-	QueryParam("size", "size limit").Optional(),
-	QueryParam("page", "page number").Optional(),
-	QueryParam("search", "Search string for searching").Optional(),
-	QueryParam("sort", "Sort string for sorting").In("name", "name-", "time", "time-").Optional(),
-	QueryParam("label-selector", "Selector string for filtering").Optional(),
-	QueryParam("continue", "Continue token for pagination").Optional(),
 }

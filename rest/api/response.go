@@ -112,3 +112,8 @@ func Redirect(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, r.URL.Path+"/"+queryPart, http.StatusMovedPermanently)
 }
+
+func RenderHTML(w http.ResponseWriter, html []byte) {
+	w.Header().Set("Content-Type", "text/html")
+	w.Write(html)
+}

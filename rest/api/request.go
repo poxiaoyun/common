@@ -31,6 +31,16 @@ import (
 	"xiaoshiai.cn/common/errors"
 )
 
+var PageParams = []Param{
+	QueryParam("limit", "size limit").Optional(),
+	QueryParam("size", "size limit").Optional(),
+	QueryParam("page", "page number").Optional(),
+	QueryParam("search", "Search string for searching").Optional(),
+	QueryParam("sort", "Sort string for sorting").In("name", "name-", "time", "time-").Optional(),
+	QueryParam("label-selector", "Selector string for filtering").Optional(),
+	QueryParam("continue", "Continue token for pagination").Optional(),
+}
+
 type PathVar struct {
 	Key   string `json:"key,omitempty"`
 	Value string `json:"value,omitempty"`
