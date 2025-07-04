@@ -47,7 +47,7 @@ type ResourcedObjectReference struct {
 }
 
 func (r ResourcedObjectReference) Equals(other ResourcedObjectReference) bool {
-	return r.UID == r.UID && r.Name == other.Name && r.Resource == other.Resource && ScopesEquals(r.Scopes, other.Scopes)
+	return r.UID == other.UID && r.Name == other.Name && r.Resource == other.Resource && ScopesEquals(r.Scopes, other.Scopes)
 }
 
 func (r ResourcedObjectReference) String() string {
