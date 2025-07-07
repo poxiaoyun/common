@@ -23,6 +23,7 @@ import (
 type Route struct {
 	Summary        string
 	OperationName  string
+	Description    string
 	Path           string
 	Method         string
 	Hosts          []string // request must match this host
@@ -102,11 +103,19 @@ func (n Route) Tag(tags ...string) Route {
 	return n
 }
 
+// Doc sets the summary of the route, which is used in OpenAPI documentation.
 func (n Route) Doc(summary string) Route {
 	n.Summary = summary
 	return n
 }
 
+// Desc sets the description of the route, which is used in OpenAPI documentation.
+func (n Route) Desc(desc string) Route {
+	n.Description = desc
+	return n
+}
+
+// Operation sets the operation name of the route, which is used in OpenAPI documentation.
 func (n Route) Operation(operation string) Route {
 	n.OperationName = operation
 	return n

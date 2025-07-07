@@ -107,6 +107,10 @@ func buildRouteOperation(route Route, builder *openapi.Builder) *spec.Operation 
 	if summary == "" {
 		summary = route.OperationName
 	}
+	desc := route.Description
+	if desc == "" {
+		desc = summary
+	}
 	return &spec.Operation{
 		OperationProps: spec.OperationProps{
 			ID: operationID(route),
@@ -118,7 +122,7 @@ func buildRouteOperation(route Route, builder *openapi.Builder) *spec.Operation 
 				return []string{"Default"} // default tag
 			}(),
 			Summary:     summary,
-			Description: summary,
+			Description: desc,
 			Consumes:    route.Consumes,
 			Produces:    route.Produces,
 			Deprecated:  route.IsDeprecated,
