@@ -185,6 +185,9 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 		if err != nil {
 			return err
 		}
+		// set scope's fields
+		store.SetScopesFields(uns.Object, c.scopes)
+
 		key := getObjectKey(c.scopes, db.resource.String(), obj.GetName())
 		if err := db.storage.Create(ctx, key, uns, uns, uint64(options.TTL.Seconds())); err != nil {
 			err = storeerr.InterpretCreateError(err, db.resource, obj.GetName())
@@ -618,6 +621,10 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 			if deletionTimestamp != nil {
 				newuns.SetDeletionTimestamp(deletionTimestamp)
 			}
+
+			// set scope's fields
+			store.SetScopesFields(newuns.Object, scopes)
+
 			if ShouldDeleteDuringUpdate(ctx, key, newuns, current) {
 				return newuns, nil, errShouldDelete
 			}

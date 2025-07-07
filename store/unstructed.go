@@ -477,34 +477,39 @@ func (u *Unstructured) MarshalBSON() ([]byte, error) {
 
 func CompareUnstructuredField(a, b *Unstructured, sorts []SortBy) int {
 	for _, sort := range sorts {
-		switch sort.Field {
-		case "metadata.name", "name":
-			if sort.ASC {
-				return strings.Compare(a.GetName(), b.GetName())
-			}
-			return strings.Compare(b.GetName(), a.GetName())
-		case "metadata.creationTimestamp", "time":
-			at, bt := a.GetCreationTimestamp(), b.GetCreationTimestamp()
-			if sort.ASC {
-				return at.Compare(bt.Time)
-			}
-			return bt.Compare(at.Time)
+		if cmp := CompareDataFieldSort(a, b, sort); cmp != 0 {
+			return cmp
 		}
-
-		av, ok := GetNestedField(a.Object, strings.Split(sort.Field, ".")...)
-		if !ok {
-			av = ""
-		}
-		bv, ok := GetNestedField(b.Object, strings.Split(sort.Field, ".")...)
-		if !ok {
-			bv = ""
-		}
-		if sort.ASC {
-			return CompareField(av, bv)
-		}
-		return CompareField(bv, av)
 	}
 	return 0
+}
+
+func CompareDataFieldSort(a, b *Unstructured, sort SortBy) int {
+	switch sort.Field {
+	case "metadata.name", "name":
+		if sort.ASC {
+			return strings.Compare(a.GetName(), b.GetName())
+		}
+		return strings.Compare(b.GetName(), a.GetName())
+	case "metadata.creationTimestamp", "time":
+		at, bt := a.GetCreationTimestamp(), b.GetCreationTimestamp()
+		if sort.ASC {
+			return at.Compare(bt.Time)
+		}
+		return bt.Compare(at.Time)
+	}
+	av, ok := GetNestedField(a.Object, strings.Split(sort.Field, ".")...)
+	if !ok {
+		av = ""
+	}
+	bv, ok := GetNestedField(b.Object, strings.Split(sort.Field, ".")...)
+	if !ok {
+		bv = ""
+	}
+	if sort.ASC {
+		return CompareField(av, bv)
+	}
+	return CompareField(bv, av)
 }
 
 func CompareField(a, b any) int {

@@ -448,3 +448,33 @@ func AnyToString(a any) string {
 		return fmt.Sprintf("%v", v)
 	}
 }
+
+// ScopeResourceToFieldName converts a scope'resource to a field name.
+// eg. scope: tenants  => field: tenant
+func ScopeResourceToFieldName(resource string) string {
+	resource = strings.ToLower(resource)
+	if strings.HasSuffix(resource, "ies") {
+		return resource[:len(resource)-3] + "y"
+	}
+	return strings.TrimSuffix(resource, "s")
+}
+
+// SetScopesFields sets the scope's as fields in the data map.
+// exaple:
+//
+//	if data = {"foo": "bar"} create/update under scopes [{"resource": "tenants", "name": "default"}]
+//	the final data will be:
+//	{"foo": "bar", "tenant": "default"}
+func SetScopesFields(data map[string]any, scopes []Scope) {
+	if len(scopes) == 0 {
+		return
+	}
+	for _, scope := range scopes {
+		field := ScopeResourceToFieldName(scope.Resource)
+		if field == "" {
+			continue
+		}
+		// overwrite the field
+		data[field] = scope.Name
+	}
+}

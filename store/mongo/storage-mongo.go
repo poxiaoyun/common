@@ -345,13 +345,11 @@ func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...st
 
 func (m *MongoStorage) beforeSave(data bson.D) bson.D {
 	// remove "resource" field
-	for i, d := range data {
-		if d.Key == "resource" {
-			data = append(data[:i], data[i+1:]...)
-			break
-		}
-	}
-	return data
+	data = slices.DeleteFunc(data, func(d bson.E) bool {
+		return d.Key == "resource"
+	})
+	// set scopes fields
+	return SetScopesFields(data, m.scopes)
 }
 
 func (m *MongoStorage) mergeConditionOnChange(into any, exludes []string) (bson.D, error) {
@@ -996,4 +994,31 @@ func labelsSelectorToReqirements(sel store.Requirements) store.Requirements {
 		sel[i].Key = "labels." + sel[i].Key
 	}
 	return sel
+}
+
+// SetScopesFields sets the scope's as fields in the data map.
+// exaple:
+//
+//	if data = {"foo": "bar"} create/update under scopes [{"resource": "tenants", "name": "default"}]
+//	the final data will be:
+//	{"foo": "bar", "tenant": "default"}
+func SetScopesFields(data bson.D, scopes []store.Scope) bson.D {
+	for _, scope := range scopes {
+		field := store.ScopeResourceToFieldName(scope.Resource)
+		if field == "" {
+			continue
+		}
+		data = setOrReplaceField(data, field, scope.Name)
+	}
+	return data
+}
+
+func setOrReplaceField(data bson.D, key string, value any) bson.D {
+	for i, d := range data {
+		if d.Key == key {
+			data[i].Value = value
+			return data
+		}
+	}
+	return append(data, bson.E{Key: key, Value: value})
 }
