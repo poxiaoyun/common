@@ -44,6 +44,43 @@ func EncodeScopes(scopes []store.Scope) string {
 	return ret
 }
 
+func EncodeReference(ref store.ObjectReference) string {
+	sb := strings.Builder{}
+	for _, scope := range ref.Scopes {
+		sb.WriteString("/")
+		sb.WriteString(scope.Resource)
+		sb.WriteString("/")
+		sb.WriteString(scope.Name)
+	}
+	if ref.Name != "" {
+		sb.WriteString("/")
+		sb.WriteString(ref.Name)
+	}
+	return store.JSONPointerEscape(sb.String())
+}
+
+func DecodeReference(ref string) store.ObjectReference {
+	if len(ref) == 0 {
+		return store.ObjectReference{}
+	}
+	ref = store.JSONPointerUnescape(ref)
+	parts := strings.Split(ref, "/")
+	if parts[0] == "" {
+		parts = parts[1:]
+	}
+	ret := store.ObjectReference{}
+	for i := 0; i < len(parts)-1; i += 2 {
+		ret.Scopes = append(ret.Scopes, store.Scope{
+			Resource: parts[i],
+			Name:     parts[i+1],
+		})
+	}
+	if len(parts)%2 == 1 {
+		ret.Name = parts[len(parts)-1]
+	}
+	return ret
+}
+
 func DecodeScopes(scopes string) []store.Scope {
 	if len(scopes) == 0 {
 		return nil

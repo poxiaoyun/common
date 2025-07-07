@@ -42,7 +42,7 @@ func SplitYAML(data []byte) ([]unstructured.Unstructured, error) {
 			}
 			return objs, fmt.Errorf("failed to unmarshal manifest: %v", err)
 		}
-		if u.Object == nil || len(u.Object) == 0 {
+		if len(u.Object) == 0 {
 			continue // skip empty object
 		}
 		objs = append(objs, *u)
