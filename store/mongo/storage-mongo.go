@@ -587,10 +587,18 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, fields []stri
 	if len(match) > 0 {
 		pipeline = append(pipeline, bson.M{"$match": match})
 	}
+	// project
+	if len(fields) > 0 {
+		project := bson.M{}
+		for _, field := range fields {
+			project[field] = 1
+		}
+		pipeline = append(pipeline, bson.M{"$project": project})
+	}
+	// sort
+	pipeline = append(pipeline, sortstage(opts.Sort))
 	// items
 	itemspipeline := bson.A{}
-	// sort
-	itemspipeline = append(itemspipeline, sortstage(opts.Sort))
 	// pagination
 	if opts.Size > 0 {
 		page, limit := max(opts.Page, 1), opts.Size
@@ -600,14 +608,6 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, fields []stri
 	}
 	// post conditions
 	pipeline = append(pipeline, post...)
-	// project
-	if len(fields) > 0 {
-		project := bson.M{}
-		for _, field := range fields {
-			project[field] = 1
-		}
-		itemspipeline = append(itemspipeline, bson.M{"$project": project})
-	}
 	// facet
 	pipeline = append(pipeline, bson.M{
 		"$facet": bson.M{
