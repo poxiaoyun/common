@@ -303,8 +303,8 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 		// search
 		if options.Search != "" {
 			filtered = slices.DeleteFunc(filtered, func(uns unstructured.Unstructured) bool {
-				if len(options.SearchFileds) != 0 {
-					return !searchObject(&uns, options.SearchFileds, options.Search)
+				if len(options.SearchFields) != 0 {
+					return !searchObject(&uns, options.SearchFields, options.Search)
 				}
 				return !searchObject(&uns, []string{"name", "alias"}, options.Search)
 			})

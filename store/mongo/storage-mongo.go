@@ -573,8 +573,8 @@ func listProjectionFromList(list store.ObjectList) []string {
 
 func listPipeline(match bson.D, pre []any, opts store.ListOptions, fields []string, post []any) bson.A {
 	if search := opts.Search; search != "" {
-		if len(opts.SearchFileds) > 0 {
-			match = append(match, searchStage(opts.SearchFileds, search))
+		if len(opts.SearchFields) > 0 {
+			match = append(match, searchStage(opts.SearchFields, search))
 		} else {
 			match = append(match, searchStage([]string{"name"}, search))
 		}
@@ -584,43 +584,44 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, fields []stri
 	// pre conditions
 	pipeline = append(pipeline, pre...)
 	// filter
-	pipeline = append(pipeline, bson.M{"$match": match})
+	if len(match) > 0 {
+		pipeline = append(pipeline, bson.M{"$match": match})
+	}
+	// items
+	itemspipeline := bson.A{}
 	// sort
-	pipeline = append(pipeline, sortstage(opts.Sort))
+	itemspipeline = append(itemspipeline, sortstage(opts.Sort))
+	// pagination
+	if opts.Size > 0 {
+		page, limit := max(opts.Page, 1), opts.Size
+		skip := (page - 1) * limit
+		itemspipeline = append(itemspipeline, bson.M{"$skip": skip})
+		itemspipeline = append(itemspipeline, bson.M{"$limit": limit})
+	}
+	// post conditions
+	pipeline = append(pipeline, post...)
 	// project
 	if len(fields) > 0 {
 		project := bson.M{}
 		for _, field := range fields {
 			project[field] = 1
 		}
-		pipeline = append(pipeline, bson.M{"$project": project})
+		itemspipeline = append(itemspipeline, bson.M{"$project": project})
 	}
-	// post conditions
-	pipeline = append(pipeline, post...)
-	// pagination
-	group := bson.M{
-		"_id":   nil,
-		"items": bson.M{"$push": "$$ROOT"},
-	}
-	if opts.Size > 0 {
-		group["total"] = bson.M{"$sum": 1}
-	}
-	pipeline = append(pipeline, bson.M{"$group": group})
-	if opts.Size > 0 {
-		if opts.Page == 0 || opts.Page == 1 {
-			project := bson.M{
-				"items": bson.M{"$slice": bson.A{"$items", 0, opts.Size}},
-				"total": 1,
-			}
-			pipeline = append(pipeline, bson.M{"$project": project})
-		} else {
-			project := bson.M{
-				"items": bson.M{"$slice": bson.A{"$items", (opts.Page - 1) * opts.Size, opts.Size}},
-				"total": 1,
-			}
-			pipeline = append(pipeline, bson.M{"$project": project})
-		}
-	}
+	// facet
+	pipeline = append(pipeline, bson.M{
+		"$facet": bson.M{
+			"items": itemspipeline,
+			"total": bson.A{bson.M{"$count": "count"}},
+		},
+	})
+	// final project
+	pipeline = append(pipeline, bson.M{
+		"$project": bson.M{
+			"items": 1,
+			"total": bson.M{"$arrayElemAt": bson.A{"$total.count", 0}},
+		},
+	})
 	return pipeline
 }
 

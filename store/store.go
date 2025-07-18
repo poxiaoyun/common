@@ -27,7 +27,7 @@ type (
 		Page         int
 		Size         int
 		Search       string
-		SearchFileds []string
+		SearchFields []string
 		// Sort is the sort order of the list.  The format is a comma separated list of fields, optionally
 		// prefixed by "+" or "-".  The default is "+metadata.name", which sorts by the object's name.
 		// For example, "-metadata.name,metadata.creationTimestamp" sorts first by descending name, and then by
@@ -269,7 +269,7 @@ func WithSearch(search string) ListOption {
 
 func WithSearchFields(fields ...string) ListOption {
 	return func(o *ListOptions) {
-		o.SearchFileds = append(o.SearchFileds, fields...)
+		o.SearchFields = append(o.SearchFields, fields...)
 	}
 }
 
