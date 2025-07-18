@@ -46,7 +46,16 @@ type ResourcedObjectReference struct {
 	Resource string  `json:"resource,omitempty"`
 }
 
+// Equals checks if two ResourcedObjectReference are equal.
+// It compares the Name, Resource, and Scopes fields.
+// Note: UID is not compared in this method.
+// Use [ResourcedObjectReference.EqualsWithUID] if you need to compare UID as well.
 func (r ResourcedObjectReference) Equals(other ResourcedObjectReference) bool {
+	return r.Name == other.Name && r.Resource == other.Resource && ScopesEquals(r.Scopes, other.Scopes)
+}
+
+// EqualsWithUID same as Equals, but also checks the UID.
+func (r ResourcedObjectReference) EqualsWithUID(other ResourcedObjectReference) bool {
 	return r.UID == other.UID && r.Name == other.Name && r.Resource == other.Resource && ScopesEquals(r.Scopes, other.Scopes)
 }
 
