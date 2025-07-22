@@ -186,7 +186,10 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 			return err
 		}
 		// set scope's fields
-		store.SetScopesFields(uns.Object, c.scopes)
+		if contentdata, ok := uns.Object[UnstructuredObjectField].(map[string]any); ok {
+			store.SetScopesFields(contentdata, c.scopes)
+			uns.Object[UnstructuredObjectField] = contentdata
+		}
 
 		key := getObjectKey(c.scopes, db.resource.String(), obj.GetName())
 		if err := db.storage.Create(ctx, key, uns, uns, uint64(options.TTL.Seconds())); err != nil {
@@ -615,7 +618,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 			// restore ignored fields
 			if ignoreStatus {
 				// keep status field
-				unstructured.SetNestedField(newuns.Object, statusfield, UnstructuredObjectField, "status")
+				_ = unstructured.SetNestedField(newuns.Object, statusfield, UnstructuredObjectField, "status")
 			}
 			// do not allow deletionTimestamp to be changed if it is already set
 			if deletionTimestamp != nil {
@@ -649,7 +652,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 				return err
 			}
 		}
-		ConvertFromUnstructured(out, obj, db.resource)
+		_ = ConvertFromUnstructured(out, obj, db.resource)
 		return nil
 	})
 }
@@ -856,6 +859,7 @@ func ConvertToUnstructured(obj store.Object) (*unstructured.Unstructured, error)
 	uns.SetUID(types.UID(obj.GetUID()))
 	uns.SetCreationTimestamp(obj.GetCreationTimestamp())
 	uns.SetDeletionTimestamp(obj.GetDeletionTimestamp())
+	uns.Object["scopes"] = obj.GetScopes()
 	// store values in "data" field
 	obj.SetResourceVersion(0) // reset resource version before saving
 	values, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
@@ -886,7 +890,39 @@ func ConvertFromUnstructured(uns *unstructured.Unstructured, obj store.Object, r
 	obj.SetDeletionTimestamp(uns.GetDeletionTimestamp())
 	rev, _ := strconv.ParseInt(uns.GetResourceVersion(), 10, 64)
 	obj.SetResourceVersion(rev)
+	// currently we not enabled this
+	if false {
+		obj.SetScopes(getScopes(uns))
+	}
 	return nil
+}
+
+func getScopes(uns *unstructured.Unstructured) []store.Scope {
+	scopesval := uns.Object["scopes"]
+	if scopesval == nil {
+		return nil
+	}
+	scopes, ok := scopesval.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]store.Scope, 0, len(scopes))
+	for _, scope := range scopes {
+		scopeMap, ok := scope.(map[string]any)
+		if !ok {
+			return nil
+		}
+		resource, ok := scopeMap["resource"].(string)
+		if !ok {
+			return nil
+		}
+		name, ok := scopeMap["name"].(string)
+		if !ok {
+			return nil
+		}
+		result = append(result, store.Scope{Resource: resource, Name: name})
+	}
+	return result
 }
 
 func getObjectKey(scopes []store.Scope, resource, name string) string {
