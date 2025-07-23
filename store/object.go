@@ -246,9 +246,9 @@ func (o *ObjectMeta) SetUID(uid string) {
 var _ ObjectList = &List[Object]{}
 
 type List[T any] struct {
-	Resource        string  `json:"resource"`
-	ResourceVersion int64   `json:"resourceVersion"`
-	Scopes          []Scope `json:"scopes"`
+	Resource        string  `json:"resource,omitempty"`
+	ResourceVersion int64   `json:"resourceVersion,omitempty"`
+	Scopes          []Scope `json:"scopes,omitempty"`
 	Items           []T     `json:"items"`
 	Total           int     `json:"total"`
 	Page            int     `json:"page"`
