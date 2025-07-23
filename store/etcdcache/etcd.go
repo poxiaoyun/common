@@ -37,6 +37,8 @@ import (
 	"xiaoshiai.cn/common/store"
 )
 
+const SetScopeFields = false
+
 type Options struct {
 	Servers       []string `json:"servers,omitempty"`
 	Username      string   `json:"username,omitempty"`
@@ -185,14 +187,6 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 		if err != nil {
 			return err
 		}
-		// set scope's fields
-		if false {
-			if contentdata, ok := uns.Object[UnstructuredObjectField].(map[string]any); ok {
-				store.SetScopesFields(contentdata, c.scopes)
-				uns.Object[UnstructuredObjectField] = contentdata
-			}
-		}
-
 		key := getObjectKey(c.scopes, db.resource.String(), obj.GetName())
 		if err := db.storage.Create(ctx, key, uns, uns, uint64(options.TTL.Seconds())); err != nil {
 			err = storeerr.InterpretCreateError(err, db.resource, obj.GetName())
@@ -627,9 +621,6 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 				newuns.SetDeletionTimestamp(deletionTimestamp)
 			}
 
-			// set scope's fields
-			store.SetScopesFields(newuns.Object, scopes)
-
 			if ShouldDeleteDuringUpdate(ctx, key, newuns, current) {
 				return newuns, nil, errShouldDelete
 			}
@@ -867,6 +858,9 @@ func ConvertToUnstructured(obj store.Object) (*unstructured.Unstructured, error)
 	if err != nil {
 		return nil, err
 	}
+	if SetScopeFields {
+		store.SetScopesFields(values, obj.GetScopes())
+	}
 	uns.Object[UnstructuredObjectField] = values
 	return uns, nil
 }
@@ -892,7 +886,7 @@ func ConvertFromUnstructured(uns *unstructured.Unstructured, obj store.Object, r
 	rev, _ := strconv.ParseInt(uns.GetResourceVersion(), 10, 64)
 	obj.SetResourceVersion(rev)
 	// currently we not enabled this
-	if false {
+	if SetScopeFields {
 		obj.SetScopes(getScopes(uns))
 	}
 	return nil
