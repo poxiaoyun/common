@@ -186,9 +186,11 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 			return err
 		}
 		// set scope's fields
-		if contentdata, ok := uns.Object[UnstructuredObjectField].(map[string]any); ok {
-			store.SetScopesFields(contentdata, c.scopes)
-			uns.Object[UnstructuredObjectField] = contentdata
+		if false {
+			if contentdata, ok := uns.Object[UnstructuredObjectField].(map[string]any); ok {
+				store.SetScopesFields(contentdata, c.scopes)
+				uns.Object[UnstructuredObjectField] = contentdata
+			}
 		}
 
 		key := getObjectKey(c.scopes, db.resource.String(), obj.GetName())
@@ -196,7 +198,7 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 			err = storeerr.InterpretCreateError(err, db.resource, obj.GetName())
 			return err
 		}
-		ConvertFromUnstructured(uns, obj, db.resource)
+		_ = ConvertFromUnstructured(uns, obj, db.resource)
 		return nil
 	})
 }
@@ -859,7 +861,6 @@ func ConvertToUnstructured(obj store.Object) (*unstructured.Unstructured, error)
 	uns.SetUID(types.UID(obj.GetUID()))
 	uns.SetCreationTimestamp(obj.GetCreationTimestamp())
 	uns.SetDeletionTimestamp(obj.GetDeletionTimestamp())
-	uns.Object["scopes"] = obj.GetScopes()
 	// store values in "data" field
 	obj.SetResourceVersion(0) // reset resource version before saving
 	values, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
