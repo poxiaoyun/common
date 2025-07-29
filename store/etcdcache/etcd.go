@@ -324,7 +324,7 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 		}
 		list.SetPage(options.Page)
 		list.SetSize(options.Size)
-		list.SetToal(total)
+		list.SetTotal(total)
 		rev, _ := strconv.ParseInt(unslist.GetResourceVersion(), 10, 64)
 		list.SetResourceVersion(rev)
 		list.SetScopes(c.scopes)

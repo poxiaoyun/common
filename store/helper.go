@@ -14,6 +14,10 @@ import (
 	"xiaoshiai.cn/common/errors"
 )
 
+type LocalObjectReference struct {
+	Name string `json:"name,omitempty"`
+}
+
 type ObjectReference struct {
 	Name   string  `json:"name,omitempty"`
 	Scopes []Scope `json:"scopes,omitempty"`

@@ -168,7 +168,7 @@ func (g *CacheStore) List(ctx context.Context, list store.ObjectList, opts ...st
 		v.Set(reflect.Append(v, reflect.ValueOf(obj).Elem()))
 	}
 	list.SetResourceVersion(rev)
-	list.SetToal(total)
+	list.SetTotal(total)
 	list.SetPage(options.Page)
 	list.SetSize(options.Size)
 	return nil

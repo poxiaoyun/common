@@ -6,6 +6,8 @@ import (
 )
 
 type Object interface {
+	GetID() string
+	SetID(string)
 	GetName() string
 	SetName(string)
 	GetUID() string
@@ -54,8 +56,11 @@ type ObjectList interface {
 	SetSize(size int)
 	SetPage(i int)
 	GetPage() int
-	SetToal(i int)
-	GetTota() int
+	SetTotal(i int)
+	GetTotal() int
+
+	SetContinue(string)
+	GetContinue() string
 }
 
 // +k8s:openapi-gen=true
@@ -87,6 +92,7 @@ var _ Object = &ObjectMeta{}
 
 // +k8s:openapi-gen=true
 type ObjectMeta struct {
+	ID                string            `json:"id,omitempty"`
 	Name              string            `json:"name,omitempty" validate:"name"`
 	UID               string            `json:"uid,omitempty"`
 	APIVersion        string            `json:"apiVersion,omitempty"`
@@ -101,6 +107,14 @@ type ObjectMeta struct {
 	OwnerReferences   []OwnerReference  `json:"ownerReferences,omitempty"`
 	Description       string            `json:"description,omitempty"`
 	Alias             string            `json:"alias,omitempty"`
+}
+
+func (o *ObjectMeta) GetID() string {
+	return o.ID
+}
+
+func (o *ObjectMeta) SetID(id string) {
+	o.ID = id
 }
 
 // GetVersion implements Object.
@@ -253,6 +267,17 @@ type List[T any] struct {
 	Total           int     `json:"total"`
 	Page            int     `json:"page"`
 	Size            int     `json:"size"`
+	Continue        string  `json:"continue,omitempty"` // Used for pagination, if set, indicates that there are more items to list
+}
+
+// GetContinue implements ObjectList.
+func (b *List[T]) GetContinue() string {
+	return b.Continue
+}
+
+// SetContinue implements ObjectList.
+func (b *List[T]) SetContinue(continueToken string) {
+	b.Continue = continueToken
 }
 
 // GetResourceVersion implements ObjectList.
@@ -295,8 +320,8 @@ func (b *List[T]) GetSize() int {
 	return b.Size
 }
 
-// GetTota implements ObjectList.
-func (b *List[T]) GetTota() int {
+// GetTotal implements ObjectList.
+func (b *List[T]) GetTotal() int {
 	return b.Total
 }
 
@@ -310,7 +335,7 @@ func (b *List[T]) SetSize(size int) {
 	b.Size = size
 }
 
-// SetToal implements ObjectList.
-func (b *List[T]) SetToal(i int) {
+// SetTotal implements ObjectList.
+func (b *List[T]) SetTotal(i int) {
 	b.Total = i
 }

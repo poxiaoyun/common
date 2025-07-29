@@ -22,6 +22,16 @@ type Unstructured struct {
 	Object map[string]any
 }
 
+// GetID implements Object.
+func (u *Unstructured) GetID() string {
+	return GetNestedString(u.Object, "id")
+}
+
+// SetID implements Object.
+func (u *Unstructured) SetID(id string) {
+	SetNestedField(u.Object, id, "id")
+}
+
 // GetVersion implements Object.
 func (u *Unstructured) GetAPIVersion() string {
 	return GetNestedString(u.Object, "apiVersion")
