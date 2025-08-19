@@ -228,22 +228,21 @@ func getItemsPtr(list any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	items := v.FieldByName("Items")
 	if !items.IsValid() {
-		return nil, stderrors.New("Items field not found")
+		return nil, stderrors.New("items field not found")
 	}
 	switch items.Kind() {
 	case reflect.Interface, reflect.Pointer:
 		target := reflect.TypeOf(items.Interface()).Elem()
 		if target.Kind() != reflect.Slice {
-			return nil, stderrors.New("Items field is not a slice")
+			return nil, stderrors.New("items field is not a slice")
 		}
 		return items.Interface(), nil
 	case reflect.Slice:
 		return items.Addr().Interface(), nil
 	default:
-		return nil, stderrors.New("Items field is not a slice")
+		return nil, stderrors.New("items field is not a slice")
 	}
 }
 

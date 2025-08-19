@@ -19,7 +19,6 @@ import (
 	"compress/zlib"
 	"encoding/json"
 	"encoding/xml"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -27,8 +26,9 @@ import (
 	"strings"
 	"time"
 
-	"sigs.k8s.io/yaml"
+	yaml "sigs.k8s.io/yaml/goyaml.v2"
 	"xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/store"
 )
 
 var PageParams = []Param{
@@ -86,6 +86,7 @@ func GetListOptions(r *http.Request) ListOptions {
 }
 
 func ParseSort(sort string) (field, order string) {
+	store.ParseSorts(sort)
 	if sort == "" {
 		return "", "asc"
 	}
@@ -137,50 +138,52 @@ func ValueOrDefault[T any](val string, defaultValue T) T {
 		}
 		return any(strings.Split(val, ",")).(T)
 	case int:
-		intval, _ := strconv.Atoi(val)
-		return any(intval).(T)
+		if v, err := strconv.Atoi(val); err == nil {
+			return any(v).(T)
+		}
 	case bool:
-		b, _ := strconv.ParseBool(val)
-		return any(b).(T)
-	case *bool:
-		if val == "" {
-			return defaultValue
+		if v, err := strconv.ParseBool(val); err == nil {
+			return any(v).(T)
 		}
-		b, _ := strconv.ParseBool(val)
-		return any(&b).(T)
 	case int64:
-		intval, _ := strconv.ParseInt(val, 10, 64)
-		return any(intval).(T)
+		if v, err := strconv.ParseInt(val, 10, 64); err == nil {
+			return any(v).(T)
+		}
 	case uint64:
-		intval, _ := strconv.ParseUint(val, 10, 64)
-		return any(intval).(T)
+		if v, err := strconv.ParseUint(val, 10, 64); err == nil {
+			return any(v).(T)
+		}
 	case uint32:
-		intval, _ := strconv.ParseUint(val, 10, 32)
-		return any(intval).(T)
+		if v, err := strconv.ParseUint(val, 10, 32); err == nil {
+			return any(uint32(v)).(T)
+		}
 	case float64:
-		floatval, _ := strconv.ParseFloat(val, 64)
-		return any(floatval).(T)
-	case *int:
-		if val == "" {
-			return defaultValue
+		if v, err := strconv.ParseFloat(val, 64); err == nil {
+			return any(v).(T)
 		}
-		intval, _ := strconv.Atoi(val)
-		return any(&intval).(T)
-	case *int64:
-		if val == "" {
-			return defaultValue
-		}
-		intval, _ := strconv.ParseInt(val, 10, 64)
-		return any(&intval).(T)
 	case time.Time:
-		t, _ := time.Parse(time.RFC3339, val)
-		return any(t).(T)
+		if v, err := time.Parse(time.RFC3339, val); err == nil {
+			return any(v).(T)
+		}
 	case time.Duration:
-		d, _ := time.ParseDuration(val)
-		return any(d).(T)
-	default:
-		return defaultValue
+		if v, err := time.ParseDuration(val); err == nil {
+			return any(v).(T)
+		}
+	// 指针类型
+	case *int:
+		if v, err := strconv.Atoi(val); err == nil {
+			return any(&v).(T)
+		}
+	case *int64:
+		if v, err := strconv.ParseInt(val, 10, 64); err == nil {
+			return any(&v).(T)
+		}
+	case *bool:
+		if v, err := strconv.ParseBool(val); err == nil {
+			return any(&v).(T)
+		}
 	}
+	return defaultValue
 }
 
 func Body(r *http.Request, into any) error {
@@ -200,37 +203,32 @@ func ReadContent(contentType, contentEncoding string, body io.Reader, into any) 
 	// check if the request body needs decompression
 	switch contentEncoding {
 	case "gzip":
-		reader, err := gzip.NewReader(body)
+		gzr, err := gzip.NewReader(body)
 		if err != nil {
 			return err
 		}
-		body = reader
+		defer gzr.Close()
+		body = gzr
 	case "deflate":
-		zlibReader, err := zlib.NewReader(body)
+		zlibr, err := zlib.NewReader(body)
 		if err != nil {
 			return err
 		}
-		body = zlibReader
+		defer zlibr.Close()
+		body = zlibr
 	}
-
-	mediatype, _, _ := mime.ParseMediaType(contentType)
+	mediatype, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return err
+	}
 	switch mediatype {
-	case "application/json", "":
-		if err := json.NewDecoder(body).Decode(into); err != nil {
-			return err
-		}
+	case "application/json":
+		return json.NewDecoder(body).Decode(into)
 	case "application/xml":
-		if err := xml.NewDecoder(body).Decode(into); err != nil {
-			return err
-		}
+		return xml.NewDecoder(body).Decode(into)
 	case "application/yaml":
-		data, err := io.ReadAll(body)
-		if err != nil {
-			return err
-		}
-		return yaml.Unmarshal(data, into)
+		return yaml.NewDecoder(body).Decode(into)
 	default:
-		return fmt.Errorf("unsupported media type: %s", mediatype)
+		return json.NewDecoder(body).Decode(into)
 	}
-	return nil
 }

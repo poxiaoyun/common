@@ -3,17 +3,11 @@ package store
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"k8s.io/apimachinery/pkg/runtime"
-)
-
-var (
-	mapStringInterfaceType = reflect.TypeOf(map[string]interface{}{})
-	stringType             = reflect.TypeOf(string(""))
 )
 
 var _ Object = &Unstructured{}
@@ -552,6 +546,8 @@ type SortBy struct {
 	ASC   bool
 }
 
+// ParseSorts parse a sort query string into a list of SortBy
+// example: "name-,time+" => []SortBy{{Field: "name", ASC: false}, {Field: "time", ASC: true}}
 func ParseSorts(sort string) []SortBy {
 	if sort == "" {
 		return nil
