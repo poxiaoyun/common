@@ -217,6 +217,10 @@ func QueryParam(name string, description string) Param {
 	return Param{Kind: ParamKindQuery, DataType: "string", Name: name, Description: description}
 }
 
+func HeaderParam(name string, description string) Param {
+	return Param{Kind: ParamKindHeader, Name: name, Description: description}
+}
+
 func (p Param) Optional() Param {
 	p.IsOptional = true
 	return p
