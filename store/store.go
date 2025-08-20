@@ -142,6 +142,24 @@ func WithCountFieldRequirementsFromSelector(selector fields.Selector) CountOptio
 	}
 }
 
+func WithCountFieldRequirements(reqs ...Requirement) CountOption {
+	return func(o *CountOptions) {
+		o.FieldRequirements = append(o.FieldRequirements, reqs...)
+	}
+}
+
+func WithCountLabelRequirements(reqs ...Requirement) CountOption {
+	return func(o *CountOptions) {
+		o.LabelRequirements = append(o.LabelRequirements, reqs...)
+	}
+}
+
+func WithCountSubScopes() CountOption {
+	return func(o *CountOptions) {
+		o.IncludeSubScopes = true
+	}
+}
+
 func WithGetFieldRequirements(reqs ...Requirement) GetOption {
 	return func(o *GetOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, reqs...)
