@@ -20,6 +20,8 @@ type (
 		// It may not supported by all databases.
 		FieldRequirements Requirements
 		LabelRequirements Requirements
+		// Fields is a list of fields to return.  If empty, all fields are returned.
+		Fields []string
 	}
 	GetOption func(*GetOptions)
 
@@ -149,6 +151,12 @@ func WithGetFieldRequirements(reqs ...Requirement) GetOption {
 func WithGetLabelRequirements(reqs ...Requirement) GetOption {
 	return func(o *GetOptions) {
 		o.LabelRequirements = append(o.LabelRequirements, reqs...)
+	}
+}
+
+func WithGetFields(fields ...string) GetOption {
+	return func(o *GetOptions) {
+		o.Fields = append(o.Fields, fields...)
 	}
 }
 

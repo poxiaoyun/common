@@ -9,7 +9,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson/bsoncodec"
 	"go.mongodb.org/mongo-driver/bson/bsonrw"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
@@ -88,9 +87,9 @@ func NewMongoWatcher(ctx context.Context,
 		},
 		// check support full document on delete
 		// https://www.mongodb.com/docs/manual/reference/change-events/delete/#document-pre--and-post-images
-		options.ChangeStream().
-			SetFullDocument(options.Required).
-			SetFullDocumentBeforeChange(options.WhenAvailable),
+		mongooptions.ChangeStream().
+			SetFullDocument(mongooptions.Required).
+			SetFullDocumentBeforeChange(mongooptions.WhenAvailable),
 	)
 	if err != nil {
 		return nil, errors.NewInternalError(err)
@@ -108,11 +107,9 @@ func NewMongoWatcher(ctx context.Context,
 }
 
 type MongoWatcher struct {
-	col          *mongo.Collection
-	bsonRegistry *bsoncodec.Registry
-	bsonOptions  *mongooptions.BSONOptions
-
-	opts          store.WatchOptions
+	col           *mongo.Collection
+	bsonRegistry  *bsoncodec.Registry
+	bsonOptions   *mongooptions.BSONOptions
 	closed        bool
 	newObjectFunc func() store.Object
 	results       chan store.WatchEvent

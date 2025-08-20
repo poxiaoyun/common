@@ -283,7 +283,10 @@ func (c *core) get(ctx context.Context, scope []store.Scope, name string, into s
 	if options.LabelRequirements != nil {
 		db = c.applyLabels(db, options.LabelRequirements)
 	}
-	rows, err := db.Where("name = ?", name).Limit(1).Rows()
+	if len(options.Fields) > 0 {
+		db = db.Select(options.Fields)
+	}
+	rows, err := db.WithContext(ctx).Where("name = ?", name).Limit(1).Rows()
 	if err != nil {
 		return mapSQLError(err, resource, name)
 	}
@@ -331,7 +334,7 @@ func (c *core) create(ctx context.Context, scopes []store.Scope, in store.Object
 	for _, cond := range scopes {
 		save[cond.Resource] = cond.Name
 	}
-	if err := c.db.Table(resource).Create(save).Error; err != nil {
+	if err := c.prepare(ctx, resource, nil).Create(save).Error; err != nil {
 		return mapSQLError(err, resource, name)
 	}
 	return nil
@@ -661,8 +664,8 @@ func (c *core) applyCondition(db *gorm.DB, key string, op store.Operator, vals [
 	}
 }
 
-func (c *core) prepare(_ context.Context, tablename string, scopes []store.Scope) *gorm.DB {
-	db := c.db
+func (c *core) prepare(ctx context.Context, tablename string, scopes []store.Scope) *gorm.DB {
+	db := c.db.WithContext(ctx)
 	for _, cond := range scopes {
 		key, val := c.quoteKey(cond.Resource), cond.Name
 		db = db.Where(key+" = ?", val)

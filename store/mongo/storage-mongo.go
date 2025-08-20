@@ -426,6 +426,13 @@ func (m *MongoStorage) Get(ctx context.Context, name string, obj store.Object, o
 		filter = append(filter, bson.E{Key: "name", Value: name})
 		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
 		findopt := mongooptions.FindOne()
+		if len(options.Fields) != 0 {
+			project := bson.M{}
+			for _, field := range options.Fields {
+				project[field] = 1
+			}
+			findopt = findopt.SetProjection(project)
+		}
 		m.core.logger.V(5).Info("get", "collection", col.Name(), "filter", filter)
 		if err := col.FindOne(ctx, filter, findopt).Decode(obj); err != nil {
 			return WarpMongoError(err, col, obj)
@@ -552,23 +559,6 @@ func setEmptyItemsIfNil(list store.ObjectList) {
 	if v.Len() == 0 {
 		v.Set(reflect.MakeSlice(v.Type(), 0, 0))
 	}
-}
-
-func listProjectionFromList(list store.ObjectList) []string {
-	itemsPointer, err := store.GetItemsPtr(list)
-	if err != nil {
-		return nil
-	}
-	t := reflect.TypeOf(itemsPointer)
-	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Slice {
-		t = t.Elem()
-	}
-	fields := []string{}
-	flattenTypeFields("", t, 1, func(name string) error {
-		fields = append(fields, strings.TrimPrefix(name, "."))
-		return nil
-	})
-	return fields
 }
 
 func listPipeline(match bson.D, pre []any, opts store.ListOptions, fields []string, post []any) bson.A {

@@ -114,9 +114,15 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 
 		} else {
 			// get
+			getoptions := store.GetOptions{
+				Fields: strings.Split(api.Query(r, "fields", ""), ","),
+			}
+			option := func(o *store.GetOptions) {
+				*o = getoptions
+			}
 			obj := &store.Unstructured{}
 			obj.SetResource(ref.Resource)
-			if err := s.Store.Scope(ref.Scopes...).Get(ctx, ref.Name, obj); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).Get(ctx, ref.Name, obj, option); err != nil {
 				return nil, err
 			}
 			return obj, nil

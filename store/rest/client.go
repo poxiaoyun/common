@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/httpclient"
@@ -163,6 +164,9 @@ func (c Client) Get(ctx context.Context, name string, obj store.Object, opts ...
 	if options.ResourceVersion != 0 {
 		queries.Add("resourceVersion", strconv.FormatInt(options.ResourceVersion, 10))
 	}
+	if options.Fields != nil {
+		queries.Add("fields", strings.Join(options.Fields, ","))
+	}
 	return c.cli.Get(c.getPath(resource, name)).Queries(queries).Return(obj).Send(ctx)
 }
 
@@ -203,6 +207,9 @@ func (c Client) List(ctx context.Context, list store.ObjectList, opts ...store.L
 	}
 	if options.Continue != "" {
 		queries.Add("continue", options.Continue)
+	}
+	if options.Fields != nil {
+		queries.Add("fields", strings.Join(options.Fields, ","))
 	}
 	return c.cli.Get(c.getPath(resource, "")).Queries(queries).Return(list).Send(ctx)
 }
