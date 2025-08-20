@@ -339,3 +339,20 @@ func (b *List[T]) SetSize(size int) {
 func (b *List[T]) SetTotal(i int) {
 	b.Total = i
 }
+
+func ConvertList[T any, F any](list List[T], f func(T) F) List[F] {
+	newItems := make([]F, 0, len(list.Items))
+	for _, item := range list.Items {
+		newItems = append(newItems, f(item))
+	}
+	return List[F]{
+		Resource:        list.Resource,
+		ResourceVersion: list.ResourceVersion,
+		Scopes:          list.Scopes,
+		Page:            list.Page,
+		Size:            list.Size,
+		Total:           list.Total,
+		Items:           newItems,
+		Continue:        list.Continue,
+	}
+}
