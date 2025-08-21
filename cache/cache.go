@@ -23,20 +23,27 @@ type FlushOptions struct {
 
 type GetOrSetOptions struct {
 	Namespace string
-	TTL       time.Duration
 }
 
-type LoadFunc func(ctx context.Context, key string) ([]byte, error)
+type LoadFunc[T any] func(ctx context.Context, key string) (T, time.Duration, error)
 
-type Cache interface {
-	GetOrSet(ctx context.Context, key string, loader LoadFunc, opts GetOrSetOptions) ([]byte, error)
-	Get(ctx context.Context, key string, opts GetOptions) ([]byte, error)
-	Set(ctx context.Context, key string, data []byte, opts SetOptions) error
-	Delete(ctx context.Context, key string, opts DeleteOptions) error
+type (
+	GetOrSetOption func(opts *GetOrSetOptions)
+	GetOption      func(opts *GetOptions)
+	SetOption      func(opts *SetOptions)
+	DeleteOption   func(opts *DeleteOptions)
+	FlushOption    func(opts *FlushOptions)
+)
 
-	GetMany(ctx context.Context, keys []string, opts GetOptions) (map[string][]byte, error)
-	SetMany(ctx context.Context, items map[string][]byte, opts SetOptions) error
-	DeleteMany(ctx context.Context, keys []string, opts DeleteOptions) error
+type Cache[T any] interface {
+	GetOrLoad(ctx context.Context, key string, loader LoadFunc[T], opts ...GetOrSetOption) (T, error)
+	Get(ctx context.Context, key string, opts ...GetOption) (T, error)
+	Set(ctx context.Context, key string, data T, opts ...SetOption) error
+	Delete(ctx context.Context, key string, opts ...DeleteOption) error
 
-	Flush(ctx context.Context, opts FlushOptions) error
+	GetMany(ctx context.Context, keys []string, opts ...GetOption) (map[string]T, error)
+	SetMany(ctx context.Context, items map[string]T, opts ...SetOption) error
+	DeleteMany(ctx context.Context, keys []string, opts ...DeleteOption) error
+
+	Flush(ctx context.Context, opts ...FlushOption) error
 }
