@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/kubernetes"
 	"google.golang.org/grpc"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -104,10 +105,14 @@ func NewEtcdCacher(options *Options, resFields ResourceFieldsMap) (*generic, err
 	if err != nil {
 		return nil, err
 	}
-	return NewEtcdCacherFromClient(cli, options.KeyPrefix, resFields)
+	kubernetescli := kubernetes.Client{
+		Client: cli,
+	}
+	kubernetescli.Kubernetes = &kubernetescli
+	return NewEtcdCacherFromClient(&kubernetescli, options.KeyPrefix, resFields)
 }
 
-func NewEtcdCacherFromClient(cli *clientv3.Client, storagePrefix string, resFields ResourceFieldsMap) (*generic, error) {
+func NewEtcdCacherFromClient(cli *kubernetes.Client, storagePrefix string, resFields ResourceFieldsMap) (*generic, error) {
 	if resFields == nil {
 		resFields = make(map[string][]string)
 	}
@@ -542,7 +547,7 @@ type core struct {
 	resources      map[string]*db
 	resourcesLock  sync.RWMutex
 	storagePrefix  string
-	cli            *clientv3.Client
+	cli            *kubernetes.Client
 	resourceFields ResourceFieldsMap
 }
 
@@ -629,7 +634,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 		if err != nil {
 			if err == errShouldDelete {
 				// Using the rest.ValidateAllObjectFunc because the request is an UPDATE request and has already passed the admission for the UPDATE verb.
-				if err := db.storage.Delete(ctx, key, out, preconditions, rest.ValidateAllObjectFunc, nil); err != nil {
+				if err := db.storage.Delete(ctx, key, out, preconditions, rest.ValidateAllObjectFunc, nil, storage.DeleteOptions{}); err != nil {
 					// Deletion is racy, i.e., there could be multiple update
 					// requests to remove all finalizers from the object, so we
 					// ignore the NotFound error.
@@ -749,7 +754,7 @@ type db struct {
 	resource schema.GroupResource
 }
 
-func newResourceStorage(cli *clientv3.Client, prefix string, groupResource schema.GroupResource, indexfields []string) (*db, error) {
+func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource schema.GroupResource, indexfields []string) (*db, error) {
 	transformer := identity.NewEncryptCheckTransformer()
 	leaseConfig := etcd3.NewDefaultLeaseManagerConfig()
 	newFunc := func() runtime.Object { return &unstructured.Unstructured{} }
@@ -761,12 +766,15 @@ func newResourceStorage(cli *clientv3.Client, prefix string, groupResource schem
 		json.SerializerOptions{Yaml: false, Pretty: false, Strict: false})
 
 	// codec := SimpleJsonCodec{}
+	versioner := storage.APIObjectVersioner{}
 	resourcePrefix := "/" + groupResource.String()
-	etcd3storage := etcd3.New(cli, codec, newFunc, newListFunc, prefix, resourcePrefix, groupResource, transformer, leaseConfig)
+
+	dec := etcd3.NewDefaultDecoder(codec, versioner)
+	etcd3storage := etcd3.New(cli, codec, newFunc, newListFunc, prefix, resourcePrefix, groupResource, transformer, leaseConfig, dec, versioner)
 	indexers := IndexerFromFields(indexfields)
 	cacherConfig := cacherstorage.Config{
 		Storage:        etcd3storage,
-		Versioner:      storage.APIObjectVersioner{},
+		Versioner:      versioner,
 		GroupResource:  groupResource,
 		ResourcePrefix: resourcePrefix,
 		KeyFunc:        ScopesObjectKeyFunc,

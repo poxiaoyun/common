@@ -14,6 +14,7 @@ import (
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/kubernetes"
 	"google.golang.org/grpc"
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
@@ -50,11 +51,9 @@ const (
 	// It is set to 20 seconds as times shorter than that will cause TLS connections to fail
 	// on heavily loaded arm64 CPUs (issue #64649)
 	dialTimeout = 20 * time.Second
-
-	dbMetricsMonitorJitter = 0.5
 )
 
-func NewETCD3Client(ctx context.Context, c *Options) (*clientv3.Client, error) {
+func NewETCD3Client(ctx context.Context, c *Options) (*kubernetes.Client, error) {
 	tlsInfo := transport.TLSInfo{
 		CertFile:      c.CertFile,
 		KeyFile:       c.KeyFile,
@@ -88,7 +87,7 @@ func NewETCD3Client(ctx context.Context, c *Options) (*clientv3.Client, error) {
 		Username:             c.Username,
 		Password:             c.Password,
 	}
-	return clientv3.New(cfg)
+	return kubernetes.New(cfg)
 }
 
 func NewEtcdStore(ctx context.Context, c *Options) (*EtcdStore, error) {
@@ -102,17 +101,17 @@ func NewEtcdStore(ctx context.Context, c *Options) (*EtcdStore, error) {
 
 	log := log.FromContext(ctx)
 	log.Info("checking etcd server health")
-	if _, err := client.Get(timeouts, "health"); err != nil {
+	if _, err := client.Get(timeouts, "health", kubernetes.GetOptions{}); err != nil {
 		return nil, fmt.Errorf("etcd server is not reachable: %v", err)
 	}
 	return NewEtcdStoreFromClient(client, c.KeyPrefix), nil
 }
 
-func NewEtcdStoreFromClient(client *clientv3.Client, keyPrefix string) *EtcdStore {
+func NewEtcdStoreFromClient(client *kubernetes.Client, keyPrefix string) *EtcdStore {
 	return &EtcdStore{core: newEtcdStoreCore(client, keyPrefix)}
 }
 
-func newEtcdStoreCore(client *clientv3.Client, keyPrefix string) *etcdStoreCore {
+func newEtcdStoreCore(client *kubernetes.Client, keyPrefix string) *etcdStoreCore {
 	return &etcdStoreCore{
 		client:     client,
 		KeyPrefix:  keyPrefix,
@@ -503,7 +502,7 @@ func (e *EtcdStatusStore) Update(ctx context.Context, obj store.Object, opts ...
 
 type etcdStoreCore struct {
 	KeyPrefix  string
-	client     *clientv3.Client
+	client     *kubernetes.Client
 	serializer store.Serializer
 	leases     *leaseManager
 }

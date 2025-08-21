@@ -6,6 +6,7 @@ import (
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/kubernetes"
 )
 
 const (
@@ -20,7 +21,7 @@ const (
 // are expensive. In the implementation, we only store one previous lease,
 // since all the events have the same ttl.
 type leaseManager struct {
-	client                  *clientv3.Client // etcd client used to grant leases
+	client                  *kubernetes.Client // etcd client used to grant leases
 	leaseMu                 sync.Mutex
 	prevLeaseID             clientv3.LeaseID
 	prevLeaseExpirationTime time.Time
@@ -33,7 +34,7 @@ type leaseManager struct {
 	leaseAttachedObjectCount    int64
 }
 
-func newEtcd3LeaseManager(client *clientv3.Client, leaseReuseDurationSeconds int64, leaseReuseDurationPercent float64, maxObjectCount int64) *leaseManager {
+func newEtcd3LeaseManager(client *kubernetes.Client, leaseReuseDurationSeconds int64, leaseReuseDurationPercent float64, maxObjectCount int64) *leaseManager {
 	if maxObjectCount <= 0 {
 		maxObjectCount = defaultLeaseMaxObjectCountPerLease
 	}
