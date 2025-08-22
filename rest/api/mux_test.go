@@ -20,6 +20,15 @@ func Test_matcher_Match(t *testing.T) {
 	}{
 		{
 			registered: []string{
+				"/docs",
+				"/docs/",
+			},
+			req:       "/docs/",
+			matched:   true,
+			wantMatch: "/docs/",
+		},
+		{
+			registered: []string{
 				"/{group}/{version}/{resource}",
 				"/{group}/{version}/namespaces/{namespace}",
 			},

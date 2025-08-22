@@ -17,6 +17,7 @@ package openapi
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -113,7 +114,8 @@ func (b *Builder) BuildSchema(v reflect.Value) *spec.Schema {
 	}
 }
 
-func TypeName(t reflect.Type) string {
+// TypeName returns the type name and generic type parameters
+func TypeName(t reflect.Type) (string, string) {
 	fullname := t.String()
 	if index := strings.IndexRune(fullname, '['); index != -1 {
 		subname := fullname[index:]
@@ -121,9 +123,9 @@ func TypeName(t reflect.Type) string {
 			subname = "[" + subname[i+1:]
 		}
 		subname = strings.ReplaceAll(subname, "·", "_")
-		return fullname[:index] + subname
+		return fullname[:index], subname
 	}
-	return fullname
+	return fullname, ""
 }
 
 func (b *Builder) buildPtr(v reflect.Value) *spec.Schema {
@@ -220,7 +222,14 @@ func (b *Builder) buildStruct(v reflect.Value) *spec.Schema {
 	}
 
 	findOverridesOnly := false // avoid recursive find
-	structTypeName := TypeName(v.Type())
+	typeName, suffix := TypeName(v.Type())
+	structTypeName := typeName
+
+	// if not a dynamic field struct,eg generic[T] not have openapi tag marked
+	// treat it as a different type.
+	if !HasDynamicField(v.Type()) {
+		structTypeName += suffix
+	}
 
 	orignalSchama := ObjectPropertyProperties(map[string]spec.Schema{})
 	if exists, ok := b.Definitions[structTypeName]; ok {
@@ -238,10 +247,14 @@ func (b *Builder) buildStruct(v reflect.Value) *spec.Schema {
 			continue
 		}
 		// dynamic type will be treated as override properties
-		if !isEmbedded && IsDynamicInterface(structField.Type) && !fieldv.IsNil() {
+		if !isEmbedded && IsDynamicInterface(structField) {
+			if fieldv.IsNil() {
+				fieldv = reflect.New(structField.Type.Elem()).Elem()
+			}
 			if fieldSchema := b.BuildSchema(fieldv); fieldSchema != nil {
 				overrideProperties[fieldName] = *fieldSchema
 			}
+			orignalSchama.Properties[fieldName] = *NullableProperty() // placeholder
 			continue
 		}
 		if findOverridesOnly {
@@ -260,7 +273,7 @@ func (b *Builder) buildStruct(v reflect.Value) *spec.Schema {
 	if len(embeddedProperties) > 0 {
 		allofSchema := &spec.Schema{}
 		// check if empty object
-		if len(*&orignalSchama.Properties) != 0 || orignalSchama.AdditionalProperties != nil {
+		if len(orignalSchama.Properties) != 0 || orignalSchama.AdditionalProperties != nil {
 			allofSchema.AllOf = append(allofSchema.AllOf, *orignalSchama)
 		}
 		allofSchema.AllOf = append(allofSchema.AllOf, embeddedProperties...)
@@ -303,7 +316,29 @@ func structFieldInfo(structField reflect.StructField) (bool, bool, string) {
 	return isEmbedded, isIgnored, fieldName
 }
 
-func IsDynamicInterface(t reflect.Type) bool {
+func HasDynamicField(t reflect.Type) bool {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return false
+	}
+	for i := 0; i < t.NumField(); i++ {
+		if IsDynamicInterface(t.Field(i)) {
+			return true
+		}
+	}
+	return false
+}
+
+func IsDynamicInterface(field reflect.StructField) bool { // json
+	if openapitag := field.Tag.Get("openapi"); openapitag != "" {
+		opts := strings.Split(openapitag, ",")
+		if slices.Contains(opts, "dynamic") {
+			return true
+		}
+	}
+	t := field.Type
 	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map {
 		t = t.Elem()
 	}
@@ -321,4 +356,8 @@ func ObjectProperty() *spec.Schema {
 
 func ObjectPropertyProperties(properties spec.SchemaProperties) *spec.Schema {
 	return &spec.Schema{SchemaProps: spec.SchemaProps{Type: []string{"object"}, Properties: properties}}
+}
+
+func NullableProperty() *spec.Schema {
+	return &spec.Schema{SchemaProps: spec.SchemaProps{Nullable: true}}
 }

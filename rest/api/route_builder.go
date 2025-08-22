@@ -38,6 +38,7 @@ type Route struct {
 	Properties     map[string]any
 	RequestSample  any
 	ResponseSample any
+	NotDoc         bool // if true, this route will not be documented in OpenAPI
 }
 
 func (route Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -132,13 +133,13 @@ func (n Route) Param(params ...Param) Route {
 }
 
 // Accept match request Accept header
-func (n Route) Accept(mime ...string) Route {
+func (n Route) Produce(mime ...string) Route {
 	n.Produces = append(n.Produces, mime...)
 	return n
 }
 
 // ContentType match request Content-Type header
-func (n Route) ContentType(mime ...string) Route {
+func (n Route) Consume(mime ...string) Route {
 	n.Consumes = append(n.Consumes, mime...)
 	return n
 }
@@ -174,6 +175,11 @@ func (n Route) RequestExample(body any) Route {
 
 func (n Route) ResponseExample(body any) Route {
 	n.ResponseSample = body
+	return n
+}
+
+func (n Route) NotDocumented() Route {
+	n.NotDoc = true
 	return n
 }
 

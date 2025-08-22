@@ -263,7 +263,7 @@ type List[T any] struct {
 	Resource        string  `json:"resource,omitempty"`
 	ResourceVersion int64   `json:"resourceVersion,omitempty"`
 	Scopes          []Scope `json:"scopes,omitempty"`
-	Items           []T     `json:"items"`
+	Items           []T     `json:"items" openapi:"dynamic"`
 	Total           int     `json:"total"`
 	Page            int     `json:"page"`
 	Size            int     `json:"size"`

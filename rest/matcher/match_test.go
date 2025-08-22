@@ -98,6 +98,8 @@ func TestSection_score(t *testing.T) {
 		{a: "a", b: "{a}", eq: 1},
 		{a: "api", b: "{a}", eq: 1},
 		{a: "v{a}*", b: "{a}", eq: 1},
+		{a: "/", b: "/{a}", eq: 1},
+		{a: "/", b: "/a", eq: -1},
 		{a: "{a}*", b: "{a}*:action", eq: -1},
 		{a: "/{a}*", b: "/{a}*/foo/{b}", eq: -1},
 	}

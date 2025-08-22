@@ -297,7 +297,7 @@ func TestDefinitionBuilder_buildStruct(t *testing.T) {
 	}
 
 	type GenericStruct[T any] struct {
-		Items []T `json:"items,omitempty"`
+		Items []T `json:"items,omitempty" openapi:"dynamic"`
 	}
 
 	type fields struct {
@@ -468,12 +468,26 @@ func TestDefinitionBuilder_buildStruct(t *testing.T) {
 			data: GenericStruct[string]{},
 			want: &spec.Schema{
 				SchemaProps: spec.SchemaProps{
-					Ref: spec.MustCreateRef(DefinitionsRoot + "openapi.GenericStruct[string]"),
+					AllOf: []spec.Schema{
+						{
+							SchemaProps: spec.SchemaProps{
+								Ref: spec.MustCreateRef(DefinitionsRoot + "openapi.GenericStruct"),
+							},
+						},
+						{
+							SchemaProps: spec.SchemaProps{
+								Type: []string{"object"},
+								Properties: map[string]spec.Schema{
+									"items": *spec.StringProperty(),
+								},
+							},
+						},
+					},
 				},
 			},
 			wantDefinitions: map[string]spec.Schema{
-				"openapi.GenericStruct[string]": *ObjectPropertyProperties(spec.SchemaProperties{
-					"items": *spec.ArrayProperty(spec.StringProperty()),
+				"openapi.GenericStruct": *ObjectPropertyProperties(spec.SchemaProperties{
+					"items": *ObjectProperty(),
 				}),
 			},
 		},

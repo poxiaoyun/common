@@ -113,17 +113,21 @@ func (s Section) String() string {
 
 func (s Section) score() int {
 	score := 0
+	hasconst := false
 	for _, v := range s {
 		if v.Pattern == "/" {
 			continue
 		}
-		if v.Greedy {
-			score += 1
-		}
 		if v.VarName != "" {
-			score += 10
-		} else {
+			score -= 10
+			if v.Greedy {
+				score -= 1
+			}
+			continue
+		}
+		if !hasconst {
 			score += 100
+			hasconst = true
 		}
 	}
 	return score
