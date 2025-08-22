@@ -248,9 +248,6 @@ func (b *Builder) buildStruct(v reflect.Value) *spec.Schema {
 		}
 		// dynamic type will be treated as override properties
 		if !isEmbedded && IsDynamicInterface(structField) {
-			if fieldv.IsNil() {
-				fieldv = reflect.New(structField.Type.Elem()).Elem()
-			}
 			if fieldSchema := b.BuildSchema(fieldv); fieldSchema != nil {
 				overrideProperties[fieldName] = *fieldSchema
 			}
