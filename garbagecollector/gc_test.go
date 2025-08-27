@@ -87,7 +87,7 @@ func TestNewChildrenGarbageCollector(t *testing.T) {
 			t.Fatalf("Timeout waiting for children to be deleted")
 		case <-time.After(5 * time.Second):
 			todelete := objfrom(store.ObjectMeta{Name: "main", Resource: "zoos"})
-			if err := storage.Scope(todelete.GetScopes()...).Get(ctx, todelete.GetName(), todelete); err != nil {
+			if err := storage.Scope(todelete.GetScopes()...).Get(ctx, todelete.GetID(), todelete); err != nil {
 				if errors.IsNotFound(err) {
 					t.Log("Main zoo is deleted")
 				} else {
@@ -100,7 +100,7 @@ func TestNewChildrenGarbageCollector(t *testing.T) {
 			children := store.List[store.Unstructured]{
 				Resource: "employees",
 			}
-			if err := storage.Scope(todelete.GetScopes()...).Scope(store.Scope{Resource: todelete.GetResource(), Name: todelete.GetName()}).List(ctx, &children); err != nil {
+			if err := storage.Scope(todelete.GetScopes()...).Scope(store.Scope{Resource: todelete.GetResource(), Name: todelete.GetID()}).List(ctx, &children); err != nil {
 				t.Fatalf("Failed to list employees: %v", err)
 			}
 			if len(children.Items) == 0 {
@@ -128,13 +128,13 @@ func setParentScopeReferences(ctx context.Context, root store.Store, obj *store.
 
 	parent := &store.Unstructured{}
 	parent.SetResource(last.Resource)
-	if err := root.Scope(parentscopes...).Get(ctx, parent.GetName(), parent); err != nil {
+	if err := root.Scope(parentscopes...).Get(ctx, parent.GetID(), parent); err != nil {
 		panic(err)
 	}
 	obj.SetOwnerReferences([]store.OwnerReference{
 		{
 			UID:      parent.GetUID(),
-			Name:     parent.GetName(),
+			ID:       parent.GetID(),
 			Resource: parent.GetResource(),
 			Scopes:   parent.GetScopes(),
 		},

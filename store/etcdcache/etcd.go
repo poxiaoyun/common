@@ -189,7 +189,7 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 		}
 		key := getObjectKey(c.scopes, db.resource.String(), obj.GetID())
 		if err := db.storage.Create(ctx, key, uns, uns, uint64(options.TTL/time.Second)); err != nil {
-			err = storeerr.InterpretCreateError(err, db.resource, obj.GetName())
+			err = storeerr.InterpretCreateError(err, db.resource, obj.GetID())
 			return err
 		}
 		_ = ConvertFromUnstructured(uns, obj, db.resource)
@@ -626,14 +626,14 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 					// requests to remove all finalizers from the object, so we
 					// ignore the NotFound error.
 					if !storage.IsNotFound(err) {
-						err = storeerr.InterpretDeleteError(err, db.resource, obj.GetName())
+						err = storeerr.InterpretDeleteError(err, db.resource, obj.GetID())
 						return err
 					}
 					// pass
 				}
 				// pass
 			} else {
-				err = storeerr.InterpretUpdateError(err, db.resource, obj.GetName())
+				err = storeerr.InterpretUpdateError(err, db.resource, obj.GetID())
 				return err
 			}
 		}

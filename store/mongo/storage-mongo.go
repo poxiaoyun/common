@@ -322,9 +322,6 @@ func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...st
 				into.SetID(primitive.NewObjectID().Hex())
 			}
 		}
-		if into.GetName() == "" {
-			return errors.NewBadRequest("name is required")
-		}
 		into.SetCreationTimestamp(store.Now())
 		into.SetUID(uuid.NewString())
 		data, err := m.mergeConditionOnChange(into, []string{"status"})
@@ -797,7 +794,7 @@ func WarpMongoError(err error, col *mongo.Collection, obj store.Object) error {
 	if err == nil {
 		return nil
 	}
-	return ConvetMongoError(err, col, obj.GetName())
+	return ConvetMongoError(err, col, obj.GetID())
 }
 
 func ConvetMongoListError(err error, col *mongo.Collection) error {
@@ -832,8 +829,12 @@ type MongoStorageStatus struct {
 
 // Patch implements StatusStorage.
 func (m *MongoStorageStatus) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
+	id := obj.GetID()
+	if id == "" {
+		return errors.NewBadRequest("id is required")
+	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		filter = append(filter, bson.E{Key: "id", Value: id})
 		update, err := convertPatch(patch, obj, nil, []string{"status"})
 		if err != nil {
 			return err
@@ -851,8 +852,12 @@ func (m *MongoStorageStatus) Patch(ctx context.Context, obj store.Object, patch 
 
 // Update implements StatusStorage.
 func (m *MongoStorageStatus) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
+	id := obj.GetID()
+	if id == "" {
+		return errors.NewBadRequest("id is required")
+	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		filter = append(filter, bson.E{Key: "id", Value: id})
 		// inoder not to update creation time or creator
 		// we need convert obj to bson.D
 		fields, err := FlattenData(obj, 1, nil, []string{"status"})

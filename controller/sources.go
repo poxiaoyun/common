@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/retry"
 	"xiaoshiai.cn/common/store"
@@ -55,7 +56,7 @@ func (s StoreSource[T]) Run(ctx context.Context, queue TypedQueue[T]) error {
 	logger.Info("source start")
 	ctx = log.NewContext(ctx, logger)
 	return RunListWatchContext(ctx, s.Store, s.Resource, EventHandlerFunc[*store.Unstructured](func(ctx context.Context, kind store.WatchEventType, obj *store.Unstructured) error {
-		logger.Info("event", "kind", kind, "name", obj.GetName())
+		logger.Info("event", "kind", kind, "id", obj.GetID())
 
 		for _, predicate := range s.Predicate {
 			if !predicate(kind, obj) {
@@ -113,7 +114,7 @@ func RunListWatch(ctx context.Context, storage store.Store, resource string, sub
 	// watch
 	inlcudesubscope := func(wo *store.WatchOptions) {
 		wo.IncludeSubScopes = subScope
-		wo.ResourceVersion = list.ResourceVersion
+		wo.ResourceVersion = ptr.To(list.ResourceVersion)
 		wo.SendInitialEvents = true
 	}
 	return RunWatch(ctx, storage, resource, handler, inlcudesubscope)
@@ -152,7 +153,7 @@ func RunWatch(ctx context.Context, storage store.Store, resource string, handler
 					log.Error(event.Error, "watch error")
 					return event.Error
 				}
-				log.V(5).Info("watch event", "type", event.Type, "name", obj.GetName(), "resource", obj.GetResource())
+				log.V(5).Info("watch event", "type", event.Type, "id", obj.GetID(), "resource", obj.GetResource())
 				if err := handler.OnEvent(ctx, event.Type, obj); err != nil {
 					log.Error(err, "handle error")
 					return err

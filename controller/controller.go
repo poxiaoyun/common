@@ -14,16 +14,16 @@ import (
 )
 
 type ScopedKey struct {
-	Name   string
+	ID     string
 	Prefix string
 }
 
 func ScopedKeyFromObject(obj store.Object) ScopedKey {
-	return NewScopedKey(obj.GetScopes(), obj.GetName())
+	return NewScopedKey(obj.GetScopes(), obj.GetID())
 }
 
-func NewScopedKey(scopes []store.Scope, name string) ScopedKey {
-	return ScopedKey{Name: name, Prefix: EncodeScopes(scopes)}
+func NewScopedKey(scopes []store.Scope, id string) ScopedKey {
+	return ScopedKey{ID: id, Prefix: EncodeScopes(scopes)}
 }
 
 func (s ScopedKey) Scopes() []store.Scope {
@@ -52,9 +52,9 @@ func EncodeReference(ref store.ObjectReference) string {
 		sb.WriteString("/")
 		sb.WriteString(scope.Name)
 	}
-	if ref.Name != "" {
+	if ref.ID != "" {
 		sb.WriteString("/")
-		sb.WriteString(ref.Name)
+		sb.WriteString(ref.ID)
 	}
 	return store.JSONPointerEscape(sb.String())
 }
@@ -76,7 +76,7 @@ func DecodeReference(ref string) store.ObjectReference {
 		})
 	}
 	if len(parts)%2 == 1 {
-		ret.Name = parts[len(parts)-1]
+		ret.ID = parts[len(parts)-1]
 	}
 	return ret
 }

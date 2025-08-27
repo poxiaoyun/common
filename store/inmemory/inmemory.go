@@ -29,13 +29,13 @@ func (i *InMemory) Count(ctx context.Context, obj store.Object, opts ...store.Co
 
 func (i *InMemory) Create(ctx context.Context, obj store.Object, opts ...store.CreateOption) error {
 	return i.core.on(ctx, obj, func(ctx context.Context, resources string) error {
-		return i.core.create(resources, i.scopes, obj.GetName(), obj)
+		return i.core.create(resources, i.scopes, obj.GetID(), obj)
 	})
 }
 
 func (i *InMemory) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
 	return i.core.on(ctx, obj, func(ctx context.Context, resources string) error {
-		return i.core.delete(resources, i.scopes, obj.GetName(), nil)
+		return i.core.delete(resources, i.scopes, obj.GetID(), nil)
 	})
 }
 
@@ -45,7 +45,7 @@ func (i *InMemory) DeleteBatch(ctx context.Context, obj store.ObjectList, opts .
 
 func (i *InMemory) Get(ctx context.Context, name string, obj store.Object, opts ...store.GetOption) error {
 	return i.core.on(ctx, obj, func(ctx context.Context, resources string) error {
-		return i.core.get(resources, i.scopes, obj.GetName(), obj)
+		return i.core.get(resources, i.scopes, obj.GetID(), obj)
 	})
 }
 
@@ -59,7 +59,7 @@ func (i *InMemory) Patch(ctx context.Context, obj store.Object, patch store.Patc
 
 func (i *InMemory) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
 	return i.core.on(ctx, obj, func(ctx context.Context, resources string) error {
-		return i.core.put(resources, i.scopes, obj.GetName(), obj)
+		return i.core.put(resources, i.scopes, obj.GetID(), obj)
 	})
 }
 

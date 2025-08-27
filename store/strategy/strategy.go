@@ -97,7 +97,7 @@ func (s *StrategyStore) Update(ctx context.Context, obj store.Object, opts ...st
 		return s.Store.Update(ctx, obj, opts...)
 	}
 	old := store.NewObject(obj)
-	if err := s.Store.Get(ctx, obj.GetName(), old); err != nil {
+	if err := s.Store.Get(ctx, obj.GetID(), old); err != nil {
 		return err
 	}
 	finish, err := s.Stratage.BeforeUpdate(ctx, obj, old)

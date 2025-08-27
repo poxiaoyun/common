@@ -77,9 +77,9 @@ type Scope struct {
 
 // +k8s:openapi-gen=true
 type OwnerReference struct {
-	UID                string  `json:"uid,omitempty"`
-	Name               string  `json:"name,omitempty"`
+	ID                 string  `json:"id,omitempty"`
 	Resource           string  `json:"resource,omitempty"`
+	UID                string  `json:"uid,omitempty"`
 	Scopes             []Scope `json:"scopes,omitempty"`
 	Controller         bool    `json:"controller,omitempty"`
 	BlockOwnerDeletion *bool   `json:"blockOwnerDeletion,omitempty"`

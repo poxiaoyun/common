@@ -15,7 +15,7 @@ func Test_decodePath(t *testing.T) {
 		{
 			rpath: "/scope1/name/scope2/name/resource/name",
 			want: store.ResourcedObjectReference{
-				Name:     "name",
+				ID:       "name",
 				Resource: "resource",
 				Scopes: []store.Scope{
 					{Resource: "scope1", Name: "name"},

@@ -15,17 +15,17 @@ import (
 )
 
 type LocalObjectReference struct {
-	Name string `json:"name,omitempty"`
+	ID string `json:"id,omitempty"`
 }
 
 type ObjectReference struct {
-	Name   string  `json:"name,omitempty"`
+	ID     string  `json:"id,omitempty"`
 	Scopes []Scope `json:"scopes,omitempty"`
 }
 
 func ObjectReferenceFrom(obj Object) ObjectReference {
 	return ObjectReference{
-		Name:   obj.GetName(),
+		ID:     obj.GetID(),
 		Scopes: obj.GetScopes(),
 	}
 }
@@ -35,17 +35,17 @@ func (r ObjectReference) String() string {
 	for _, scope := range r.Scopes {
 		key += "/" + scope.Resource + "/" + scope.Name
 	}
-	key += "/" + r.Name
+	key += "/" + r.ID
 	return key
 }
 
 func (r ObjectReference) Equals(other ObjectReference) bool {
-	return r.Name == other.Name && ScopesEquals(r.Scopes, other.Scopes)
+	return r.ID == other.ID && ScopesEquals(r.Scopes, other.Scopes)
 }
 
 type ResourcedObjectReference struct {
 	UID      string  `json:"uid,omitempty"`
-	Name     string  `json:"name,omitempty"`
+	ID       string  `json:"id,omitempty"`
 	Scopes   []Scope `json:"scopes,omitempty"`
 	Resource string  `json:"resource,omitempty"`
 }
@@ -55,12 +55,12 @@ type ResourcedObjectReference struct {
 // Note: UID is not compared in this method.
 // Use [ResourcedObjectReference.EqualsWithUID] if you need to compare UID as well.
 func (r ResourcedObjectReference) Equals(other ResourcedObjectReference) bool {
-	return r.Name == other.Name && r.Resource == other.Resource && ScopesEquals(r.Scopes, other.Scopes)
+	return r.ID == other.ID && r.Resource == other.Resource && ScopesEquals(r.Scopes, other.Scopes)
 }
 
 // EqualsWithUID same as Equals, but also checks the UID.
 func (r ResourcedObjectReference) EqualsWithUID(other ResourcedObjectReference) bool {
-	return r.UID == other.UID && r.Name == other.Name && r.Resource == other.Resource && ScopesEquals(r.Scopes, other.Scopes)
+	return r.UID == other.UID && r.ID == other.ID && r.Resource == other.Resource && ScopesEquals(r.Scopes, other.Scopes)
 }
 
 func (r ResourcedObjectReference) String() string {
@@ -69,14 +69,14 @@ func (r ResourcedObjectReference) String() string {
 		key += "/" + scope.Resource + "/" + scope.Name
 	}
 	key += "/" + r.Resource
-	key += "/" + r.Name
+	key += "/" + r.ID
 	return key
 }
 
 func ResourcedObjectReferenceFrom(obj Object) ResourcedObjectReference {
 	return ResourcedObjectReference{
 		UID:      obj.GetUID(),
-		Name:     obj.GetName(),
+		ID:       obj.GetID(),
 		Scopes:   obj.GetScopes(),
 		Resource: obj.GetResource(),
 	}
@@ -88,7 +88,7 @@ func ObjectIdentity(obj Object) string {
 		key += "/" + scope.Resource + "/" + scope.Name
 	}
 	key += "/" + obj.GetResource()
-	key += "/" + obj.GetName()
+	key += "/" + obj.GetID()
 	return key
 }
 
@@ -251,7 +251,7 @@ func NewObject(obj Object) Object {
 }
 
 func CreateOrUpdate(ctx context.Context, store Store, obj Object, updatefn func() error) error {
-	if err := store.Get(ctx, obj.GetName(), obj); err != nil {
+	if err := store.Get(ctx, obj.GetID(), obj); err != nil {
 		if !errors.IsNotFound(err) {
 			return err
 		}

@@ -97,7 +97,7 @@ func (r *BetterReconciler[T]) Reconcile(ctx context.Context, key ScopedKey) (Res
 	obj, _ := reflect.New(reflect.TypeOf(*new(T)).Elem()).Interface().(T)
 
 	condStorage := r.Client.Scope(key.Scopes()...)
-	if err := condStorage.Get(ctx, key.Name, obj); err != nil {
+	if err := condStorage.Get(ctx, key.ID, obj); err != nil {
 		// if object not found , just ignore it
 		// if a post handler needed after object deleted, consider to add a finalizer instead
 		if errors.IsNotFound(err) {

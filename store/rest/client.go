@@ -147,7 +147,7 @@ func (c Client) Delete(ctx context.Context, obj store.Object, opts ...store.Dele
 	if options.PropagationPolicy != nil {
 		queries.Add("propagationPolicy", string(*options.PropagationPolicy))
 	}
-	return c.cli.Delete(c.getPath(resource, obj.GetName())).Queries(queries).Return(obj).Send(ctx)
+	return c.cli.Delete(c.getPath(resource, obj.GetID())).Queries(queries).Return(obj).Send(ctx)
 }
 
 // Get implements store.Store.
@@ -333,7 +333,7 @@ func (s Client) update(ctx context.Context, obj store.Object, status bool, opts 
 		queries.Add("fieldSelector", options.FieldRequirements.String())
 	}
 	return s.cli.
-		Put(s.getPath(resource, obj.GetName())).
+		Put(s.getPath(resource, obj.GetID())).
 		Query("status", strconv.FormatBool(status)).
 		Queries(queries).
 		JSON(obj).
@@ -363,7 +363,7 @@ func (c Client) patch(ctx context.Context, obj store.Object, status bool, patch 
 	if len(options.FieldRequirements) != 0 {
 		queries.Add("fieldSelector", options.FieldRequirements.String())
 	}
-	return c.cli.Patch(c.getPath(resource, obj.GetName())).
+	return c.cli.Patch(c.getPath(resource, obj.GetID())).
 		Body(bytes.NewReader(patchdata), string(patchtype)).
 		Query("status", strconv.FormatBool(status)).
 		Queries(queries).
@@ -399,7 +399,7 @@ func (s *statusClient) Patch(ctx context.Context, obj store.Object, patch store.
 	}
 	patchtype := patch.Type()
 	return s.cli.
-		Patch(s.getPath(resource, obj.GetName())).
+		Patch(s.getPath(resource, obj.GetID())).
 		Query("status", "true").
 		Body(bytes.NewReader(patchdata), string(patchtype)).
 		Return(obj).Send(ctx)

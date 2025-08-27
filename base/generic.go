@@ -59,7 +59,7 @@ func GenericWatch[T store.ObjectList](w http.ResponseWriter, r *http.Request, st
 	return GenericWatchWithName(w, r, storage, list, "", options...)
 }
 
-func GenericWatchWithName[T store.ObjectList](w http.ResponseWriter, r *http.Request, storage store.Store, list T, name string, options ...store.ListOption) error {
+func GenericWatchWithName[T store.ObjectList](w http.ResponseWriter, r *http.Request, storage store.Store, list T, id string, options ...store.ListOption) error {
 	listoptions := &store.ListOptions{}
 	for _, option := range options {
 		option(listoptions)
@@ -68,7 +68,7 @@ func GenericWatchWithName[T store.ObjectList](w http.ResponseWriter, r *http.Req
 		o.LabelRequirements = listoptions.LabelRequirements
 		o.FieldRequirements = listoptions.FieldRequirements
 		o.ResourceVersion = listoptions.ResourceVersion
-		o.Name = name
+		o.ID = id
 	}
 
 	resource, err := store.GetResource(list)
@@ -88,11 +88,11 @@ func GenericWatchWithName[T store.ObjectList](w http.ResponseWriter, r *http.Req
 	return controller.RunWatch(r.Context(), storage, resource, handler, watchoption)
 }
 
-func GenericGet(r *http.Request, storage store.Store, obj store.Object, name string, options ...store.GetOption) (any, error) {
-	if name == "" {
-		return nil, fmt.Errorf("name is required")
+func GenericGet(r *http.Request, storage store.Store, obj store.Object, id string, options ...store.GetOption) (any, error) {
+	if id == "" {
+		return nil, fmt.Errorf("id is required")
 	}
-	if err := storage.Get(r.Context(), name, obj, options...); err != nil {
+	if err := storage.Get(r.Context(), id, obj, options...); err != nil {
 		return nil, err
 	}
 	return obj, nil
@@ -108,14 +108,14 @@ func GenericCreate(r *http.Request, storage store.Store, obj store.Object, optio
 	return obj, nil
 }
 
-func GenericPatch(r *http.Request, storage store.Store, obj store.Object, name string, options ...store.PatchOption) (any, error) {
-	if name == "" {
-		return nil, fmt.Errorf("name is required")
+func GenericPatch(r *http.Request, storage store.Store, obj store.Object, id string, options ...store.PatchOption) (any, error) {
+	if id == "" {
+		return nil, fmt.Errorf("id is required")
 	}
-	if objname := obj.GetName(); objname != "" && objname != name {
-		return nil, fmt.Errorf("name in body %s is not equal to name in path %s", objname, name)
+	if objid := obj.GetID(); objid != "" && objid != id {
+		return nil, fmt.Errorf("id in body %s is not equal to id in path %s", objid, id)
 	}
-	obj.SetName(name)
+	obj.SetID(id)
 	patchmap := map[string]any{}
 	if err := api.Body(r, &patchmap); err != nil {
 		return nil, err
@@ -132,17 +132,17 @@ func MergePatchFromStruct(data any) store.Patch {
 	return store.RawPatch(store.PatchTypeMergePatch, b)
 }
 
-func GenericUpdate(r *http.Request, storage store.Store, obj store.Object, name string, options ...store.UpdateOption) (any, error) {
-	if name == "" {
-		return nil, fmt.Errorf("name is required")
+func GenericUpdate(r *http.Request, storage store.Store, obj store.Object, id string, options ...store.UpdateOption) (any, error) {
+	if id == "" {
+		return nil, fmt.Errorf("id is required")
 	}
 	if err := api.Body(r, obj); err != nil {
 		return nil, err
 	}
-	if objname := obj.GetName(); objname != "" && objname != name {
-		return nil, fmt.Errorf("name in body %s is not equal to name in path %s", objname, name)
+	if objid := obj.GetID(); objid != "" && objid != id {
+		return nil, fmt.Errorf("id in body %s is not equal to id in path %s", objid, id)
 	}
-	obj.SetName(name)
+	obj.SetID(id)
 	obj.SetResourceVersion(0)
 	if err := storage.Update(r.Context(), obj, options...); err != nil {
 		return nil, err
@@ -150,14 +150,14 @@ func GenericUpdate(r *http.Request, storage store.Store, obj store.Object, name 
 	return obj, nil
 }
 
-func GenericDelete(r *http.Request, storage store.Store, obj store.Object, name string, options ...store.DeleteOption) (any, error) {
-	if name == "" {
-		return nil, fmt.Errorf("name is required")
+func GenericDelete(r *http.Request, storage store.Store, obj store.Object, id string, options ...store.DeleteOption) (any, error) {
+	if id == "" {
+		return nil, fmt.Errorf("id is required")
 	}
-	if objname := obj.GetName(); objname != "" && objname != name {
-		return nil, fmt.Errorf("name in body %s is not equal to name in path %s", objname, name)
+	if objid := obj.GetID(); objid != "" && objid != id {
+		return nil, fmt.Errorf("id in body %s is not equal to id in path %s", objid, id)
 	}
-	obj.SetName(name)
+	obj.SetID(id)
 	if err := storage.Delete(r.Context(), obj, options...); err != nil {
 		return nil, err
 	}

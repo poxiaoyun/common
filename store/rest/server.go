@@ -33,7 +33,7 @@ type CountResponse struct {
 func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 	s.on(w, r, func(ctx context.Context, ref store.ResourcedObjectReference) (any, error) {
 		log := log.FromContext(ctx)
-		if ref.Name == "" {
+		if ref.ID == "" {
 			options := store.ListOptions{
 				Page:             api.Query(r, "page", 0),
 				Size:             api.Query(r, "size", 0),
@@ -123,7 +123,7 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 			}
 			obj := &store.Unstructured{}
 			obj.SetResource(ref.Resource)
-			if err := s.Store.Scope(ref.Scopes...).Get(ctx, ref.Name, obj, option); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).Get(ctx, ref.ID, obj, option); err != nil {
 				return nil, err
 			}
 			return obj, nil
@@ -181,7 +181,7 @@ func (s *Server) Patch(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 
-		if ref.Name == "" {
+		if ref.ID == "" {
 			// batch patch
 			batchPatch := store.RawPatchBatch(store.PatchType(patchtype), patchdata)
 			options := store.PatchBatchOptions{
@@ -210,7 +210,7 @@ func (s *Server) Patch(w http.ResponseWriter, r *http.Request) {
 
 		obj := &store.Unstructured{}
 		obj.SetResource(ref.Resource)
-		obj.SetName(ref.Name)
+		obj.SetID(ref.ID)
 
 		if status := api.Query(r, "status", false); status {
 			if err := s.Store.Scope(ref.Scopes...).Status().Patch(ctx, obj, patch, func(po *store.PatchOptions) {
@@ -231,8 +231,8 @@ func (s *Server) Patch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Update(w http.ResponseWriter, r *http.Request) {
 	s.on(w, r, func(ctx context.Context, ref store.ResourcedObjectReference) (any, error) {
-		if ref.Name == "" {
-			return nil, errors.NewBadRequest("name is required")
+		if ref.ID == "" {
+			return nil, errors.NewBadRequest("id is required")
 		}
 		options := store.UpdateOptions{
 			TTL: api.Query(r, "ttl", time.Duration(0)),
@@ -247,8 +247,8 @@ func (s *Server) Update(w http.ResponseWriter, r *http.Request) {
 		if err := api.Body(r, obj); err != nil {
 			return nil, err
 		}
-		if obj.GetName() != ref.Name {
-			return nil, errors.NewBadRequest(fmt.Sprintf("name in body %s is not equal to name in path %s", obj.GetName(), ref.Name))
+		if obj.GetID() != ref.ID {
+			return nil, errors.NewBadRequest(fmt.Sprintf("id in body %s is not equal to id in path %s", obj.GetID(), ref.ID))
 		}
 		obj.SetResource(ref.Resource)
 
@@ -271,7 +271,7 @@ func (s *Server) Update(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Delete(w http.ResponseWriter, r *http.Request) {
 	s.on(w, r, func(ctx context.Context, ref store.ResourcedObjectReference) (any, error) {
-		if ref.Name == "" {
+		if ref.ID == "" {
 			// batch delete
 			labelsel, fildsel, err := decodeSelector(r)
 			if err != nil {
@@ -297,7 +297,7 @@ func (s *Server) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 		obj := &store.Unstructured{}
 		obj.SetResource(ref.Resource)
-		obj.SetName(ref.Name)
+		obj.SetID(ref.ID)
 		if err := s.Store.Scope(ref.Scopes...).Delete(ctx, obj, func(do *store.DeleteOptions) {
 			*do = options
 		}); err != nil {
@@ -357,7 +357,7 @@ func decodePath(rpath string) store.ResourcedObjectReference {
 	return store.ResourcedObjectReference{
 		Scopes:   scopes,
 		Resource: last.Resource,
-		Name:     last.Name,
+		ID:       last.Name,
 	}
 }
 

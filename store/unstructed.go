@@ -221,7 +221,7 @@ func (u *Unstructured) GetOwnerReferences() []OwnerReference {
 			}
 			ref := OwnerReference{
 				Resource:           GetNestedString(m, "resource"),
-				Name:               GetNestedString(m, "name"),
+				ID:                 GetNestedString(m, "id"),
 				UID:                GetNestedString(m, "uid"),
 				Scopes:             GetNestedScopes(m, "scopes"),
 				Controller:         controller,
@@ -480,7 +480,7 @@ func CompareUnstructuredField(a, b *Unstructured, sorts []SortBy) int {
 
 func CompareDataFieldSort(a, b *Unstructured, sort SortBy) int {
 	switch sort.Field {
-	case "metadata.name", "name":
+	case "name":
 		switch sort.Order {
 		case SortOrderAsc:
 			return strings.Compare(a.GetName(), b.GetName())
@@ -489,7 +489,7 @@ func CompareDataFieldSort(a, b *Unstructured, sort SortBy) int {
 		default:
 			return 0
 		}
-	case "metadata.creationTimestamp", "time":
+	case "time":
 		at, bt := a.GetCreationTimestamp(), b.GetCreationTimestamp()
 		switch sort.Order {
 		case SortOrderAsc:

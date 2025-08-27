@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lib/pq"
 	"golang.org/x/exp/maps"
@@ -268,13 +269,13 @@ type core struct {
 	driver string
 }
 
-func (c *core) get(ctx context.Context, scope []store.Scope, name string, into store.Object, options store.GetOptions) error {
+func (c *core) get(ctx context.Context, scope []store.Scope, id string, into store.Object, options store.GetOptions) error {
 	resource, err := store.GetResource(into)
 	if err != nil {
 		return err
 	}
-	if name == "" {
-		return NewEmptyNameStorageError(resource)
+	if id == "" {
+		return NewEmptyIDStorageError(resource)
 	}
 	db := c.prepare(ctx, resource, scope)
 	if options.FieldRequirements != nil {
@@ -286,17 +287,17 @@ func (c *core) get(ctx context.Context, scope []store.Scope, name string, into s
 	if len(options.Fields) > 0 {
 		db = db.Select(options.Fields)
 	}
-	rows, err := db.WithContext(ctx).Where("name = ?", name).Limit(1).Rows()
+	rows, err := db.WithContext(ctx).Where("id = ?", id).Limit(1).Rows()
 	if err != nil {
-		return mapSQLError(err, resource, name)
+		return mapSQLError(err, resource, id)
 	}
 	defer rows.Close()
 
 	if !rows.Next() {
-		return errors.NewNotFound(resource, name)
+		return errors.NewNotFound(resource, id)
 	}
 	if err := c.helper.ScanOne(rows, into); err != nil {
-		return mapSQLError(err, resource, name)
+		return mapSQLError(err, resource, id)
 	}
 	return nil
 }
@@ -325,9 +326,9 @@ func (c *core) create(ctx context.Context, scopes []store.Scope, in store.Object
 	if err != nil {
 		return err
 	}
-	name := in.GetName()
-	if name == "" {
-		return NewEmptyNameStorageError(resource)
+	id := in.GetID()
+	if id == "" {
+		id = uuid.New().String()
 	}
 	in.SetCreationTimestamp(store.Now())
 	save := c.helper.ToDriverValueMap(in)
@@ -335,7 +336,7 @@ func (c *core) create(ctx context.Context, scopes []store.Scope, in store.Object
 		save[cond.Resource] = cond.Name
 	}
 	if err := c.prepare(ctx, resource, nil).Create(save).Error; err != nil {
-		return mapSQLError(err, resource, name)
+		return mapSQLError(err, resource, id)
 	}
 	return nil
 }
@@ -353,9 +354,9 @@ func (c *core) update(ctx context.Context, scope []store.Scope, into store.Objec
 	if err != nil {
 		return err
 	}
-	name := into.GetName()
-	if name == "" {
-		return NewEmptyNameStorageError(resource)
+	id := into.GetID()
+	if id == "" {
+		return NewEmptyIDStorageError(resource)
 	}
 	save := c.helper.ToDriverValueMap(into)
 	maps.DeleteFunc(save, func(key string, _ any) bool {
@@ -364,7 +365,7 @@ func (c *core) update(ctx context.Context, scope []store.Scope, into store.Objec
 	for _, cond := range scope {
 		save[cond.Resource] = cond.Name
 	}
-	db := c.prepare(ctx, resource, scope).Where("name = ?", name)
+	db := c.prepare(ctx, resource, scope).Where("id = ?", id)
 	if options.FieldRequirements != nil {
 		db = c.applyFields(db, options.FieldRequirements)
 	}
@@ -372,7 +373,7 @@ func (c *core) update(ctx context.Context, scope []store.Scope, into store.Objec
 		db = c.applyLabels(db, options.LabelRequirements)
 	}
 	if err := db.Updates(save).Error; err != nil {
-		return mapSQLError(err, resource, name)
+		return mapSQLError(err, resource, id)
 	}
 	return nil
 }
@@ -386,9 +387,9 @@ func (c *core) patch(ctx context.Context, scope []store.Scope, into store.Object
 	if err != nil {
 		return err
 	}
-	name := into.GetName()
-	if name == "" {
-		return NewEmptyNameStorageError(resource)
+	id := into.GetID()
+	if id == "" {
+		return NewEmptyIDStorageError(resource)
 	}
 	patchData, err := patch.Data(into)
 	if err != nil {
@@ -416,7 +417,7 @@ func (c *core) patch(ctx context.Context, scope []store.Scope, into store.Object
 	maps.DeleteFunc(update, func(key string, _ any) bool {
 		return status && !slices.Contains(statusAllowedKeys, key) || !status && key == "status"
 	})
-	db := c.prepare(ctx, resource, scope).Where("name = ?", name)
+	db := c.prepare(ctx, resource, scope).Where("id = ?", id)
 	if options.FieldRequirements != nil {
 		db = c.applyFields(db, options.FieldRequirements)
 	}
@@ -424,7 +425,7 @@ func (c *core) patch(ctx context.Context, scope []store.Scope, into store.Object
 		db = c.applyLabels(db, options.LabelRequirements)
 	}
 	if err := db.Updates(update).Error; err != nil {
-		return mapSQLError(err, resource, name)
+		return mapSQLError(err, resource, id)
 	}
 	return nil
 }
@@ -506,9 +507,9 @@ func (c *core) delete(ctx context.Context, scope []store.Scope, into store.Objec
 	if err != nil {
 		return err
 	}
-	name := into.GetName()
-	if name == "" {
-		return NewEmptyNameStorageError(resource)
+	id := into.GetID()
+	if id == "" {
+		return NewEmptyIDStorageError(resource)
 	}
 
 	db := c.prepare(ctx, resource, scope)
@@ -519,11 +520,11 @@ func (c *core) delete(ctx context.Context, scope []store.Scope, into store.Objec
 		db = c.applyLabels(db, options.LabelRequirements)
 	}
 	intoV := c.helper.ToDriverValueMap(into)
-	if err := db.Where("name = ?", name).Delete(intoV).Error; err != nil {
-		return mapSQLError(err, resource, name)
+	if err := db.Where("id = ?", id).Delete(intoV).Error; err != nil {
+		return mapSQLError(err, resource, id)
 	}
 	if db.RowsAffected == 0 {
-		return errors.NewNotFound(resource, name)
+		return errors.NewNotFound(resource, id)
 	}
 	return nil
 }
@@ -719,6 +720,6 @@ func mapSQLError(err error, resource string, name string) error {
 	return err
 }
 
-func NewEmptyNameStorageError(resource string) error {
-	return errors.NewBadRequest(fmt.Sprintf("empty name for resource %s", resource))
+func NewEmptyIDStorageError(resource string) error {
+	return errors.NewBadRequest(fmt.Sprintf("empty id for resource %s", resource))
 }

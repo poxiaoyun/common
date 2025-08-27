@@ -168,18 +168,18 @@ func (e *EtcdStore) Create(ctx context.Context, obj store.Object, opts ...store.
 	if err := e.core.validateObject(obj); err != nil {
 		return err
 	}
-	if obj.GetName() == "" {
-		return errors.NewBadRequest("name is required")
+	if obj.GetID() == "" {
+		return errors.NewBadRequest("id is required")
 	}
 	if obj.GetResourceVersion() != 0 {
-		return errors.NewInvalid(resource, obj.GetName(), ErrResourceVersionSetOnCreate)
+		return errors.NewInvalid(resource, obj.GetID(), ErrResourceVersionSetOnCreate)
 	}
 	obj.SetUID(uuid.New().String())
 	obj.SetCreationTimestamp(store.Now())
 	obj.SetScopes(e.scopes)
 	obj.SetResource(resource)
 
-	preparedKey := e.core.getkey(e.scopes, resource, obj.GetName())
+	preparedKey := e.core.getkey(e.scopes, resource, obj.GetID())
 
 	data, err := e.core.serializer.Encode(obj)
 	if err != nil {
@@ -198,7 +198,7 @@ func (e *EtcdStore) Create(ctx context.Context, obj store.Object, opts ...store.
 		return errors.NewInternalError(err)
 	}
 	if !txnResp.Succeeded {
-		return errors.NewAlreadyExists(resource, obj.GetName())
+		return errors.NewAlreadyExists(resource, obj.GetID())
 	}
 
 	putResp := txnResp.Responses[0].GetResponsePut()
@@ -227,7 +227,7 @@ func (e *EtcdStore) Delete(ctx context.Context, obj store.Object, opts ...store.
 	if err := e.core.validateObject(obj); err != nil {
 		return err
 	}
-	if obj.GetName() == "" {
+	if obj.GetID() == "" {
 		return errors.NewBadRequest("name is required")
 	}
 
@@ -250,7 +250,7 @@ func (e *EtcdStore) Delete(ctx context.Context, obj store.Object, opts ...store.
 		updatefunc := func(current store.Object) (store.Object, error) {
 			// if rev := deleteoptions.ResourceVersion; rev > 0 {
 			// 	if current.GetResourceVersion() != rev {
-			// 		return nil, errors.NewConflict(resource, obj.GetName(),
+			// 		return nil, errors.NewConflict(resource, obj.GetID(),
 			// 			fmt.Errorf("resourceVersion %d does not match", rev))
 			// 	}
 			// }
@@ -427,7 +427,7 @@ func (e *EtcdStore) Update(ctx context.Context, obj store.Object, opts ...store.
 	updatefunc := func(current store.Object) (store.Object, error) {
 		if resourceVersion := obj.GetResourceVersion(); resourceVersion != 0 {
 			if resourceVersion != current.GetResourceVersion() {
-				return nil, errors.NewConflict(current.GetResource(), obj.GetName(),
+				return nil, errors.NewConflict(current.GetResource(), obj.GetID(),
 					fmt.Errorf("resourceVersion %d does not match", resourceVersion))
 			}
 		}
@@ -487,7 +487,7 @@ func (e *EtcdStatusStore) Update(ctx context.Context, obj store.Object, opts ...
 	updatefunc := func(current store.Object) (store.Object, error) {
 		if resourceVersion := obj.GetResourceVersion(); resourceVersion != 0 {
 			if resourceVersion != current.GetResourceVersion() {
-				return nil, errors.NewConflict(resource, obj.GetName(),
+				return nil, errors.NewConflict(resource, obj.GetID(),
 					fmt.Errorf("resourceVersion %d does not match", resourceVersion))
 			}
 		}
@@ -568,10 +568,10 @@ func (e *etcdStoreCore) tryUpdate(ctx context.Context, scopes []store.Scope, obj
 	if err != nil {
 		return errors.NewBadRequest(fmt.Sprintf("object must be a pointer: %v", err))
 	}
-	if obj.GetName() == "" {
-		return errors.NewBadRequest("name is required")
+	if obj.GetID() == "" {
+		return errors.NewBadRequest("id is required")
 	}
-	name := obj.GetName()
+	id := obj.GetID()
 	resource, err := store.GetResource(obj)
 	if err != nil {
 		return err
@@ -584,7 +584,7 @@ func (e *etcdStoreCore) tryUpdate(ctx context.Context, scopes []store.Scope, obj
 		current = reflect.New(v.Type()).Interface().(store.Object)
 	}
 
-	preparedKey := e.getkey(scopes, resource, name)
+	preparedKey := e.getkey(scopes, resource, id)
 
 	currentdata, err := e.getCurrent(ctx, preparedKey, current, 0)
 	if err != nil {
@@ -593,7 +593,7 @@ func (e *etcdStoreCore) tryUpdate(ctx context.Context, scopes []store.Scope, obj
 	maxRetries := 5
 	for {
 		if maxRetries == 0 {
-			return errors.NewConflict(resource, name, fmt.Errorf("max retries reached"))
+			return errors.NewConflict(resource, id, fmt.Errorf("max retries reached"))
 		}
 		currentversion := current.GetResourceVersion()
 		updated, err := do(current)
@@ -603,8 +603,8 @@ func (e *etcdStoreCore) tryUpdate(ctx context.Context, scopes []store.Scope, obj
 		// should set scopes
 		updated.SetScopes(scopes)
 		updated.SetResource(resource)
-		if updated.GetName() != name {
-			return errors.NewBadRequest("name cannot be changed")
+		if updated.GetID() != id {
+			return errors.NewBadRequest("id cannot be changed")
 		}
 		updated.SetResourceVersion(0)
 		data, err := e.serializer.Encode(updated)
@@ -656,11 +656,11 @@ func (s *etcdStoreCore) getCurrent(ctx context.Context, key string, into store.O
 
 func (s *etcdStoreCore) decodeGetResp(getResp *clientv3.GetResponse, into store.Object, rev int64) ([]byte, error) {
 	if len(getResp.Kvs) == 0 {
-		return nil, errors.NewNotFound(into.GetResource(), into.GetName())
+		return nil, errors.NewNotFound(into.GetResource(), into.GetID())
 	}
 	kv := getResp.Kvs[0]
 	if rev != 0 && kv.ModRevision < rev {
-		return nil, errors.NewInvalid(into.GetResource(), into.GetName(),
+		return nil, errors.NewInvalid(into.GetResource(), into.GetID(),
 			fmt.Errorf("resourceVersion %d is newer than current %d", rev, kv.ModRevision))
 	}
 	if into != nil {
@@ -678,7 +678,7 @@ func (e *etcdStoreCore) directDelete(ctx context.Context, scopes []store.Scope, 
 		return err
 	}
 
-	key := e.getkey(scopes, resource, obj.GetName())
+	key := e.getkey(scopes, resource, obj.GetID())
 
 	cmps := []clientv3.Cmp{}
 	if resourceVersion != 0 {
@@ -696,10 +696,10 @@ func (e *etcdStoreCore) directDelete(ctx context.Context, scopes []store.Scope, 
 		getResp := txnResp.Responses[0].GetResponseRange()
 		if len(getResp.Kvs) == 0 {
 			log.V(4).Info("deletion failed because key not found", "key", key)
-			return errors.NewNotFound(resource, obj.GetName())
+			return errors.NewNotFound(resource, obj.GetID())
 		}
 		log.V(4).Info("deletion failed because resourceVersion does not match", "key", key)
-		return errors.NewConflict(resource, obj.GetName(), fmt.Errorf("resourceVersion %d does not match", resourceVersion))
+		return errors.NewConflict(resource, obj.GetID(), fmt.Errorf("resourceVersion %d does not match", resourceVersion))
 	}
 	// always not be empty
 	if getResp := txnResp.Responses[0].GetResponseRange(); len(getResp.Kvs) != 0 {

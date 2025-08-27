@@ -370,7 +370,7 @@ func (c *cachedResource) sync(ctx context.Context, s store.Store) error {
 			if !ok {
 				continue
 			}
-			objid := c.getkey(objval.GetScopes(), objval.GetName())
+			objid := c.getkey(objval.GetScopes(), objval.GetID())
 			c.kvs.set(objid, event.Type, objval)
 		}
 	}

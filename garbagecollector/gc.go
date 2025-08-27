@@ -87,20 +87,20 @@ func (c *GarbageCollector) injectOwnerReference(ctx context.Context, obj *store.
 	ownerscopes, last := ownerscopes[:len(ownerscopes)-1], ownerscopes[len(ownerscopes)-1]
 
 	newown := store.OwnerReference{
-		Name:     last.Name,
+		ID:       last.Name,
 		Resource: last.Resource,
 		Scopes:   ownerscopes,
 	}
 	ownerRefs := obj.GetOwnerReferences()
 	for _, ref := range ownerRefs {
 		// if the owner reference already exists, skip
-		if IsSameScopes(ref.Scopes, newown.Scopes) && ref.Resource == newown.Resource && ref.Name == newown.Name {
+		if IsSameScopes(ref.Scopes, newown.Scopes) && ref.Resource == newown.Resource && ref.ID == newown.ID {
 			return nil
 		}
 	}
 
 	// inject owner reference of current parent
-	log.FromContext(ctx).V(5).Info("inject owner reference", "owner", newown, "resource", obj.GetResource(), "name", obj.GetName())
+	log.FromContext(ctx).V(5).Info("inject owner reference", "owner", newown, "resource", obj.GetResource(), "id", obj.GetID())
 
 	owner := &store.Unstructured{}
 	owner.SetResource(last.Resource)
@@ -181,7 +181,7 @@ func (o objectIdentity) Equals(other objectIdentity) bool {
 func objectIdentityFrom(obj store.Object) objectIdentity {
 	return objectIdentity{
 		ResourcedObjectReference: store.ResourcedObjectReference{
-			Name:     obj.GetName(),
+			ID:       obj.GetID(),
 			Resource: obj.GetResource(),
 			Scopes:   obj.GetScopes(),
 		},
@@ -420,7 +420,7 @@ func (gc *GarbageCollector) isDangling(ctx context.Context, reference store.Owne
 	// status, but in practice, the difference is small.
 	desc := &store.Unstructured{}
 	desc.SetResource(reference.Resource)
-	if err := gc.storage.Scope(absentOwnerCacheKey.Scopes...).Get(ctx, absentOwnerCacheKey.Name, desc); err != nil {
+	if err := gc.storage.Scope(absentOwnerCacheKey.Scopes...).Get(ctx, absentOwnerCacheKey.ID, desc); err != nil {
 		if errors.IsNotFound(err) {
 			gc.graph.absentOwnerCache.Add(absentOwnerCacheKey)
 			logger.V(5).Info("item's owner is not found", "item", item.identity, "owner", reference)
@@ -439,7 +439,7 @@ func (gc *GarbageCollector) isDangling(ctx context.Context, reference store.Owne
 func ownerReferenceIdentity(ref store.OwnerReference) objectIdentity {
 	return objectIdentity{
 		UID:                      ref.UID,
-		ResourcedObjectReference: store.ResourcedObjectReference{Resource: ref.Resource, Name: ref.Name, Scopes: ref.Scopes},
+		ResourcedObjectReference: store.ResourcedObjectReference{Resource: ref.Resource, ID: ref.ID, Scopes: ref.Scopes},
 	}
 }
 
@@ -485,7 +485,7 @@ func (gc *GarbageCollector) removeFinalizer(ctx context.Context, owner *node, ta
 func (gc *GarbageCollector) getObject(ctx context.Context, item objectIdentity) (store.Object, error) {
 	desc := &store.Unstructured{}
 	desc.SetResource(item.Resource)
-	if err := gc.storage.Scope(item.Scopes...).Get(ctx, item.Name, desc); err != nil {
+	if err := gc.storage.Scope(item.Scopes...).Get(ctx, item.ID, desc); err != nil {
 		return nil, err
 	}
 	return desc, nil
@@ -494,7 +494,7 @@ func (gc *GarbageCollector) getObject(ctx context.Context, item objectIdentity) 
 func (gc *GarbageCollector) patchObject(ctx context.Context, item objectIdentity, patch store.Patch) error {
 	desc := &store.Unstructured{}
 	desc.SetResource(item.Resource)
-	desc.SetName(item.Name)
+	desc.SetID(item.ID)
 
 	return gc.storage.Scope(item.Scopes...).Patch(ctx, desc, patch)
 }
@@ -509,7 +509,7 @@ func (gc *GarbageCollector) deleteObject(ctx context.Context, item objectIdentit
 	}
 	desc := &store.Unstructured{}
 	desc.SetResource(item.Resource)
-	desc.SetName(item.Name)
+	desc.SetID(item.ID)
 	return gc.storage.Scope(item.Scopes...).Delete(ctx, desc, options...)
 }
 
@@ -686,7 +686,7 @@ func referencesDiffs(olds []store.OwnerReference, news []store.OwnerReference) (
 }
 
 func SameOwnerReferences(a, b store.OwnerReference) bool {
-	return a.UID == b.UID && a.Name == b.Name && a.Resource == b.Resource && IsSameScopes(a.Scopes, b.Scopes)
+	return a.UID == b.UID && a.ID == b.ID && a.Resource == b.Resource && IsSameScopes(a.Scopes, b.Scopes)
 }
 
 func partitionDependents(children []*node, owner objectIdentity) (matches, nomatches []*node) {
@@ -717,7 +717,7 @@ func partitionDependents(children []*node, owner objectIdentity) (matches, nomat
 }
 
 func ownerReferenceMatchesCoordinates(a store.OwnerReference, b objectIdentity) bool {
-	return a.UID == b.UID && a.Name == b.Name && a.Resource == b.Resource && IsSameScopes(a.Scopes, b.Scopes)
+	return a.UID == b.UID && a.ID == b.ID && a.Resource == b.Resource && IsSameScopes(a.Scopes, b.Scopes)
 }
 
 func IsSameScopes(scope1, scope2 []store.Scope) bool {
