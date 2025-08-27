@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	grpccodes "google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
+	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
@@ -47,7 +48,7 @@ func (e *EtcdStore) Watch(ctx context.Context, obj store.ObjectList, opts ...sto
 		resource:          resource,
 		key:               e.core.getlistkey(e.scopes, resource),
 		includesubscopes:  options.IncludeSubScopes,
-		initialRev:        options.ResourceVersion,
+		initialRev:        ptr.Deref(options.ResourceVersion, 0),
 		cancel:            cancel,
 		resultChan:        make(chan store.WatchEvent, outgoingEventChanSize),
 		incomingEventChan: make(chan *etcdEvent, incomingEventChanSize),

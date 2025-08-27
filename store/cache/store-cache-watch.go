@@ -25,7 +25,7 @@ func (g *CacheStore) Watch(ctx context.Context, list store.ObjectList, opts ...s
 	if _, err := store.EnforcePtr(list); err != nil {
 		return nil, errors.NewBadRequest(fmt.Sprintf("object list must be a pointer: %v", err))
 	}
-	if options.ResourceVersion > 0 {
+	if options.ResourceVersion != nil {
 		return nil, errors.NewBadRequest("watch with resource version is not supported in cache store")
 	}
 	_, newItemFunc, err := store.NewItemFuncFromList(list)

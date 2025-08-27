@@ -3,9 +3,7 @@ package etcdcache
 import (
 	"context"
 	"fmt"
-	"strconv"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -45,22 +43,21 @@ func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store
 		return nil, err
 	}
 
-	storageOptions := storage.ListOptions{Predicate: preficate}
+	storageOptions := storage.ListOptions{
+		Predicate:       preficate,
+		ResourceVersion: formatResourceVersion(options.ResourceVersion),
+	}
 	// allow watch bookmarks to enabled watchlist
 	if options.SendInitialEvents {
 		storageOptions.SendInitialEvents = ptr.To(true)
 		storageOptions.Predicate.AllowWatchBookmarks = true
 	}
-	if options.ResourceVersion != 0 {
-		storageOptions.ResourceVersion = strconv.FormatInt(options.ResourceVersion, 10)
-	}
 
 	var watchkey string
-	if options.Name != "" {
-		watchkey = getObjectKey(c.scopes, resource, options.Name)
-		// must specify metadata.name when watch on single object
+	if options.ID != "" {
+		watchkey = getObjectKey(c.scopes, resource, options.ID)
 		storageOptions.Predicate.Field = fields.AndSelectors(
-			fields.OneTermEqualSelector("metadata.name", options.Name),
+			fields.OneTermEqualSelector("id", options.ID),
 		)
 	} else {
 		watchkey = getlistkey(c.scopes, resource)
@@ -124,20 +121,20 @@ func (w *warpWatcher) run(ctx context.Context) {
 				}
 				continue
 			}
-			uns, ok := e.Object.(*unstructured.Unstructured)
+			uns, ok := e.Object.(*StorageObject)
 			if !ok {
 				cachable, ok := e.Object.(runtime.CacheableObject)
 				if !ok {
 					w.result <- store.WatchEvent{
-						Error: fmt.Errorf("object is not an unstructured.Unstructured, current type: %T", e.Object),
+						Error: fmt.Errorf("object is not an runtime.CacheableObject, current type: %T", e.Object),
 					}
 					return
 				}
 				obj := cachable.GetObject()
-				uns, ok = obj.(*unstructured.Unstructured)
+				uns, ok = obj.(*StorageObject)
 				if !ok {
 					w.result <- store.WatchEvent{
-						Error: fmt.Errorf("cacheable object is not an unstructured.Unstructured, current type: %T", obj),
+						Error: fmt.Errorf("cacheable object is not an StorageObject, current type: %T", obj),
 					}
 					return
 				}

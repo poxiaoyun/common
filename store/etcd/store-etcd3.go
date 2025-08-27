@@ -308,8 +308,8 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 	getoptions = append(getoptions, clientv3.WithRange(rangeEnd))
 
 	withRev := options.ResourceVersion
-	if withRev != 0 {
-		getoptions = append(getoptions, clientv3.WithRev(withRev))
+	if withRev != nil {
+		getoptions = append(getoptions, clientv3.WithRev(*withRev))
 	}
 	limit := options.Size
 	skip := 0
@@ -331,9 +331,9 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 		if len(getResp.Kvs) == 0 && hasMore {
 			return errors.NewInternalError(fmt.Errorf("etcd returned no keys but more is true"))
 		}
-		if withRev == 0 {
-			withRev = getResp.Header.Revision
-			getoptions = append(getoptions, clientv3.WithRev(withRev))
+		if withRev == nil {
+			withRev = ptr.To(getResp.Header.Revision)
+			getoptions = append(getoptions, clientv3.WithRev(*withRev))
 		}
 		store.GrowSlice(v, len(getResp.Kvs))
 		for _, kv := range getResp.Kvs {
@@ -376,7 +376,7 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 		// Ensure that we never return a nil Items pointer in the result for consistency.
 		v.Set(reflect.MakeSlice(v.Type(), 0, 0))
 	}
-	list.SetResourceVersion(withRev)
+	list.SetResourceVersion(ptr.Deref(withRev, 0))
 	list.SetScopes(e.scopes)
 	return nil
 }

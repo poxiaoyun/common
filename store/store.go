@@ -6,6 +6,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -15,7 +16,10 @@ const (
 
 type (
 	GetOptions struct {
-		ResourceVersion int64
+		// ResourceVersion set to 0 to get from cache
+		// ResourceVersion set to a specific value to get the object not older than that version
+		// ResourceVersion set to nil to get from backend
+		ResourceVersion *int64
 		// FieldRequirements is a list of conditions that must be true for the get to occur.
 		// It may not supported by all databases.
 		FieldRequirements Requirements
@@ -36,8 +40,11 @@ type (
 		// ascending creation timestamp.
 		// name is alias for metadata.name
 		// time is alias for metadata.creationTimestamp
-		Sort              string
-		ResourceVersion   int64
+		Sort string
+		// ResourceVersion set to 0 to get from cache
+		// ResourceVersion set to a specific value to get the object not older than that version
+		// ResourceVersion set to nil to get from backend
+		ResourceVersion   *int64
 		LabelRequirements Requirements
 		FieldRequirements Requirements
 		//  IncludeSubScopes is a flag to include resources in subscopes of current scope.
@@ -102,10 +109,10 @@ type (
 	PatchBatchOption func(*PatchBatchOptions)
 
 	WatchOptions struct {
-		Name              string
+		ID                string
 		LabelRequirements Requirements
 		FieldRequirements Requirements
-		ResourceVersion   int64
+		ResourceVersion   *int64
 		IncludeSubScopes  bool
 		SendInitialEvents bool
 	}
@@ -124,9 +131,9 @@ func WithWatchSubscopes() WatchOption {
 	}
 }
 
-func WithWatchName(name string) WatchOption {
+func WithWatchID(id string) WatchOption {
 	return func(o *WatchOptions) {
-		o.Name = name
+		o.ID = id
 	}
 }
 
@@ -178,6 +185,12 @@ func WithGetFields(fields ...string) GetOption {
 	}
 }
 
+func WithGetResourceVersion(rv int64) GetOption {
+	return func(o *GetOptions) {
+		o.ResourceVersion = ptr.To(rv)
+	}
+}
+
 func WithUpdateFieldRequirements(reqs ...Requirement) UpdateOption {
 	return func(o *UpdateOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, reqs...)
@@ -217,6 +230,18 @@ func WithFieldRequirements(reqs ...Requirement) ListOption {
 func WithFields(fields ...string) ListOption {
 	return func(o *ListOptions) {
 		o.Fields = append(o.Fields, fields...)
+	}
+}
+
+// WithResourceVersion set 0 to read from latest cache
+// WithResourceVersion set to -1 to read from backend
+func WithResourceVersion(rv int64) ListOption {
+	return func(o *ListOptions) {
+		if rv < 0 {
+			o.ResourceVersion = nil
+		} else {
+			o.ResourceVersion = ptr.To(rv)
+		}
 	}
 }
 
@@ -376,7 +401,7 @@ func WithDeletePropagation(policy DeletionPropagation) DeleteOption {
 }
 
 type Store interface {
-	Get(ctx context.Context, name string, obj Object, opts ...GetOption) error
+	Get(ctx context.Context, id string, obj Object, opts ...GetOption) error
 	List(ctx context.Context, list ObjectList, opts ...ListOption) error
 	Count(ctx context.Context, obj Object, opts ...CountOption) (int, error)
 	Create(ctx context.Context, obj Object, opts ...CreateOption) error
@@ -391,6 +416,7 @@ type Store interface {
 	Status() StatusStorage
 	Scope(scope ...Scope) Store
 }
+
 type StatusStorage interface {
 	Update(ctx context.Context, obj Object, opts ...UpdateOption) error
 	Patch(ctx context.Context, obj Object, patch Patch, opts ...PatchOption) error

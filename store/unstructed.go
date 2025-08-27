@@ -36,19 +36,9 @@ func (u *Unstructured) SetAPIVersion(ver string) {
 	SetNestedField(u.Object, ver, "apiVersion")
 }
 
-// GetAlias implements Object.
-func (u *Unstructured) GetAlias() string {
-	return GetNestedString(u.Object, "alias")
-}
-
 // GetDescription implements Object.
 func (u *Unstructured) GetDescription() string {
 	return GetNestedString(u.Object, "description")
-}
-
-// SetAlias implements Object.
-func (u *Unstructured) SetAlias(alias string) {
-	SetNestedField(u.Object, alias, "alias")
 }
 
 // SetDescription implements Object.
@@ -491,16 +481,24 @@ func CompareUnstructuredField(a, b *Unstructured, sorts []SortBy) int {
 func CompareDataFieldSort(a, b *Unstructured, sort SortBy) int {
 	switch sort.Field {
 	case "metadata.name", "name":
-		if sort.ASC {
+		switch sort.Order {
+		case SortOrderAsc:
 			return strings.Compare(a.GetName(), b.GetName())
+		case SortOrderDesc:
+			return strings.Compare(b.GetName(), a.GetName())
+		default:
+			return 0
 		}
-		return strings.Compare(b.GetName(), a.GetName())
 	case "metadata.creationTimestamp", "time":
 		at, bt := a.GetCreationTimestamp(), b.GetCreationTimestamp()
-		if sort.ASC {
+		switch sort.Order {
+		case SortOrderAsc:
 			return at.Compare(bt.Time)
+		case SortOrderDesc:
+			return bt.Compare(at.Time)
+		default:
+			return 0
 		}
-		return bt.Compare(at.Time)
 	}
 	av, ok := GetNestedField(a.Object, strings.Split(sort.Field, ".")...)
 	if !ok {
@@ -510,10 +508,14 @@ func CompareDataFieldSort(a, b *Unstructured, sort SortBy) int {
 	if !ok {
 		bv = ""
 	}
-	if sort.ASC {
+	switch sort.Order {
+	case SortOrderAsc:
 		return CompareField(av, bv)
+	case SortOrderDesc:
+		return CompareField(bv, av)
+	default:
+		return 0
 	}
-	return CompareField(bv, av)
 }
 
 func CompareField(a, b any) int {
@@ -536,14 +538,33 @@ func CompareField(a, b any) int {
 			return -1
 		}
 		return 1
+	case float64:
+		bv, ok := b.(float64)
+		if !ok {
+			return 0
+		}
+		if av == bv {
+			return 0
+		}
+		if av < bv {
+			return -1
+		}
+		return 1
 	default:
 		return 0
 	}
 }
 
+type SortOrder string
+
+const (
+	SortOrderAsc  SortOrder = "asc"
+	SortOrderDesc SortOrder = "desc"
+)
+
 type SortBy struct {
 	Field string
-	ASC   bool
+	Order SortOrder
 }
 
 // ParseSorts parse a sort query string into a list of SortBy
@@ -558,14 +579,14 @@ func ParseSorts(sort string) []SortBy {
 		if s == "" {
 			continue
 		}
-		asc := true
+		order := SortOrderAsc
 		if strings.HasSuffix(s, "-") {
-			asc = false
+			order = SortOrderDesc
 			s = s[:len(s)-1]
 		} else if strings.HasSuffix(s, "+") {
 			s = s[:len(s)-1]
 		}
-		sortbys = append(sortbys, SortBy{Field: s, ASC: asc})
+		sortbys = append(sortbys, SortBy{Field: s, Order: order})
 	}
 	return sortbys
 }

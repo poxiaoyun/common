@@ -161,8 +161,8 @@ func (c Client) Get(ctx context.Context, name string, obj store.Object, opts ...
 		o(&options)
 	}
 	queries := url.Values{}
-	if options.ResourceVersion != 0 {
-		queries.Add("resourceVersion", strconv.FormatInt(options.ResourceVersion, 10))
+	if options.ResourceVersion != nil {
+		queries.Add("resourceVersion", strconv.FormatInt(*options.ResourceVersion, 10))
 	}
 	if options.Fields != nil {
 		queries.Add("fields", strings.Join(options.Fields, ","))
@@ -202,8 +202,8 @@ func (c Client) List(ctx context.Context, list store.ObjectList, opts ...store.L
 	if options.Sort != "" {
 		queries.Add("sort", options.Sort)
 	}
-	if options.ResourceVersion != 0 {
-		queries.Add("resourceVersion", strconv.FormatInt(options.ResourceVersion, 10))
+	if options.ResourceVersion != nil {
+		queries.Add("resourceVersion", strconv.FormatInt(*options.ResourceVersion, 10))
 	}
 	if options.Continue != "" {
 		queries.Add("continue", options.Continue)
@@ -241,8 +241,8 @@ func (c Client) Watch(ctx context.Context, obj store.ObjectList, opts ...store.W
 	if len(options.FieldRequirements) != 0 {
 		queries.Add("fieldSelector", options.FieldRequirements.String())
 	}
-	if options.ResourceVersion != 0 {
-		queries.Add("resourceVersion", strconv.FormatInt(options.ResourceVersion, 10))
+	if options.ResourceVersion != nil {
+		queries.Add("resourceVersion", strconv.FormatInt(*options.ResourceVersion, 10))
 	}
 	if options.IncludeSubScopes {
 		queries.Add("includeSubscopes", "true")

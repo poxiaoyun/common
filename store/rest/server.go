@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 				Search:           api.Query(r, "search", ""),
 				Sort:             api.Query(r, "sort", ""),
 				IncludeSubScopes: api.Query(r, "includeSubscopes", false),
-				ResourceVersion:  api.Query(r, "resourceVersion", int64(0)),
+				ResourceVersion:  parseResourceVersion(api.Query(r, "resourceVersion", "")),
 			}
 			labelsel, fildsel, err := decodeSelector(r)
 			if err != nil {
@@ -129,6 +130,17 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 
 		}
 	})
+}
+
+func parseResourceVersion(s string) *int64 {
+	if s == "" {
+		return nil
+	}
+	i, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &i
 }
 
 func (s *Server) Create(w http.ResponseWriter, r *http.Request) {

@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,7 +22,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/registry/rest"
@@ -32,7 +30,6 @@ import (
 	storeerr "k8s.io/apiserver/pkg/storage/errors"
 	"k8s.io/apiserver/pkg/storage/etcd3"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/identity"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/store"
@@ -67,8 +64,6 @@ const (
 	// It is set to 20 seconds as times shorter than that will cause TLS connections to fail
 	// on heavily loaded arm64 CPUs (issue #64649)
 	dialTimeout = 20 * time.Second
-
-	dbMetricsMonitorJitter = 0.5
 )
 
 func NewETCD3Client(c *Options) (*clientv3.Client, error) {
@@ -157,7 +152,7 @@ func (c *generic) Count(ctx context.Context, obj store.Object, opts ...store.Cou
 	if err := c.core.on(ctx, obj, func(ctx context.Context, db *db) error {
 		key := getlistkey(c.scopes, db.resource.String())
 		listopts := storage.ListOptions{Recursive: true, Predicate: preficate}
-		list := &unstructured.UnstructuredList{}
+		list := &StorageObjectList{}
 		if err := db.storage.GetList(ctx, key, listopts, list); err != nil {
 			return err
 		}
@@ -181,8 +176,8 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 		opt(&options)
 	}
 	return c.core.on(ctx, obj, func(ctx context.Context, db *db) error {
-		if obj.GetName() == "" {
-			return errors.NewBadRequest(fmt.Sprintf("name is required for %s", db.resource))
+		if obj.GetID() == "" {
+			return errors.NewBadRequest(fmt.Sprintf("id is required for %s", db.resource))
 		}
 		obj.SetUID(uuid.New().String())
 		obj.SetCreationTimestamp(store.Now())
@@ -192,8 +187,8 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 		if err != nil {
 			return err
 		}
-		key := getObjectKey(c.scopes, db.resource.String(), obj.GetName())
-		if err := db.storage.Create(ctx, key, uns, uns, uint64(options.TTL.Seconds())); err != nil {
+		key := getObjectKey(c.scopes, db.resource.String(), obj.GetID())
+		if err := db.storage.Create(ctx, key, uns, uns, uint64(options.TTL/time.Second)); err != nil {
 			err = storeerr.InterpretCreateError(err, db.resource, obj.GetName())
 			return err
 		}
@@ -245,12 +240,12 @@ func (c *generic) Get(ctx context.Context, name string, obj store.Object, opts .
 	}
 	return c.core.on(ctx, obj, func(ctx context.Context, db *db) error {
 		key := getObjectKey(c.scopes, db.resource.String(), name)
-		uns := &unstructured.Unstructured{}
+		uns := &StorageObject{}
 		options := storage.GetOptions{
 			// if resource version is empty, underlying storage will passthrough to etcd
 			// if set to 0, underlying storage will return the cached object
 			// if set to a number, underlying storage will return the object with the same resource version
-			ResourceVersion: strconv.FormatInt(options.ResourceVersion, 10),
+			ResourceVersion: formatResourceVersion(options.ResourceVersion),
 		}
 		if err := db.storage.Get(ctx, key, options, uns); err != nil {
 			err = storeerr.InterpretGetError(err, db.resource, name)
@@ -276,12 +271,12 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 	}
 	return c.core.on(ctx, list, func(ctx context.Context, db *db) error {
 		keyprefix := getlistkey(c.scopes, db.resource.String())
-		listopts := storage.ListOptions{Recursive: true, Predicate: preficate}
-		if options.ResourceVersion != 0 {
-			listopts.ResourceVersion = strconv.FormatInt(options.ResourceVersion, 10)
+		listopts := storage.ListOptions{
+			Recursive:       true,
+			Predicate:       preficate,
+			ResourceVersion: formatResourceVersion(options.ResourceVersion),
 		}
-
-		unslist := &unstructured.UnstructuredList{}
+		unslist := &StorageObjectList{}
 		const MaxRetry = 3
 		for retries := 0; ; retries++ {
 			if err := db.storage.GetList(ctx, keyprefix, listopts, unslist); err != nil {
@@ -306,15 +301,15 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 		}
 		// search
 		if options.Search != "" {
-			filtered = slices.DeleteFunc(filtered, func(uns unstructured.Unstructured) bool {
-				if len(options.SearchFields) != 0 {
-					return !searchObject(&uns, options.SearchFields, options.Search)
+			filtered = slices.DeleteFunc(filtered, func(uns StorageObject) bool {
+				if len(options.SearchFields) == 0 {
+					options.SearchFields = []string{"id", "name"}
 				}
-				return !searchObject(&uns, []string{"name", "alias"}, options.Search)
+				return !searchObject(&uns, options.SearchFields, options.Search)
 			})
 		}
 		// sort
-		SortUnstructuredList(filtered, options.Sort)
+		SortUnstructuredList(filtered, store.ParseSorts(options.Sort))
 		// pagination
 		total := len(filtered)
 		filtered = PageUnstructuredList(filtered, options.Page, options.Size)
@@ -330,25 +325,18 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 		list.SetPage(options.Page)
 		list.SetSize(options.Size)
 		list.SetTotal(total)
-		rev, _ := strconv.ParseInt(unslist.GetResourceVersion(), 10, 64)
-		list.SetResourceVersion(rev)
+		list.SetResourceVersion(unslist.GetResourceVersion())
 		list.SetScopes(c.scopes)
 		list.SetResource(db.resource.String())
 		return nil
 	})
 }
 
-func searchObject(uns *unstructured.Unstructured, fields []string, val string) bool {
-	if len(fields) == 0 {
-		return true
+func formatResourceVersion(i *int64) string {
+	if i == nil {
+		return ""
 	}
-	for _, field := range fields {
-		strval, ok := getStringField(uns, field)
-		if ok && strings.Contains(strval, val) {
-			return true
-		}
-	}
-	return false
+	return strconv.FormatInt(*i, 10)
 }
 
 func ConvertPredicate(l store.Requirements, f store.Requirements) (storage.SelectionPredicate, error) {
@@ -584,31 +572,34 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 		return errors.NewBadRequest("predicate is not supported")
 	}
 	return c.on(ctx, obj, func(ctx context.Context, db *db) error {
-		out := &unstructured.Unstructured{}
-		key := getObjectKey(scopes, db.resource.String(), obj.GetName())
+		out := &StorageObject{}
+		key := getObjectKey(scopes, db.resource.String(), obj.GetID())
 		err := db.storage.GuaranteedUpdate(ctx, key, out, false, preconditions, func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
-			current, ok := input.(*unstructured.Unstructured)
+			current, ok := input.(*StorageObject)
 			if !ok {
 				return nil, nil, fmt.Errorf("unexpected object type: %T", input)
 			}
 			// backup fields
-			statusfield, _, _ := unstructured.NestedFieldNoCopy(current.Object, UnstructuredObjectField, "status")
-			deletionTimestamp := current.GetDeletionTimestamp()
+			statusfield, _, _ := unstructured.NestedFieldNoCopy(current.Object, "status")
 			unsobj := &store.Unstructured{}
 			if err := ConvertFromUnstructured(current, unsobj, db.resource); err != nil {
 				return nil, nil, err
 			}
-			scopes, name, uid, creation := unsobj.GetScopes(), unsobj.GetName(), unsobj.GetUID(), unsobj.GetCreationTimestamp()
+			scopes, id, uid, creation, deletion := unsobj.GetScopes(), unsobj.GetID(), unsobj.GetUID(), unsobj.GetCreationTimestamp(), unsobj.GetDeletionTimestamp()
 			unsobjchanged, err := fn(ctx, unsobj)
 			if err != nil {
 				return nil, nil, err
 			}
 			// do not change scopes
 			unsobjchanged.SetScopes(scopes)
-			unsobjchanged.SetName(name)
+			unsobjchanged.SetID(id)
 			unsobjchanged.SetUID(uid)
 			unsobjchanged.SetResource(db.resource.String())
 			unsobjchanged.SetCreationTimestamp(creation)
+			// once deletiontime is set, it can not be updated
+			if deletion != nil {
+				unsobjchanged.SetDeletionTimestamp(deletion)
+			}
 
 			newuns, err := ConvertToUnstructured(unsobjchanged)
 			if err != nil {
@@ -619,11 +610,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 			// restore ignored fields
 			if ignoreStatus {
 				// keep status field
-				_ = unstructured.SetNestedField(newuns.Object, statusfield, UnstructuredObjectField, "status")
-			}
-			// do not allow deletionTimestamp to be changed if it is already set
-			if deletionTimestamp != nil {
-				newuns.SetDeletionTimestamp(deletionTimestamp)
+				_ = unstructured.SetNestedField(newuns.Object, statusfield, "status")
 			}
 
 			if ShouldDeleteDuringUpdate(ctx, key, newuns, current) {
@@ -687,6 +674,12 @@ func (c *core) getResource(resource string) *db {
 		c.resourcesLock.Lock()
 		defer c.resourcesLock.Unlock()
 
+		// check twice
+		resourceStorage, ok = c.resources[resource]
+		if ok {
+			return resourceStorage
+		}
+
 		fields := c.resourceFields[resource]
 		groupResource := schema.GroupResource{Resource: resource}
 		newresourceStorage, err := newResourceStorage(c.cli, c.storagePrefix, groupResource, fields)
@@ -699,56 +692,6 @@ func (c *core) getResource(resource string) *db {
 	return resourceStorage
 }
 
-func getStringField(uns *unstructured.Unstructured, field string) (string, bool) {
-	val, ok := getField(uns, field)
-	if !ok {
-		return "", false
-	}
-	if s, ok := val.(string); ok {
-		return s, true
-	}
-	return "", false
-}
-
-func getField(uns *unstructured.Unstructured, field string) (any, bool) {
-	val := uns.Object[UnstructuredObjectField]
-	for _, field := range strings.Split(field, ".") {
-		if val == nil {
-			return nil, false
-		}
-		if m, ok := val.(map[string]interface{}); ok {
-			val, ok = m[field]
-			if !ok {
-				return nil, false
-			}
-		} else {
-			return nil, false
-		}
-	}
-	return val, true
-}
-
-func getUnstructuredFieldIndex(uns *unstructured.Unstructured, field string) (string, error) {
-	val, ok := getField(uns, field)
-	if !ok {
-		return "", nil
-	}
-	switch v := val.(type) {
-	case string:
-		return v, nil
-	case bool:
-		return strconv.FormatBool(v), nil
-	case int:
-		return strconv.Itoa(v), nil
-	case int32:
-		return strconv.FormatInt(int64(v), 10), nil
-	case int64:
-		return strconv.FormatInt(v, 10), nil
-	default:
-		return fmt.Sprintf("%v", v), nil
-	}
-}
-
 type db struct {
 	storage  storage.Interface
 	resource schema.GroupResource
@@ -757,21 +700,17 @@ type db struct {
 func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource schema.GroupResource, indexfields []string) (*db, error) {
 	transformer := identity.NewEncryptCheckTransformer()
 	leaseConfig := etcd3.NewDefaultLeaseManagerConfig()
-	newFunc := func() runtime.Object { return &unstructured.Unstructured{} }
-	newListFunc := func() runtime.Object { return &unstructured.UnstructuredList{} }
+	newFunc := func() runtime.Object { return &StorageObject{} }
+	newListFunc := func() runtime.Object { return &StorageObjectList{} }
 
-	typer := UnstructuredObjectTyper{}
-	creater := UnstructuredCreator{}
-	codec := json.NewSerializerWithOptions(DefaultMetaFactory, creater, typer,
-		json.SerializerOptions{Yaml: false, Pretty: false, Strict: false})
+	codec := SimpleJsonCodec{}
 
-	// codec := SimpleJsonCodec{}
-	versioner := storage.APIObjectVersioner{}
+	versioner := APIObjectVersioner{}
 	resourcePrefix := "/" + groupResource.String()
 
 	dec := etcd3.NewDefaultDecoder(codec, versioner)
 	etcd3storage := etcd3.New(cli, codec, newFunc, newListFunc, prefix, resourcePrefix, groupResource, transformer, leaseConfig, dec, versioner)
-	indexers := IndexerFromFields(indexfields)
+
 	cacherConfig := cacherstorage.Config{
 		Storage:        etcd3storage,
 		Versioner:      versioner,
@@ -780,9 +719,9 @@ func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource sch
 		KeyFunc:        ScopesObjectKeyFunc,
 		NewFunc:        newFunc,
 		NewListFunc:    newListFunc,
-		GetAttrsFunc:   GetAttrsFuncfunc(indexfields),
+		GetAttrsFunc:   GetAttrsFunc(indexfields),
 		Codec:          codec,
-		Indexers:       &indexers,
+		Indexers:       ptr.To(IndexerFromFields(indexfields)),
 	}
 	cacher, err := cacherstorage.NewCacherFromConfig(cacherConfig)
 	if err != nil {
@@ -794,47 +733,8 @@ func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource sch
 	}, nil
 }
 
-func IndexerFromFields(fields []string) cache.Indexers {
-	indexers := cache.Indexers{}
-	for _, field := range fields {
-		indexers[field] = func(obj interface{}) ([]string, error) {
-			uns, ok := obj.(*unstructured.Unstructured)
-			if !ok {
-				return nil, fmt.Errorf("object is not an unstructured.Unstructured")
-			}
-			val, err := getUnstructuredFieldIndex(uns, field)
-			if err != nil {
-				return nil, err
-			}
-			return []string{val}, nil
-		}
-	}
-	return indexers
-}
-
-func GetAttrsFuncfunc(indexfields []string) func(obj runtime.Object) (labels.Set, fields.Set, error) {
-	return func(obj runtime.Object) (labels.Set, fields.Set, error) {
-		uns, ok := obj.(*unstructured.Unstructured)
-		if !ok {
-			return nil, nil, fmt.Errorf("unexpected object type: %T", obj)
-		}
-		sFields := fields.Set{
-			"metadata.name": uns.GetName(),
-			"name":          uns.GetName(),
-		}
-		for _, fname := range indexfields {
-			valstr, err := getUnstructuredFieldIndex(uns, fname)
-			if err != nil {
-				return nil, nil, err
-			}
-			sFields[fname] = valstr
-		}
-		return uns.GetLabels(), sFields, nil
-	}
-}
-
 func ScopesObjectKeyFunc(obj runtime.Object) (string, error) {
-	uns, ok := obj.(*unstructured.Unstructured)
+	uns, ok := obj.(*StorageObject)
 	if !ok {
 		return "", fmt.Errorf("unexpected object type: %T", obj)
 	}
@@ -842,90 +742,29 @@ func ScopesObjectKeyFunc(obj runtime.Object) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return getObjectKey(scopes, uns.GetKind(), uns.GetName()), nil
+	return getObjectKey(scopes, uns.GetKind(), GetNestedString(uns.Object, "id")), nil
 }
 
-const UnstructuredObjectField = "data"
-
-func ConvertToUnstructured(obj store.Object) (*unstructured.Unstructured, error) {
-	uns := &unstructured.Unstructured{Object: map[string]any{}}
-	// map metadata to unstructured's metadata
-	uns.SetAPIVersion("v1")
-	uns.SetKind(obj.GetResource())
-	uns.SetName(obj.GetName())
-	uns.SetLabels(obj.GetLabels())
-	uns.SetAnnotations(obj.GetAnnotations())
-	uns.SetResourceVersion(strconv.FormatInt(obj.GetResourceVersion(), 10))
-	uns.SetFinalizers(obj.GetFinalizers())
-	uns.SetUID(types.UID(obj.GetUID()))
-	uns.SetCreationTimestamp(obj.GetCreationTimestamp())
-	uns.SetDeletionTimestamp(obj.GetDeletionTimestamp())
-	// store values in "data" field
-	obj.SetResourceVersion(0) // reset resource version before saving
+func ConvertToUnstructured(obj store.Object) (*StorageObject, error) {
 	values, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
 	if err != nil {
 		return nil, err
 	}
-	if SetScopeFields {
-		store.SetScopesFields(values, obj.GetScopes())
-	}
-	uns.Object[UnstructuredObjectField] = values
-	return uns, nil
+	uns := StorageObject{Object: values}
+	uns.SetAPIVersion("v1")
+	store.SetScopesFields(values, obj.GetScopes())
+	return &uns, nil
 }
 
-func ConvertFromUnstructured(uns *unstructured.Unstructured, obj store.Object, resource schema.GroupResource) error {
-	datafield, ok := uns.Object[UnstructuredObjectField].(map[string]any)
-	if !ok {
+func ConvertFromUnstructured(uns *StorageObject, obj store.Object, resource schema.GroupResource) error {
+	datafield := uns.Object
+	if datafield == nil {
 		datafield = map[string]any{}
 	}
-	// decode data field
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(datafield, obj); err != nil {
 		return err
 	}
-	// restore metadata
-	obj.SetName(uns.GetName())
-	obj.SetResource(resource.String())
-	obj.SetLabels(uns.GetLabels())
-	obj.SetAnnotations(uns.GetAnnotations())
-	obj.SetFinalizers(uns.GetFinalizers())
-	obj.SetUID(string(uns.GetUID()))
-	obj.SetCreationTimestamp(uns.GetCreationTimestamp())
-	obj.SetDeletionTimestamp(uns.GetDeletionTimestamp())
-	rev, _ := strconv.ParseInt(uns.GetResourceVersion(), 10, 64)
-	obj.SetResourceVersion(rev)
-	// currently we not enabled this
-	if SetScopeFields {
-		obj.SetScopes(getScopes(uns))
-	}
 	return nil
-}
-
-func getScopes(uns *unstructured.Unstructured) []store.Scope {
-	scopesval := uns.Object["scopes"]
-	if scopesval == nil {
-		return nil
-	}
-	scopes, ok := scopesval.([]any)
-	if !ok {
-		return nil
-	}
-	result := make([]store.Scope, 0, len(scopes))
-	for _, scope := range scopes {
-		scopeMap, ok := scope.(map[string]any)
-		if !ok {
-			return nil
-		}
-		resource, ok := scopeMap["resource"].(string)
-		if !ok {
-			return nil
-		}
-		name, ok := scopeMap["name"].(string)
-		if !ok {
-			return nil
-		}
-		result = append(result, store.Scope{Resource: resource, Name: name})
-	}
-	return result
 }
 
 func getObjectKey(scopes []store.Scope, resource, name string) string {
@@ -944,8 +783,8 @@ func getlistkey(scopes []store.Scope, resource string) string {
 	return key + "/"
 }
 
-func FilterByScopes(list []unstructured.Unstructured, scopes []store.Scope) []unstructured.Unstructured {
-	filtered := make([]unstructured.Unstructured, 0, len(list))
+func FilterByScopes(list []StorageObject, scopes []store.Scope) []StorageObject {
+	filtered := make([]StorageObject, 0, len(list))
 	for _, uns := range list {
 		thisscopes, err := ParseScopes(&uns)
 		if err != nil {
@@ -958,24 +797,7 @@ func FilterByScopes(list []unstructured.Unstructured, scopes []store.Scope) []un
 	return filtered
 }
 
-func SortUnstructuredList(list []unstructured.Unstructured, by string) {
-	slices.SortFunc(list, func(a, b unstructured.Unstructured) int {
-		switch by {
-		case "time":
-			return a.GetCreationTimestamp().Time.Compare(b.GetCreationTimestamp().Time)
-		case "time-", "": // default sort by time desc
-			return b.GetCreationTimestamp().Time.Compare(a.GetCreationTimestamp().Time)
-		case "name":
-			return strings.Compare(a.GetName(), b.GetName())
-		case "name-":
-			return strings.Compare(b.GetName(), a.GetName())
-		default:
-			return 0
-		}
-	})
-}
-
-func PageUnstructuredList(list []unstructured.Unstructured, page, size int) []unstructured.Unstructured {
+func PageUnstructuredList(list []StorageObject, page, size int) []StorageObject {
 	if page == 0 && size == 0 {
 		return list
 	}

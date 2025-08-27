@@ -310,13 +310,17 @@ func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...st
 		opt(&creationopt)
 	}
 	return m.on(ctx, into, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		if into.GetName() == "" && creationopt.AutoIncrementOnName {
-			// if name is empty, get next auto increment id
-			cnt, err := GetCounter(ctx, col.Database(), col.Name())
-			if err != nil {
-				return errors.NewInternalError(err)
+		if into.GetID() == "" {
+			if creationopt.AutoIncrementOnName {
+				// if name is empty, get next auto increment id
+				cnt, err := GetCounter(ctx, col.Database(), col.Name())
+				if err != nil {
+					return errors.NewInternalError(err)
+				}
+				into.SetID(strconv.FormatUint(uint64(cnt), 10))
+			} else {
+				into.SetID(primitive.NewObjectID().Hex())
 			}
-			into.SetName(strconv.FormatUint(uint64(cnt), 10))
 		}
 		if into.GetName() == "" {
 			return errors.NewBadRequest("name is required")
@@ -384,12 +388,16 @@ loop:
 
 // Delete implements Storage.
 func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
+	id := obj.GetID()
+	if id == "" {
+		return errors.NewBadRequest("id is required")
+	}
 	options := store.DeleteOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		filter = append(filter, bson.E{Key: "id", Value: id})
 		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
 		m.core.logger.V(5).Info("delete", "collection", col.Name(), "filter", filter)
 		if err := col.FindOneAndDelete(ctx, filter).Decode(obj); err != nil {
@@ -416,14 +424,16 @@ func (m *MongoStorage) DeleteBatch(ctx context.Context, obj store.ObjectList, op
 }
 
 // Get implements Storage.
-func (m *MongoStorage) Get(ctx context.Context, name string, obj store.Object, opts ...store.GetOption) error {
+func (m *MongoStorage) Get(ctx context.Context, id string, obj store.Object, opts ...store.GetOption) error {
+	if id == "" {
+		return errors.NewBadRequest("id is required")
+	}
 	options := store.GetOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
-	obj.SetName(name)
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = append(filter, bson.E{Key: "name", Value: name})
+		filter = append(filter, bson.E{Key: "id", Value: id})
 		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
 		findopt := mongooptions.FindOne()
 		if len(options.Fields) != 0 {
@@ -443,12 +453,16 @@ func (m *MongoStorage) Get(ctx context.Context, name string, obj store.Object, o
 
 // Update implements Storage.
 func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
+	id := obj.GetID()
+	if id == "" {
+		return errors.NewBadRequest("id is required")
+	}
 	updateoptions := store.UpdateOptions{}
 	for _, opt := range opts {
 		opt(&updateoptions)
 	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		filter = append(filter, bson.E{Key: "id", Value: id})
 		filter = conditionsmatch(filter, SelectorToReqirements(updateoptions.LabelRequirements, updateoptions.FieldRequirements))
 		// inoder not to update creation time or creator
 		fields, err := m.mergeConditionOnChange(obj, []string{"creator", "creationTimestamp", "status"})
@@ -470,12 +484,16 @@ func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...sto
 
 // Patch implements Storage.
 func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
+	id := obj.GetID()
+	if id == "" {
+		return errors.NewBadRequest("id is required")
+	}
 	options := store.PatchOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = append(filter, bson.E{Key: "name", Value: obj.GetName()})
+		filter = append(filter, bson.E{Key: "id", Value: id})
 		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
 		update, err := convertPatch(patch, obj, []string{"status"}, nil)
 		if err != nil {
@@ -622,7 +640,7 @@ func sortstage(sort string) bson.M {
 			s.Field = "creationTimestamp"
 		}
 		direction := 1
-		if !s.ASC {
+		if s.Order == store.SortOrderDesc {
 			direction = -1
 		}
 		sorts = append(sorts, bson.E{Key: s.Field, Value: direction})

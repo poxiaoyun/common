@@ -60,8 +60,8 @@ func NameFunc(obj any) ([]string, error) {
 	return []string{name}, nil
 }
 
-func ParseScopes(uns *unstructured.Unstructured) ([]store.Scope, error) {
-	scopedlist, ok, _ := unstructured.NestedSlice(uns.Object, UnstructuredObjectField, "scopes")
+func ParseScopes(uns *StorageObject) ([]store.Scope, error) {
+	scopedlist, ok, _ := unstructured.NestedSlice(uns.Object, "scopes")
 	if !ok {
 		return nil, nil
 	}

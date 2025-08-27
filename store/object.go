@@ -8,16 +8,13 @@ import (
 type Object interface {
 	GetID() string
 	SetID(string)
+
 	GetName() string
 	SetName(string)
+
 	GetUID() string
 	SetUID(string)
 
-	// Alias
-	GetAlias() string
-	SetAlias(string)
-
-	// Description
 	GetDescription() string
 	SetDescription(string)
 
@@ -106,7 +103,6 @@ type ObjectMeta struct {
 	Finalizers        []string          `json:"finalizers,omitempty"`
 	OwnerReferences   []OwnerReference  `json:"ownerReferences,omitempty"`
 	Description       string            `json:"description,omitempty"`
-	Alias             string            `json:"alias,omitempty"`
 }
 
 func (o *ObjectMeta) GetID() string {
@@ -127,19 +123,9 @@ func (o *ObjectMeta) SetAPIVersion(version string) {
 	o.APIVersion = version
 }
 
-// GetAlias implements Object.
-func (o *ObjectMeta) GetAlias() string {
-	return o.Alias
-}
-
 // GetDescription implements Object.
 func (o *ObjectMeta) GetDescription() string {
 	return o.Description
-}
-
-// SetAlias implements Object.
-func (o *ObjectMeta) SetAlias(alias string) {
-	o.Alias = alias
 }
 
 // SetDescription implements Object.

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/retry"
@@ -96,8 +97,9 @@ func (g *CacheStore) Get(ctx context.Context, name string, obj store.Object, opt
 	if err != nil {
 		return err
 	}
-	if options.ResourceVersion > 0 && uns.GetResourceVersion() < options.ResourceVersion {
-		return errors.NewConflict(resource, name, fmt.Errorf("revision %d is too new", options.ResourceVersion))
+	rev := ptr.Deref(options.ResourceVersion, int64(0))
+	if rev > 0 && uns.GetResourceVersion() < rev {
+		return errors.NewConflict(resource, name, fmt.Errorf("revision %d is too new", rev))
 	}
 	if err := store.FromUnstructured(uns, obj); err != nil {
 		return errors.NewInternalError(fmt.Errorf("failed to convert object: %w", err))
@@ -121,7 +123,7 @@ func (g *CacheStore) List(ctx context.Context, list store.ObjectList, opts ...st
 	if _, err := store.EnforcePtr(list); err != nil {
 		return errors.NewBadRequest(fmt.Sprintf("object list must be a pointer: %v", err))
 	}
-	if options.ResourceVersion > 0 {
+	if options.ResourceVersion != nil {
 		return errors.NewBadRequest("list with resource version is not supported in cache store")
 	}
 	v, newItemFunc, err := store.NewItemFuncFromList(list)
@@ -329,7 +331,7 @@ func (c *cachedResource) sync(ctx context.Context, s store.Store) error {
 
 	opts := []store.WatchOption{
 		func(wo *store.WatchOptions) {
-			wo.ResourceVersion = c.kvs.latestSyncRevision()
+			wo.ResourceVersion = ptr.To(c.kvs.latestSyncRevision())
 			wo.IncludeSubScopes = true
 			wo.SendInitialEvents = true
 		},
