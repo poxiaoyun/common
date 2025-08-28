@@ -251,6 +251,9 @@ func (b *Builder) buildStruct(v reflect.Value) *spec.Schema {
 			if fieldSchema := b.BuildSchema(fieldv); fieldSchema != nil {
 				overrideProperties[fieldName] = *fieldSchema
 			}
+			if orignalSchama.Properties == nil {
+				orignalSchama.Properties = map[string]spec.Schema{}
+			}
 			orignalSchama.Properties[fieldName] = *NullableProperty() // placeholder
 			continue
 		}
