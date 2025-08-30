@@ -67,6 +67,7 @@ type (
 		// AutoIncrementOnName is a flag to enable auto increment id for object
 		// it'll set the object's name to the auto increment id if empty
 		AutoIncrementOnName bool
+		DryRun              bool
 	}
 	CreateOption func(*CreateOptions)
 
@@ -76,12 +77,14 @@ type (
 		// FieldRequirements is not supported by all databases on deletion.
 		FieldRequirements Requirements
 		PropagationPolicy *DeletionPropagation
+		DryRun            bool
 	}
 	DeleteOption func(*DeleteOptions)
 
 	DeleteBatchOptions struct {
 		LabelRequirements Requirements
 		FieldRequirements Requirements
+		DryRun            bool
 	}
 	DeleteBatchOption func(*DeleteBatchOptions)
 
@@ -91,12 +94,14 @@ type (
 		// it apply to fields.
 		FieldRequirements Requirements
 		LabelRequirements Requirements
+		DryRun            bool
 	}
 	UpdateOption func(*UpdateOptions)
 
 	PatchOptions struct {
 		FieldRequirements Requirements
 		LabelRequirements Requirements
+		DryRun            bool
 	}
 	PatchOption func(*PatchOptions)
 
@@ -105,6 +110,7 @@ type (
 		// it apply to fields.
 		FieldRequirements Requirements
 		LabelRequirements Requirements
+		DryRun            bool
 	}
 	PatchBatchOption func(*PatchBatchOptions)
 
@@ -115,6 +121,7 @@ type (
 		ResourceVersion   *int64
 		IncludeSubScopes  bool
 		SendInitialEvents bool
+		DryRun            bool
 	}
 	WatchOption func(*WatchOptions)
 )
@@ -194,6 +201,18 @@ func WithGetResourceVersion(rv int64) GetOption {
 func WithUpdateFieldRequirements(reqs ...Requirement) UpdateOption {
 	return func(o *UpdateOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, reqs...)
+	}
+}
+
+func WithUpdateLabelRequirements(reqs ...Requirement) UpdateOption {
+	return func(o *UpdateOptions) {
+		o.LabelRequirements = append(o.LabelRequirements, reqs...)
+	}
+}
+
+func WithUpdateDryRun(dryRun bool) UpdateOption {
+	return func(o *UpdateOptions) {
+		o.DryRun = dryRun
 	}
 }
 
@@ -296,6 +315,12 @@ func WithDeleteLabelRequirements(reqs ...Requirement) DeleteOption {
 func WithTTL(ttl time.Duration) CreateOption {
 	return func(o *CreateOptions) {
 		o.TTL = ttl
+	}
+}
+
+func WithDryRun(dryRun bool) CreateOption {
+	return func(o *CreateOptions) {
+		o.DryRun = dryRun
 	}
 }
 
