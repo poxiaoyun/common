@@ -87,6 +87,8 @@ type Mux struct {
 	GlobalTree       *matcher.Node[MethodsHandler]
 }
 
+var _ Router = &Mux{}
+
 func NewMux() *Mux {
 	return &Mux{
 		HostsTree:  make(map[string]*matcher.Node[MethodsHandler]),

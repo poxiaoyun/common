@@ -30,6 +30,7 @@ type Router interface {
 	Register(route *Route) error
 	ServeHTTP(w http.ResponseWriter, r *http.Request)
 	SetNotFound(handler http.Handler)
+	SetMethodNotAllowed(handler http.Handler)
 }
 
 func New() *API {
@@ -53,6 +54,11 @@ func (m *API) Route(route Route) *API {
 
 func (m *API) NotFound(handler http.Handler) *API {
 	m.mux.SetNotFound(handler)
+	return m
+}
+
+func (m *API) MethodNotAllowed(handler http.Handler) *API {
+	m.mux.SetMethodNotAllowed(handler)
 	return m
 }
 
