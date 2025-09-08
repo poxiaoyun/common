@@ -27,9 +27,9 @@ func (v VersionPlugin) Install(m *API) error {
 				ServerError(resp, err)
 				return
 			}
-			Raw(resp, http.StatusOK, version, nil)
+			Raw(resp, http.StatusOK, version)
 		} else {
-			Raw(resp, http.StatusOK, v.Version, nil)
+			Raw(resp, http.StatusOK, v.Version)
 		}
 	}))
 	return nil
@@ -47,7 +47,7 @@ func (h HealthCheckPlugin) Install(m *API) error {
 				return
 			}
 		}
-		Raw(resp, http.StatusOK, "ok", nil)
+		Raw(resp, http.StatusOK, "ok")
 	}))
 	return nil
 }

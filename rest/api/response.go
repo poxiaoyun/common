@@ -39,7 +39,7 @@ var WrapOK = func(data any) any {
 }
 
 func Success(w http.ResponseWriter, data any) {
-	Raw(w, http.StatusOK, WrapOK(data), nil)
+	Raw(w, http.StatusOK, WrapOK(data))
 }
 
 func NotFound(w http.ResponseWriter, message string) {
@@ -67,13 +67,10 @@ func Error(w http.ResponseWriter, err error) {
 	if !errors.As(err, &statuse) {
 		statuse = liberrors.NewBadRequest(err.Error())
 	}
-	Raw(w, int(statuse.Code), WrapError(statuse), nil)
+	Raw(w, int(statuse.Code), WrapError(statuse))
 }
 
-func Raw(w http.ResponseWriter, status int, data any, headers map[string]string) {
-	for k, v := range headers {
-		w.Header().Set(k, v)
-	}
+func Raw(w http.ResponseWriter, status int, data any) {
 	switch val := data.(type) {
 	case io.Reader:
 		setContentTypeIfNotSet(w.Header(), "application/octet-stream")

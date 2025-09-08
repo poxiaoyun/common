@@ -30,7 +30,7 @@ func On(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context) (an
 	case nil:
 		// no action
 	case *errors.Status:
-		Raw(w, int(val.Code), val, nil)
+		Raw(w, int(val.Code), val)
 	case ResponseStatusOnly:
 		w.WriteHeader(int(val))
 	default:
