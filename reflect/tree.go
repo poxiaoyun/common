@@ -14,7 +14,7 @@ type Node struct {
 	Fields []Node
 }
 
-func ParseStruct(data interface{}) Node {
+func ParseStruct(data any) Node {
 	return decode("", "", reflect.ValueOf(data))
 }
 
@@ -36,7 +36,7 @@ func prefixedKey(prefix, key string, splitor ...string) string {
 
 type KV struct {
 	Key   string
-	Value interface{}
+	Value any
 }
 
 func toJsonPathes(prefix string, nodes []Node, kvs []KV) []KV {

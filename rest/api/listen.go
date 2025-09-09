@@ -34,7 +34,23 @@ func WithTLSConfig(tls *tls.Config) ServerOption {
 	return func(s *http.Server) error { s.TLSConfig = tls; return nil }
 }
 
+// WithDynamicTLSConfig creates a ServerOption that configures a server with dynamic TLS credentials
+// from the specified certificate and key files.
+// It continuously monitors the certificate and key files for changes and updates the TLS configuration accordingly.
+// If either cert or key is empty, it returns a no-op option that doesn't modify the server.
+// The context controls the lifetime of the file watcher for certificate and key changes.
+//
+// Parameters:
+//   - ctx: Context to control the lifetime of the TLS configuration watcher
+//   - cert: Path to the certificate file
+//   - key: Path to the key file
+//
+// Returns:
+//   - A ServerOption function that configures dynamic TLS for an HTTP server
 func WithDynamicTLSConfig(ctx context.Context, cert, key string) ServerOption {
+	if cert == "" || key == "" {
+		return func(s *http.Server) error { return nil }
+	}
 	return func(s *http.Server) error {
 		tlsconfig, err := libtls.NewDynamicTLSConfig(ctx, &libtls.DynamicTLSConfigOptions{CertFile: cert, KeyFile: key})
 		if err != nil {
@@ -64,12 +80,18 @@ func ServeContext(ctx context.Context, listen string, handler http.Handler, opti
 		// http2 support with tls enabled
 		http2.ConfigureServer(&s, &http2.Server{})
 		log.Info("starting https server", "listen", listen)
-		return s.ListenAndServeTLS("", "")
+		if err := s.ListenAndServeTLS("", ""); err != nil {
+			return fmt.Errorf("listen and serve https: %v", err)
+		}
+		return nil
 	} else {
 		// http2 support without https
 		s.Handler = h2c.NewHandler(s.Handler, &http2.Server{})
 		log.Info("starting http server", "listen", listen)
-		return s.ListenAndServe()
+		if err := s.ListenAndServe(); err != nil {
+			return fmt.Errorf("listen and serve http: %v", err)
+		}
+		return nil
 	}
 }
 
