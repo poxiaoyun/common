@@ -29,7 +29,9 @@ import (
 	cacherstorage "k8s.io/apiserver/pkg/storage/cacher"
 	storeerr "k8s.io/apiserver/pkg/storage/errors"
 	"k8s.io/apiserver/pkg/storage/etcd3"
+	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/identity"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/store"
@@ -709,26 +711,29 @@ func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource sch
 	resourcePrefix := "/" + groupResource.String()
 
 	dec := etcd3.NewDefaultDecoder(codec, versioner)
-	etcd3storage := etcd3.New(cli, codec, newFunc, newListFunc, prefix, resourcePrefix, groupResource, transformer, leaseConfig, dec, versioner)
+	compact := etcd3.NewCompactor(cli.Client, time.Hour, clock.RealClock{}, nil)
+	etcd3storage := etcd3.New(cli, compact, codec, newFunc, newListFunc, prefix, resourcePrefix, groupResource, transformer, leaseConfig, dec, versioner)
 
 	cacherConfig := cacherstorage.Config{
-		Storage:        etcd3storage,
-		Versioner:      versioner,
-		GroupResource:  groupResource,
-		ResourcePrefix: resourcePrefix,
-		KeyFunc:        ScopesObjectKeyFunc,
-		NewFunc:        newFunc,
-		NewListFunc:    newListFunc,
-		GetAttrsFunc:   GetAttrsFunc(indexfields),
-		Codec:          codec,
-		Indexers:       ptr.To(IndexerFromFields(indexfields)),
+		Storage:             etcd3storage,
+		Versioner:           versioner,
+		GroupResource:       groupResource,
+		ResourcePrefix:      resourcePrefix,
+		KeyFunc:             ScopesObjectKeyFunc,
+		NewFunc:             newFunc,
+		NewListFunc:         newListFunc,
+		GetAttrsFunc:        GetAttrsFunc(indexfields),
+		Codec:               codec,
+		Indexers:            ptr.To(IndexerFromFields(indexfields)),
+		EventsHistoryWindow: storagebackend.DefaultEventsHistoryWindow,
 	}
 	cacher, err := cacherstorage.NewCacherFromConfig(cacherConfig)
 	if err != nil {
 		return nil, err
 	}
+	cacheDelegator := cacherstorage.NewCacheDelegator(cacher, etcd3storage)
 	return &db{
-		storage:  cacher,
+		storage:  cacheDelegator,
 		resource: groupResource,
 	}, nil
 }
