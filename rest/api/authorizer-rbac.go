@@ -8,12 +8,14 @@ import (
 )
 
 type Authority struct {
+	Service   string   `json:"service,omitempty"`
 	Actions   []string `json:"actions,omitempty"`
 	Resources []string `json:"resources,omitempty"`
 }
 
 func (a Authority) MatchAttributes(attr Attributes) bool {
-	return a.MatchActionResource(attr.Action, ResourcesToWildcard(attr.Resources))
+	return a.MatchService(a.Service) &&
+		a.MatchActionResource(attr.Action, ResourcesToWildcard(attr.Resources))
 }
 
 func MatchAttributes(act, res string, att Attributes) bool {
@@ -21,6 +23,10 @@ func MatchAttributes(act, res string, att Attributes) bool {
 		return false
 	}
 	return wildcard.Match(res, ResourcesToWildcard(att.Resources))
+}
+
+func (a Authority) MatchService(service string) bool {
+	return a.Service == service || a.Service == "*"
 }
 
 func (a Authority) MatchActionResource(act, res string) bool {
