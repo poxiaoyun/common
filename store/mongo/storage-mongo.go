@@ -195,7 +195,7 @@ func (m *MongoStorageCore) initCollections(ctx context.Context) error {
 		}
 		if defination.Uniques == nil {
 			// default unique index is name
-			defination.Uniques = []UnionFields{{"name"}}
+			defination.Uniques = []UnionFields{{"id"}}
 		}
 		col := m.db.Collection(resource)
 		indexes := []mongo.IndexModel{}
@@ -461,11 +461,14 @@ func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...sto
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: id})
 		filter = conditionsmatch(filter, SelectorToReqirements(updateoptions.LabelRequirements, updateoptions.FieldRequirements))
-		// inoder not to update creation time or creator
+		// in order not to update creation time or creator
 		fields, err := m.mergeConditionOnChange(obj, []string{"creator", "creationTimestamp", "status"})
 		if err != nil {
 			return err
 		}
+		fields = slices.DeleteFunc(fields, func(e bson.E) bool {
+			return e.Key == "id"
+		})
 		fields = m.beforeSave(fields)
 		update := bson.D{{Key: "$set", Value: fields}}
 		if m.core.setUpdateTimestamp {
@@ -652,7 +655,8 @@ func sortstage(sort string) bson.M {
 func scopesmatch(match bson.D, scopes []store.Scope) bson.D {
 	conds := store.Requirements{}
 	for _, scope := range scopes {
-		conds = append(conds, store.Requirement{Operator: store.Equals, Key: scope.Resource, Values: []any{scope.Name}})
+		resourcekey := store.ScopeResourceToFieldName(scope.Resource)
+		conds = append(conds, store.Requirement{Operator: store.Equals, Key: resourcekey, Values: []any{scope.Name}})
 	}
 	return conditionsmatch(match, conds)
 }
@@ -864,6 +868,9 @@ func (m *MongoStorageStatus) Update(ctx context.Context, obj store.Object, opts 
 		if err != nil {
 			return errors.NewBadRequest("invalid object")
 		}
+		fields = slices.DeleteFunc(fields, func(e bson.E) bool {
+			return e.Key == "id"
+		})
 		update := bson.D{{Key: "$set", Value: fields}}
 		if m.core.setUpdateTimestamp {
 			update = append(update, setUpdateTimestampQuery)
