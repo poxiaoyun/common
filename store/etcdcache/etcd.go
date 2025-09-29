@@ -209,7 +209,7 @@ func (c *generic) Delete(ctx context.Context, obj store.Object, opts ...store.De
 	if obj.GetUID() != "" {
 		preconditions.UID = ptr.To(types.UID(obj.GetUID()))
 	}
-	predicate, err := ConvertPredicate(nil, nil)
+	predicate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
 	if err != nil {
 		return err
 	}
@@ -240,6 +240,10 @@ func (c *generic) Get(ctx context.Context, name string, obj store.Object, opts .
 	for _, opt := range opts {
 		opt(&options)
 	}
+	predicate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
+	if err != nil {
+		return err
+	}
 	return c.core.on(ctx, obj, func(ctx context.Context, db *db) error {
 		key := getObjectKey(c.scopes, db.resource.String(), name)
 		uns := &StorageObject{}
@@ -252,6 +256,13 @@ func (c *generic) Get(ctx context.Context, name string, obj store.Object, opts .
 		if err := db.storage.Get(ctx, key, options, uns); err != nil {
 			err = storeerr.InterpretGetError(err, db.resource, name)
 			return err
+		}
+		ok, err := predicate.Matches(uns)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return apierrors.NewNotFound(db.resource, name)
 		}
 		return ConvertFromUnstructured(uns, obj, db.resource)
 	})
@@ -358,10 +369,14 @@ func ConvertPredicate(l store.Requirements, f store.Requirements) (storage.Selec
 		}
 		fieldsel = newfieldsel
 	}
+	fieldkeys := make([]string, 0, len(f))
+	for _, req := range f {
+		fieldkeys = append(fieldkeys, req.Key)
+	}
 	return storage.SelectionPredicate{
 		Label:    labelssel,
 		Field:    fieldsel,
-		GetAttrs: GetAttrs,
+		GetAttrs: GetAttrsFunc(fieldkeys),
 	}, nil
 }
 

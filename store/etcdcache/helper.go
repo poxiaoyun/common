@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"golang.org/x/exp/maps"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -74,24 +73,6 @@ func getFieldIndex(uns *StorageObject, fields ...string) (string, bool) {
 	default:
 		return fmt.Sprintf("%v", v), true
 	}
-}
-
-func GetAttrs(obj runtime.Object) (labels.Set, fields.Set, error) {
-	uns, ok := obj.(*StorageObject)
-	if !ok {
-		return nil, nil, fmt.Errorf("object is not a StorageObject")
-	}
-	objectMetaFields := fields.Set{
-		"id":   GetNestedString(uns.Object, "id"),
-		"name": GetNestedString(uns.Object, "name"),
-	}
-	us, ok := obj.(runtime.Unstructured)
-	if !ok {
-		return nil, nil, fmt.Errorf("unexpected error casting a custom resource to unstructured")
-	}
-	uc := us.UnstructuredContent()
-	maps.Copy(objectMetaFields, FlatterMap(uc))
-	return uns.GetLabels(), objectMetaFields, nil
 }
 
 func FlatterMap(m map[string]any) map[string]string {
