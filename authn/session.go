@@ -40,7 +40,7 @@ func (a *API) OnSession(w http.ResponseWriter, r *http.Request, fn func(ctx cont
 	api.On(w, r, func(ctx context.Context) (any, error) {
 		key := api.GetCookie(r, SessionCookieKey)
 		if key == "" {
-			key = api.ExtracBearerTokenFromRequest(r)
+			key = api.ExtractBearerTokenFromRequest(r)
 		}
 		return fn(ctx, key)
 	})

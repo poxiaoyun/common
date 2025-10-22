@@ -58,6 +58,24 @@ func (t *BasicAuthWebhookAuthenticator) Authenticate(ctx context.Context, userna
 	return t.Process.Process(ctx, &WebhookAuthenticationRequest{Username: username, Password: password})
 }
 
+type TokenOrBasicAuthWebhookAuthenticator struct {
+	Process *WebhookAuthenticatorProcessor
+}
+
+var _ Authenticator = &TokenOrBasicAuthWebhookAuthenticator{}
+
+func (t *TokenOrBasicAuthWebhookAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+	token := ExtractBearerTokenFromRequest(r)
+	if token != "" {
+		return t.Process.Process(r.Context(), &WebhookAuthenticationRequest{Token: token})
+	}
+	username, password, ok := r.BasicAuth()
+	if ok {
+		return t.Process.Process(r.Context(), &WebhookAuthenticationRequest{Username: username, Password: password})
+	}
+	return nil, ErrNotProvided
+}
+
 func NewWebhookAuthenticator(opts *WebhookAuthenticatorOptions, getRequest func(r *http.Request) (*WebhookAuthenticationRequest, error)) (*WebhookAuthenticator, error) {
 	processor, err := NewWebhookAuthenticatorProcessor(opts)
 	if err != nil {

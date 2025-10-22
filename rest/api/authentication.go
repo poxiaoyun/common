@@ -82,7 +82,7 @@ func WithResponseHeader(ctx context.Context, header http.Header) context.Context
 
 func SessionAuthenticatorWrap(authn TokenAuthenticator, sessionkey string) Authenticator {
 	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-		token := ExtracTokenFromCookie(r, sessionkey)
+		token := ExtractTokenFromCookie(r, sessionkey)
 		if token == "" {
 			return nil, ErrNotProvided
 		}
@@ -93,7 +93,7 @@ func SessionAuthenticatorWrap(authn TokenAuthenticator, sessionkey string) Authe
 
 func BearerTokenAuthenticatorWrap(authn TokenAuthenticator) Authenticator {
 	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-		token := ExtracBearerTokenFromRequest(r)
+		token := ExtractBearerTokenFromRequest(r)
 		if token == "" {
 			return nil, ErrNotProvided
 		}
@@ -154,7 +154,7 @@ func NewAuthenticateFilter(authn Authenticator, onerr AuthenticateErrorHandleFun
 	})
 }
 
-func ExtracTokenFromCookie(r *http.Request, cookieName string) string {
+func ExtractTokenFromCookie(r *http.Request, cookieName string) string {
 	cookie, _ := r.Cookie(cookieName)
 	if cookie != nil && cookie.Value != "" {
 		return cookie.Value
@@ -162,7 +162,7 @@ func ExtracTokenFromCookie(r *http.Request, cookieName string) string {
 	return ""
 }
 
-func ExtracBearerTokenFromRequest(r *http.Request) string {
+func ExtractBearerTokenFromRequest(r *http.Request) string {
 	token := r.Header.Get("Authorization")
 	// only support bearer token
 	if strings.HasPrefix(token, "Bearer ") {
