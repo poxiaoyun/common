@@ -19,12 +19,17 @@ type WebhookAuthorizerOptions struct {
 	InsecureSkipTLSVerify bool   `json:"insecureSkipTLSVerify,omitempty"`
 }
 
-type AuthorizationRequest struct {
+type WebhookAuthorizationRequest struct {
 	UserInfo   UserInfo   `json:"userInfo,omitempty"`
 	Attributes Attributes `json:"attributes,omitempty"`
+
+	// optional, the resource object being accessed
+	// it can be used in conditional evaluation
+	// Resource must be a object like map[string]any or struct
+	Resource any `json:"resource,omitempty"`
 }
 
-type AuthorizationResponse struct {
+type WebhookAuthorizationResponse struct {
 	Decision Decision `json:"decision"` // "allow" or "deny"
 	Reason   string   `json:"reason,omitempty"`
 	Error    string   `json:"error,omitempty"`
@@ -56,11 +61,11 @@ type WebhookAuthorizer struct {
 }
 
 func (t *WebhookAuthorizer) Authorize(ctx context.Context, user UserInfo, attr Attributes) (authorized Decision, reason string, err error) {
-	req := &AuthorizationRequest{
+	req := &WebhookAuthorizationRequest{
 		UserInfo:   user,
 		Attributes: attr,
 	}
-	resp := &AuthorizationResponse{}
+	resp := &WebhookAuthorizationResponse{}
 	if err := t.httpclient.Post("").JSON(req).Return(resp).Send(ctx); err != nil {
 		return DecisionNoOpinion, "", err
 	}
