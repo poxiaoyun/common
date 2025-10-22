@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/meta"
 	libreflect "xiaoshiai.cn/common/reflect"
 	"xiaoshiai.cn/common/store"
 )
@@ -55,7 +56,7 @@ func init() {
 	GlobalBsonRegistry.RegisterTypeEncoder(quantityType, BsonQuantityCodec{})
 	GlobalBsonRegistry.RegisterTypeDecoder(quantityType, BsonQuantityCodec{})
 
-	timeType := reflect.TypeOf(store.Time{})
+	timeType := reflect.TypeOf(meta.Time{})
 	GlobalBsonRegistry.RegisterTypeEncoder(timeType, BsonTimeCodec{})
 	GlobalBsonRegistry.RegisterTypeDecoder(timeType, BsonTimeCodec{})
 }
@@ -79,17 +80,17 @@ func (b BsonTimeCodec) DecodeValue(ctx bsoncodec.DecodeContext, vr bsonrw.ValueR
 		if err != nil {
 			return err
 		}
-		v.Set(reflect.ValueOf(store.Time{Time: tim}))
+		v.Set(reflect.ValueOf(meta.Time{Time: tim}))
 		return nil
 	}
-	tim := store.Time{Time: primitive.DateTime(t).Time()}
+	tim := meta.Time{Time: primitive.DateTime(t).Time()}
 	v.Set(reflect.ValueOf(tim))
 	return nil
 }
 
 // EncodeValue implements bsoncodec.ValueEncoder.
 func (BsonTimeCodec) EncodeValue(ctx bsoncodec.EncodeContext, vw bsonrw.ValueWriter, v reflect.Value) error {
-	t, ok := v.Interface().(store.Time)
+	t, ok := v.Interface().(meta.Time)
 	if !ok {
 		return stderrors.New("invalid time")
 	}
@@ -322,7 +323,7 @@ func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...st
 				into.SetID(primitive.NewObjectID().Hex())
 			}
 		}
-		into.SetCreationTimestamp(store.Now())
+		into.SetCreationTimestamp(meta.Now())
 		into.SetUID(uuid.NewString())
 		data, err := m.mergeConditionOnChange(into, []string{"status"})
 		if err != nil {

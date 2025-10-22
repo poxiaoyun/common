@@ -1,9 +1,7 @@
 // +k8s:openapi-gen=true
 package store
 
-import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-)
+import "xiaoshiai.cn/common/meta"
 
 type Object interface {
 	GetID() string
@@ -29,10 +27,10 @@ type Object interface {
 	SetLabels(map[string]string)
 	GetAnnotations() map[string]string
 	SetAnnotations(map[string]string)
-	GetDeletionTimestamp() *Time
-	SetDeletionTimestamp(*Time)
-	GetCreationTimestamp() Time
-	SetCreationTimestamp(Time)
+	GetDeletionTimestamp() *meta.Time
+	SetDeletionTimestamp(*meta.Time)
+	GetCreationTimestamp() meta.Time
+	SetCreationTimestamp(meta.Time)
 	GetFinalizers() []string
 	SetFinalizers([]string)
 	GetOwnerReferences() []OwnerReference
@@ -58,15 +56,6 @@ type ObjectList interface {
 
 	SetContinue(string)
 	GetContinue() string
-}
-
-// +k8s:openapi-gen=true
-type Time = metav1.Time
-
-type Duration = metav1.Duration
-
-func Now() Time {
-	return Time(metav1.Now())
 }
 
 // +k8s:openapi-gen=true
@@ -96,8 +85,8 @@ type ObjectMeta struct {
 	Scopes            []Scope           `json:"scopes,omitempty"`
 	Resource          string            `json:"resource,omitempty"`
 	ResourceVersion   int64             `json:"resourceVersion,omitempty"`
-	CreationTimestamp Time              `json:"creationTimestamp,omitempty"`
-	DeletionTimestamp *Time             `json:"deletionTimestamp,omitempty"`
+	CreationTimestamp meta.Time         `json:"creationTimestamp,omitempty"`
+	DeletionTimestamp *meta.Time        `json:"deletionTimestamp,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
 	Annotations       map[string]string `json:"annotations,omitempty"`
 	Finalizers        []string          `json:"finalizers,omitempty"`
@@ -139,12 +128,12 @@ func (o *ObjectMeta) GetAnnotations() map[string]string {
 }
 
 // GetCreationTimestamp implements Object.
-func (o *ObjectMeta) GetCreationTimestamp() Time {
+func (o *ObjectMeta) GetCreationTimestamp() meta.Time {
 	return o.CreationTimestamp
 }
 
 // GetDeletionTimestamp implements Object.
-func (o *ObjectMeta) GetDeletionTimestamp() *Time {
+func (o *ObjectMeta) GetDeletionTimestamp() *meta.Time {
 	return o.DeletionTimestamp
 }
 
@@ -194,12 +183,12 @@ func (o *ObjectMeta) SetAnnotations(anotations map[string]string) {
 }
 
 // SetCreationTimestamp implements Object.
-func (o *ObjectMeta) SetCreationTimestamp(creationTimestamp Time) {
+func (o *ObjectMeta) SetCreationTimestamp(creationTimestamp meta.Time) {
 	o.CreationTimestamp = creationTimestamp
 }
 
 // SetDeletionTimestamp implements Object.
-func (o *ObjectMeta) SetDeletionTimestamp(deletionTimestamp *Time) {
+func (o *ObjectMeta) SetDeletionTimestamp(deletionTimestamp *meta.Time) {
 	o.DeletionTimestamp = deletionTimestamp
 }
 

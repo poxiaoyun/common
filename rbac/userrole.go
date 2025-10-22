@@ -11,6 +11,7 @@ import (
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/events"
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/meta"
 	"xiaoshiai.cn/common/rest/api"
 	"xiaoshiai.cn/common/store"
 )
@@ -21,8 +22,8 @@ type ScopedUserRole struct {
 	User              string             `json:"user"`
 	Role              string             `json:"role"`
 	Roles             []string           `json:"roles,omitempty"`
-	CreationTimestamp store.Time         `json:"creationTimestamp"`
-	DeleteTimestamp   *store.Time        `json:"deleteTimestamp"`
+	CreationTimestamp meta.Time          `json:"creationTimestamp"`
+	DeleteTimestamp   *meta.Time        `json:"deleteTimestamp"`
 	UserInfo          *authn.UserProfile `json:"userInfo"`
 }
 

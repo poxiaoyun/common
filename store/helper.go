@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/meta"
 )
 
 type LocalObjectReference struct {
@@ -429,12 +430,12 @@ func AnyToString(a any) string {
 			return v.Format(time.RFC3339)
 		}
 		return ""
-	case *Time:
+	case *meta.Time:
 		if v != nil {
 			return v.Time.Format(time.RFC3339)
 		}
 		return ""
-	case Time:
+	case meta.Time:
 		return v.Time.Format(time.RFC3339)
 	case bool:
 		return strconv.FormatBool(v)

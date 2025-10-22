@@ -19,6 +19,7 @@ import (
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/meta"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -175,7 +176,7 @@ func (e *EtcdStore) Create(ctx context.Context, obj store.Object, opts ...store.
 		return errors.NewInvalid(resource, obj.GetID(), ErrResourceVersionSetOnCreate)
 	}
 	obj.SetUID(uuid.New().String())
-	obj.SetCreationTimestamp(store.Now())
+	obj.SetCreationTimestamp(meta.Now())
 	obj.SetScopes(e.scopes)
 	obj.SetResource(resource)
 
@@ -232,7 +233,7 @@ func (e *EtcdStore) Delete(ctx context.Context, obj store.Object, opts ...store.
 	}
 
 	if obj.GetDeletionTimestamp() == nil {
-		obj.SetDeletionTimestamp(ptr.To(store.Now()))
+		obj.SetDeletionTimestamp(ptr.To(meta.Now()))
 	}
 	// update finalizers ac
 	if deleteoptions.PropagationPolicy != nil {

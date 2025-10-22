@@ -11,6 +11,7 @@ import (
 	"k8s.io/klog/v2"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/meta"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -22,11 +23,11 @@ type LeaderElection interface {
 
 type Lease struct {
 	store.ObjectMeta     `json:",inline"`
-	HolderIdentity       string     `json:"holderIdentity"`
-	LeaseDurationSeconds int        `json:"leaseDurationSeconds"`
-	AcquireTime          store.Time `json:"acquireTime"`
-	RenewTime            store.Time `json:"renewTime"`
-	LeaderTransitions    int        `json:"leaderTransitions"`
+	HolderIdentity       string    `json:"holderIdentity"`
+	LeaseDurationSeconds int       `json:"leaseDurationSeconds"`
+	AcquireTime          meta.Time `json:"acquireTime"`
+	RenewTime            meta.Time `json:"renewTime"`
+	LeaderTransitions    int       `json:"leaderTransitions"`
 }
 
 func NewStoreLeaderElection(store store.Store, key string, ttl time.Duration) LeaderElection {
@@ -125,7 +126,7 @@ func (le *StorageLeaderElectionLock) release() bool {
 	if !le.IsLeader() {
 		return true
 	}
-	now := store.Now()
+	now := meta.Now()
 	leaderElectionRecord := &Lease{
 		ObjectMeta:           store.ObjectMeta{Name: le.Name},
 		LeaderTransitions:    le.observedRecord.LeaderTransitions,
@@ -172,7 +173,7 @@ func (l *StorageLeaderElectionLock) identity() string {
 }
 
 func (le *StorageLeaderElectionLock) tryAcquireOrRenew(ctx context.Context) bool {
-	now := store.Now()
+	now := meta.Now()
 	leaderElectionRecord := &Lease{
 		ObjectMeta:           store.ObjectMeta{Name: le.Name},
 		HolderIdentity:       le.identity(),
@@ -242,7 +243,7 @@ func (le *StorageLeaderElectionLock) IsLeader() bool {
 	return le.getObservedRecord().HolderIdentity == le.identity()
 }
 
-func (le *StorageLeaderElectionLock) isLeaseValid(now store.Time) bool {
+func (le *StorageLeaderElectionLock) isLeaseValid(now meta.Time) bool {
 	return le.observedTime.Add(time.Second * time.Duration(le.getObservedRecord().LeaseDurationSeconds)).After(now.Time)
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"k8s.io/apimachinery/pkg/runtime"
+	"xiaoshiai.cn/common/meta"
 )
 
 var _ Object = &Unstructured{}
@@ -115,18 +116,18 @@ func (u *Unstructured) SetLabels(labels map[string]string) {
 }
 
 // GetCreationTimestamp implements Object.
-func (u *Unstructured) GetCreationTimestamp() Time {
+func (u *Unstructured) GetCreationTimestamp() meta.Time {
 	return GetNestedTime(u.Object, "creationTimestamp")
 }
 
 // SetCreationTimestamp implements Object.
-func (u *Unstructured) SetCreationTimestamp(t Time) {
+func (u *Unstructured) SetCreationTimestamp(t meta.Time) {
 	str := t.Format(time.RFC3339)
 	u.setNestedField(str, "creationTimestamp")
 }
 
 // GetDeletionTimestamp implements Object.
-func (u *Unstructured) GetDeletionTimestamp() *Time {
+func (u *Unstructured) GetDeletionTimestamp() *meta.Time {
 	tim := GetNestedTime(u.Object, "deletionTimestamp")
 	if tim.IsZero() {
 		return nil
@@ -135,7 +136,7 @@ func (u *Unstructured) GetDeletionTimestamp() *Time {
 }
 
 // SetDeletionTimestamp implements Object.
-func (u *Unstructured) SetDeletionTimestamp(t *Time) {
+func (u *Unstructured) SetDeletionTimestamp(t *meta.Time) {
 	if t == nil {
 		RemoveNestedField(u.Object, "deletionTimestamp")
 		return
@@ -311,19 +312,19 @@ func GetNestedString(obj map[string]any, fields ...string) string {
 	return ""
 }
 
-func GetNestedTime(obj map[string]any, fields ...string) Time {
+func GetNestedTime(obj map[string]any, fields ...string) meta.Time {
 	val, ok := GetNestedField(obj, fields...)
 	if !ok {
-		return Time{}
+		return meta.Time{}
 	}
 	if val == "null" {
-		return Time{}
+		return meta.Time{}
 	}
 	if s, ok := val.(string); ok {
 		t, _ := time.Parse(time.RFC3339, s)
-		return Time{Time: t}
+		return meta.Time{Time: t}
 	}
-	return Time{}
+	return meta.Time{}
 }
 
 func GetNestedInt64(obj map[string]any, fields ...string) int64 {

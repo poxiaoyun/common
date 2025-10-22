@@ -21,6 +21,7 @@ import (
 	"gorm.io/gorm"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/meta"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -330,7 +331,7 @@ func (c *core) create(ctx context.Context, scopes []store.Scope, in store.Object
 	if id == "" {
 		id = uuid.New().String()
 	}
-	in.SetCreationTimestamp(store.Now())
+	in.SetCreationTimestamp(meta.Now())
 	save := c.helper.ToDriverValueMap(in)
 	for _, cond := range scopes {
 		save[cond.Resource] = cond.Name

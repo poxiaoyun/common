@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/meta"
 	"xiaoshiai.cn/common/queue"
 	"xiaoshiai.cn/common/store"
 )
@@ -29,7 +30,7 @@ type Event struct {
 	Object            store.ResourcedObjectReference `json:"object,omitempty"`
 	Reason            Reason                         `json:"reason,omitempty"`
 	Message           string                         `json:"message,omitempty"`
-	CreationTimestamp store.Time                     `json:"creationTimestamp,omitempty"`
+	CreationTimestamp meta.Time                      `json:"creationTimestamp,omitempty"`
 }
 
 type Recorder interface {
@@ -114,7 +115,7 @@ func (q *QueueRecorder) event(ctx context.Context, id string, obj store.Object, 
 		Annotations:       merged,
 		Reason:            reason,
 		Message:           message,
-		CreationTimestamp: store.Time{Time: time.Now()},
+		CreationTimestamp: meta.Now(),
 	}
 	select {
 	case q.Cache <- e:

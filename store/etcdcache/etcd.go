@@ -34,6 +34,7 @@ import (
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
+	libmeta "xiaoshiai.cn/common/meta"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -182,7 +183,7 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 			return errors.NewBadRequest(fmt.Sprintf("id is required for %s", db.resource))
 		}
 		obj.SetUID(uuid.New().String())
-		obj.SetCreationTimestamp(store.Now())
+		obj.SetCreationTimestamp(libmeta.Now())
 		obj.SetScopes(c.scopes)
 		obj.SetResource(db.resource.String())
 		uns, err := ConvertToUnstructured(obj)
