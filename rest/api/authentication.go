@@ -24,15 +24,20 @@ type UserInfo struct {
 	Groups        []string            `json:"groups,omitempty"`
 	Extra         map[string][]string `json:"extra,omitempty"`
 }
+
 type Authenticator interface {
 	// Authenticate authenticates the request and returns the authentication info.
 	// it can has side effect to set response header
+	// if implementation can't make authentication decision, return nil, [ErrNotProvided]
+	// so that the next authenticator in chain can try
+	// once authenticated, return the AuthenticateInfo, nil
 	Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error)
 }
 
 type TokenAuthenticator interface {
 	// Authenticate authenticates the token and returns the authentication info.
-	// if can't authenticate, return nil, "reason message", nil
+	// if unauthorized, return nil, err
+	// if no decision can be made, return nil, [ErrNotProvided]
 	// if unexpected error, return nil, "", err
 	Authenticate(ctx context.Context, token string) (*AuthenticateInfo, error)
 }

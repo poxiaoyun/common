@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net/http"
 
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/httpclient"
@@ -121,4 +122,23 @@ func (t *BasicAuthWebhookAuthenticator) Authenticate(ctx context.Context, userna
 		Audiences: resp.Audiences,
 	}
 	return info, nil
+}
+
+type TokenOrBasicAuthenticator struct {
+	TokenAuthenticator TokenAuthenticator
+	BasicAuthenticator BasicAuthenticator
+}
+
+var _ Authenticator = &TokenOrBasicAuthenticator{}
+
+func (w *TokenOrBasicAuthenticator) Authenticate(wr http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+	token := ExtracBearerTokenFromRequest(r)
+	if token != "" && w.TokenAuthenticator != nil {
+		return w.TokenAuthenticator.Authenticate(r.Context(), token)
+	}
+	username, password, ok := r.BasicAuth()
+	if ok && w.BasicAuthenticator != nil {
+		return w.BasicAuthenticator.Authenticate(r.Context(), username, password)
+	}
+	return nil, ErrNotProvided
 }
