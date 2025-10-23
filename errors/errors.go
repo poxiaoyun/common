@@ -146,8 +146,11 @@ func NewCustomError(code int, reason StatusReason, message string) *Status {
 	return &Status{Status: StatusFailure, Code: int32(code), Reason: reason, Message: message}
 }
 
+// IsNotFound is a widely useful helper function to test if an error is a not found error.
+// It not only checks for errors returned by [StatusReasonNotFound], but also checks for
+// standard [http.StatusNotFound] status code for compatibility with other error types.
 func IsNotFound(err error) bool {
-	return ReasonForError(err) == StatusReasonNotFound
+	return ReasonForError(err) == StatusReasonNotFound || IsCode(err, http.StatusNotFound)
 }
 
 func IsAlreadyExists(err error) bool {
