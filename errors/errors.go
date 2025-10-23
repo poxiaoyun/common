@@ -182,3 +182,11 @@ func IgnoreAlreadyExists(err error) error {
 func IsUnauthorized(err error) bool {
 	return ReasonForError(err) == StatusReasonUnauthorized
 }
+
+// IsCode checks if the given error has the specified HTTP status code.
+func IsCode(err error, code int) bool {
+	if status, ok := err.(*Status); ok || errors.As(err, &status) {
+		return int(status.Code) == code
+	}
+	return false
+}
