@@ -22,6 +22,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 
 	yaml "sigs.k8s.io/yaml/goyaml.v2"
 	"xiaoshiai.cn/common/errors"
@@ -35,6 +36,7 @@ var PageParams = []Param{
 	QueryParam("search", "Search string for searching").Optional(),
 	QueryParam("sort", "Sort string for sorting").In("name", "name-", "time", "time-").Optional(),
 	QueryParam("label-selector", "Selector string for filtering").Optional(),
+	QueryParam("field-selector", "Selector string for filtering").Optional(),
 	QueryParam("continue", "Continue token for pagination").Optional(),
 }
 
@@ -66,11 +68,13 @@ type ListOptions = meta.ListOptions
 
 func GetListOptions(r *http.Request) ListOptions {
 	return ListOptions{
-		Page:     Query(r, "page", 1),
-		Size:     Query(r, "size", 10),
-		Search:   Query(r, "search", ""),
-		Sort:     Query(r, "sort", ""),
-		Continue: Query(r, "continue", ""),
+		Page:          Query(r, "page", 1),
+		Size:          Query(r, "size", 10),
+		Search:        Query(r, "search", ""),
+		Sort:          Query(r, "sort", ""),
+		Continue:      Query(r, "continue", ""),
+		FieldSelector: Query(r, "field-selector", ""),
+		LabelSelector: Query(r, "label-selector", ""),
 	}
 }
 
@@ -92,7 +96,15 @@ func Header[T any](r *http.Request, key string, defaultValue T) T {
 }
 
 func Query[T any](r *http.Request, key string, defaultValue T) T {
-	val := r.URL.Query().Get(key)
+	cached := GetContextValue[*url.Values](r.Context(), "queries")
+	if cached == nil {
+		// cache queries
+		queries := r.URL.Query()
+		cached = &queries
+		ctx := SetContextValue(r.Context(), "queries", cached)
+		*r = *r.WithContext(ctx)
+	}
+	val := cached.Get(key)
 	return ValueOrDefault(val, defaultValue)
 }
 
