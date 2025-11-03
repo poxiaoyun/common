@@ -346,7 +346,7 @@ func testMemberManagement(t *testing.T, provider AuthorizationProvider) {
 	if len(userOrgsPage.Items) == 0 {
 		t.Fatalf("expected user to be a member of at least one organization")
 	}
-	if slices.ContainsFunc(userOrgsPage.Items, func(org Organization) bool { return org.ID == "org1" }) == false {
+	if slices.ContainsFunc(userOrgsPage.Items, func(org OrganizationRoles) bool { return org.ID == "org1" }) == false {
 		t.Fatalf("expected user to be a member of organization 'org1'")
 	}
 

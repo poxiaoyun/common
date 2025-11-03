@@ -24,8 +24,14 @@ type Organization struct {
 
 type Member struct {
 	meta.ObjectMetadata `json:",inline"`
+	Organization        string `json:"organization,omitempty"`
 	// Roles is the list of roles assigned to this member
 	Roles []string `json:"roles,omitempty"`
+}
+
+type OrganizationRoles struct {
+	Organization `json:",inline"`
+	Roles        []string `json:"roles,omitempty"`
 }
 
 type ListOrganizationsOptions struct {
@@ -62,7 +68,7 @@ type AuthorizationProvider interface {
 	DeleteMember(ctx context.Context, org, member string) error
 
 	// UserOrganizations lists organizations that the user is a member of
-	UserOrganizations(ctx context.Context, user string, options ListUserOrganizationsOptions) (Page[Organization], error)
+	UserOrganizations(ctx context.Context, user string, options ListUserOrganizationsOptions) (Page[OrganizationRoles], error)
 
 	ListRoles(ctx context.Context, org string, options ListRolesOptions) (Page[Role], error)
 	GetRole(ctx context.Context, org, role string) (*Role, error)

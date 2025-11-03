@@ -14,7 +14,6 @@ func NewInMemoryAuthorizationProvider() *InMemoryAuthorizationProvider {
 		organizations: make(map[string]*Organization),
 		roles:         make(map[string]map[string]*Role),
 		members:       make(map[string]map[string]*Member),
-		userOrgs:      make(map[string]map[string]*Organization),
 	}
 }
 
@@ -23,9 +22,8 @@ var _ AuthorizationProvider = &InMemoryAuthorizationProvider{}
 type InMemoryAuthorizationProvider struct {
 	lock          sync.RWMutex
 	organizations map[string]*Organization
-	roles         map[string]map[string]*Role         // org -> roleName -> Role
-	members       map[string]map[string]*Member       // org -> memberName -> Member
-	userOrgs      map[string]map[string]*Organization // userName -> orgName -> Organization
+	roles         map[string]map[string]*Role   // org -> roleName -> Role
+	members       map[string]map[string]*Member // org -> memberName -> Member
 }
 
 // AddMember implements AuthorizationProvider.
@@ -41,15 +39,8 @@ func (i *InMemoryAuthorizationProvider) AddMember(ctx context.Context, org strin
 	if _, ok := i.members[org][member.ID]; ok {
 		return errors.NewAlreadyExists("member", member.ID)
 	}
-	// copy member
-	m := *member
-	i.members[org][m.ID] = &m
-	if i.userOrgs[m.ID] == nil {
-		i.userOrgs[m.ID] = make(map[string]*Organization)
-	}
-	if orgObj, ok := i.organizations[org]; ok {
-		i.userOrgs[m.ID][org] = orgObj
-	}
+	shadow := *member
+	i.members[org][member.ID] = &shadow
 	return nil
 }
 
@@ -89,13 +80,9 @@ func (i *InMemoryAuthorizationProvider) Authorize(ctx context.Context, user User
 	if user.ID == "" {
 		return DecisionDeny, "anonymous user", nil
 	}
-	// find organizations the user belongs to
-	orgs := i.userOrgs[user.ID]
-	if orgs == nil {
-		return DecisionNoOpinion, "", nil
-	}
+
 	// iterate orgs and roles
-	for org := range orgs {
+	for org := range i.organizations {
 		membersMap := i.members[org]
 		if membersMap == nil {
 			continue
@@ -165,13 +152,6 @@ func (i *InMemoryAuthorizationProvider) DeleteMember(ctx context.Context, org st
 		return errors.NewNotFound("member", member)
 	}
 	delete(i.members[org], member)
-	// remove from userOrgs
-	if uo, ok := i.userOrgs[member]; ok {
-		delete(uo, org)
-		if len(uo) == 0 {
-			delete(i.userOrgs, member)
-		}
-	}
 	return nil
 }
 
@@ -184,17 +164,6 @@ func (i *InMemoryAuthorizationProvider) DeleteOrganization(ctx context.Context, 
 	}
 	delete(i.organizations, org)
 	delete(i.roles, org)
-	// remove members and update userOrgs
-	if mems := i.members[org]; mems != nil {
-		for uname := range mems {
-			if uo, ok := i.userOrgs[uname]; ok {
-				delete(uo, org)
-				if len(uo) == 0 {
-					delete(i.userOrgs, uname)
-				}
-			}
-		}
-	}
 	delete(i.members, org)
 	return nil
 }
@@ -349,12 +318,6 @@ func (i *InMemoryAuthorizationProvider) UpdateMember(ctx context.Context, org st
 	}
 	m := *member
 	i.members[org][m.ID] = &m
-	if i.userOrgs[m.ID] == nil {
-		i.userOrgs[m.ID] = make(map[string]*Organization)
-	}
-	if orgObj, ok := i.organizations[org]; ok {
-		i.userOrgs[m.ID][org] = orgObj
-	}
 	return nil
 }
 
@@ -386,15 +349,29 @@ func (i *InMemoryAuthorizationProvider) UpdateRole(ctx context.Context, org stri
 }
 
 // UserOrganizations implements AuthorizationProvider.
-func (i *InMemoryAuthorizationProvider) UserOrganizations(ctx context.Context, user string, options ListUserOrganizationsOptions) (Page[Organization], error) {
+func (i *InMemoryAuthorizationProvider) UserOrganizations(ctx context.Context, user string, options ListUserOrganizationsOptions) (Page[OrganizationRoles], error) {
 	i.lock.RLock()
 	defer i.lock.RUnlock()
-	list := []Organization{}
-	if uo := i.userOrgs[user]; uo != nil {
-		for _, o := range uo {
-			list = append(list, *o)
+	list := []OrganizationRoles{}
+	for orgName, membersMap := range i.members {
+		if membersMap == nil {
+			continue
 		}
+		m, ok := membersMap[user]
+		if !ok {
+			continue
+		}
+		orgObj, ok := i.organizations[orgName]
+		if !ok {
+			continue
+		}
+		orgRoles := OrganizationRoles{
+			Organization: *orgObj,
+			Roles:        m.Roles,
+		}
+		list = append(list, orgRoles)
 	}
+	// stable order by name
 	sort.Slice(list, func(a, b int) bool { return list[a].ID < list[b].ID })
-	return PageFromListOptions(list, options.ListOptions, func(item Organization) string { return item.ID }, nil), nil
+	return PageFromListOptions(list, options.ListOptions, func(item OrganizationRoles) string { return item.ID }, nil), nil
 }

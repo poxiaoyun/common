@@ -90,11 +90,11 @@ func (w *WebhookAuthorizationProvider) ExistsOrganization(ctx context.Context, o
 }
 
 // UserOrganizations implements AuthorizationProvider.
-func (w *WebhookAuthorizationProvider) UserOrganizations(ctx context.Context, user string, options ListUserOrganizationsOptions) (Page[Organization], error) {
-	page := Page[Organization]{}
+func (w *WebhookAuthorizationProvider) UserOrganizations(ctx context.Context, user string, options ListUserOrganizationsOptions) (Page[OrganizationRoles], error) {
+	page := Page[OrganizationRoles]{}
 	queries := httpclient.ListOptionsToQuery(options.ListOptions)
 	if err := w.cli.Get(fmt.Sprintf("/users/%s/organizations", user)).Queries(queries).Return(&page).Send(ctx); err != nil {
-		return Page[Organization]{}, err
+		return Page[OrganizationRoles]{}, err
 	}
 	return page, nil
 }
