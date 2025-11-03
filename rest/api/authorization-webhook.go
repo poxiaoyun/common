@@ -31,6 +31,18 @@ type WebhookAuthorizationProvider struct {
 	cli *httpclient.Client
 }
 
+// ExistsMember implements AuthorizationProvider.
+func (w *WebhookAuthorizationProvider) ExistsMember(ctx context.Context, org string, member string) (bool, error) {
+	resp, err := w.cli.Head(fmt.Sprintf("/organizations/%s/members/%s", org, member)).Do(ctx)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return resp.StatusCode == http.StatusOK, nil
+}
+
 // Authorize implements AuthorizationProvider.
 func (w *WebhookAuthorizationProvider) Authorize(ctx context.Context, user UserInfo, a Attributes) (authorized Decision, reason string, err error) {
 	resp := &WebhookAuthorizationResponse{}
@@ -314,6 +326,23 @@ func (s *WebhookAuthorizationServer) ListMembers(w http.ResponseWriter, r *http.
 	})
 }
 
+func (s *WebhookAuthorizationServer) ExistsMember(w http.ResponseWriter, r *http.Request) {
+	s.onOrg(w, r, func(ctx context.Context, org string) (any, error) {
+		member := Path(r, "member", "")
+		if member == "" {
+			return nil, errors.NewBadRequest("member is required")
+		}
+		exists, err := s.Provider.ExistsMember(ctx, org, member)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return ResponseStatusOnly(http.StatusNotFound), nil
+		}
+		return Empty, nil
+	})
+}
+
 func (s *WebhookAuthorizationServer) GetMember(w http.ResponseWriter, r *http.Request) {
 	s.onOrg(w, r, func(ctx context.Context, org string) (any, error) {
 		member := Path(r, "member", "")
@@ -486,6 +515,10 @@ func (s *WebhookAuthorizationServer) Group() Group {
 				Operation("update member").
 				Param(BodyParam("member", Member{})).
 				To(s.UpdateMember),
+
+			HEAD("/organizations/{organization}/members/{member}").
+				Operation("exists member").
+				To(s.ExistsMember),
 
 			DELETE("/organizations/{organization}/members/{member}").
 				Operation("delete member").

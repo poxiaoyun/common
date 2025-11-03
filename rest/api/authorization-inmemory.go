@@ -26,6 +26,17 @@ type InMemoryAuthorizationProvider struct {
 	members       map[string]map[string]*Member // org -> memberName -> Member
 }
 
+// ExistsMember implements AuthorizationProvider.
+func (i *InMemoryAuthorizationProvider) ExistsMember(ctx context.Context, org string, member string) (bool, error) {
+	i.lock.RLock()
+	defer i.lock.RUnlock()
+	if i.members[org] == nil {
+		return false, nil
+	}
+	_, ok := i.members[org][member]
+	return ok, nil
+}
+
 // AddMember implements AuthorizationProvider.
 func (i *InMemoryAuthorizationProvider) AddMember(ctx context.Context, org string, member *Member) error {
 	i.lock.Lock()

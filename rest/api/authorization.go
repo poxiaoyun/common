@@ -62,6 +62,8 @@ type AuthorizationProvider interface {
 	OrganizationProvider
 
 	ListMembers(ctx context.Context, org string, options ListMembersOptions) (Page[Member], error)
+	// ExistsMember checks whether the member exists in the organization
+	ExistsMember(ctx context.Context, org, member string) (bool, error)
 	GetMember(ctx context.Context, org, member string) (*Member, error)
 	AddMember(ctx context.Context, org string, member *Member) error
 	UpdateMember(ctx context.Context, org string, member *Member) error

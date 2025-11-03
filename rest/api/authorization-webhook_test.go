@@ -254,6 +254,22 @@ func testMemberManagement(t *testing.T, provider AuthorizationProvider) {
 		t.Fatalf("failed to add member: %v", err)
 	}
 
+	// exists member
+	exists, err := provider.ExistsMember(t.Context(), "org1", "user1")
+	if err != nil {
+		t.Fatalf("failed to check member existence: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected member 'user1' to exist in organization 'org1'")
+	}
+	exists, err = provider.ExistsMember(t.Context(), "org1", "nonexistent")
+	if err != nil {
+		t.Fatalf("failed to check member existence: %v", err)
+	}
+	if exists {
+		t.Fatalf("expected member 'nonexistent' to not exist in organization 'org1'")
+	}
+
 	// get member
 	gotMember, err := provider.GetMember(t.Context(), "org1", "user1")
 	if err != nil {
