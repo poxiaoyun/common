@@ -152,6 +152,9 @@ func FieldsSelectorToReqirements(fields fields.Selector) Requirements {
 }
 
 func ParseRequirements(expr string) (Requirements, error) {
+	if expr == "" {
+		return nil, nil
+	}
 	sel, err := labels.Parse(expr)
 	if err != nil {
 		return nil, err

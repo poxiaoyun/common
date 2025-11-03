@@ -491,3 +491,27 @@ func SetScopesFields(data map[string]any, scopes []Scope) {
 		data[field] = scope.Name
 	}
 }
+
+// ListOptionsFromMetaListOptions converts meta.ListOptions to store.ListOption slice.
+func ListOptionsFromMetaListOptions(reqlistopetions meta.ListOptions) ([]ListOption, error) {
+	reqOptions := []ListOption{
+		WithPageSize(reqlistopetions.Page, reqlistopetions.Size),
+		WithSort(reqlistopetions.Sort),
+		WithSearch(reqlistopetions.Search),
+	}
+	labelsSelector, err := ParseRequirements(reqlistopetions.LabelSelector)
+	if err != nil {
+		return nil, err
+	}
+	fieldsSelector, err := ParseRequirements(reqlistopetions.FieldSelector)
+	if err != nil {
+		return nil, err
+	}
+	if labelsSelector != nil {
+		reqOptions = append(reqOptions, WithLabelRequirements(labelsSelector...))
+	}
+	if fieldsSelector != nil {
+		reqOptions = append(reqOptions, WithFieldRequirements(fieldsSelector...))
+	}
+	return reqOptions, nil
+}
