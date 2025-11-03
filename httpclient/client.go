@@ -86,7 +86,12 @@ func NewClientFromClientConfig(cfg *ClientConfig) *Client {
 	} else {
 		transport = cfg.RoundTripper
 	}
-	return &Client{RoundTripper: transport, Server: cfg.Server}
+	return &Client{
+		RoundTripper: transport,
+		Server:       cfg.Server,
+		// set default response handler
+		OnResponse: StatusOnResponse,
+	}
 }
 
 func NewClient(server string) (*Client, error) {
@@ -95,6 +100,10 @@ func NewClient(server string) (*Client, error) {
 		return nil, err
 	}
 	return NewClientFromClientConfig(&ClientConfig{Server: serverURL}), nil
+}
+
+func (c *Client) Head(path string) *Builder {
+	return c.Request(http.MethodHead, path)
 }
 
 func (c *Client) Get(path string) *Builder {

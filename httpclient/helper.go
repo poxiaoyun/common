@@ -17,6 +17,7 @@ import (
 
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/meta"
 	libreflect "xiaoshiai.cn/common/reflect"
 )
 
@@ -263,10 +264,39 @@ func StatusOnResponse(req *http.Request, resp *http.Response) error {
 	if resp.StatusCode < http.StatusBadRequest {
 		return nil
 	}
-	bytes, _ := io.ReadAll(resp.Body)
+	reader := io.LimitReader(resp.Body, 1024)
+	var cache bytes.Buffer
 	statuserr := &errors.Status{}
-	if err := json.Unmarshal(bytes, statuserr); err == nil {
+	if err := json.NewDecoder(io.TeeReader(reader, &cache)).Decode(statuserr); err == nil {
 		return statuserr
 	}
-	return errors.NewBadRequest(string(bytes))
+	// read the rest of body
+	io.Copy(&cache, reader)
+	return errors.NewCustomError(resp.StatusCode, errors.StatusReasonUnknown, cache.String())
+}
+
+func ListOptionsToQuery(options meta.ListOptions) url.Values {
+	values := url.Values{}
+	if options.Size > 0 {
+		values.Set("size", fmt.Sprint(options.Size))
+	}
+	if options.Page > 0 {
+		values.Set("page", fmt.Sprint(options.Page))
+	}
+	if options.Search != "" {
+		values.Set("search", options.Search)
+	}
+	if options.Sort != "" {
+		values.Set("sort", options.Sort)
+	}
+	if options.FieldSelector != "" {
+		values.Set("fieldSelector", options.FieldSelector)
+	}
+	if options.LabelSelector != "" {
+		values.Set("labelSelector", options.LabelSelector)
+	}
+	if options.Continue != "" {
+		values.Set("continue", options.Continue)
+	}
+	return values
 }

@@ -1,9 +1,12 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"xiaoshiai.cn/common/httpclient"
 )
 
 type RequestHeaderAuthenticatorOptions struct {
@@ -20,6 +23,11 @@ func NewDefaultRequestHeaderAuthenticatorOptions() *RequestHeaderAuthenticatorOp
 	}
 }
 
+// RequestHeaderAuthenticator is an authenticator that uses request headers to authenticate users.
+//
+// use [SetAuthProxyHeaders] to set the headers.
+//
+// Or use [SetAuthProxyHeadersFromContext] to set the headers from an existing authentication context.
 type RequestHeaderAuthenticator struct {
 	Options *RequestHeaderAuthenticatorOptions
 }
@@ -53,4 +61,16 @@ func unescapeExtraKey(encodedKey string) string {
 		return encodedKey // Always record extra strings, even if malformed/unencoded.
 	}
 	return key
+}
+
+func SetAuthProxyHeadersFromContext(ctx context.Context, req *http.Request) {
+	info := AuthenticateFromContext(ctx)
+	SetAuthProxyHeaders(req, info.User.Name, info.User.Groups, info.User.Extra)
+}
+
+// SetAuthProxyHeaders sets the authentication proxy headers on the given request.
+// It sets the X-Remote-User, X-Remote-Group, and X-Remote-Extra-* headers
+// It consumes by [RequestHeaderAuthenticator] to reconstruct the user info.
+func SetAuthProxyHeaders(req *http.Request, username string, groups []string, extra map[string][]string) {
+	httpclient.SetAuthProxyHeaders(req, username, groups, extra)
 }

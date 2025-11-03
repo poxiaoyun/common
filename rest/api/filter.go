@@ -15,7 +15,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -43,38 +42,6 @@ func (fs Filters) Process(w http.ResponseWriter, r *http.Request, next http.Hand
 	fs[0].Process(w, r, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fs[1:].Process(w, r, next)
 	}))
-}
-
-// FilterContext is a map of string to any
-// it is used to pass data between filters
-// FilterContext is mutable and can pass values back to parent, but context.Context is not
-type FilterContext map[string]any
-
-type filterContextKey string
-
-var FilterContextKey = filterContextKey("filter-context")
-
-func SetContextValue(ctx context.Context, key string, value any) context.Context {
-	fc, _ := ctx.Value(FilterContextKey).(FilterContext)
-	if fc != nil {
-		// update filter context value
-		fc[key] = value
-		return ctx
-	}
-	// init filter context
-	return context.WithValue(ctx, FilterContextKey, FilterContext{key: value})
-}
-
-func GetContextValue[T any](ctx context.Context, key string) T {
-	fc, _ := ctx.Value(FilterContextKey).(FilterContext)
-	if fc == nil {
-		return *new(T)
-	}
-	val, ok := fc[key].(T)
-	if !ok {
-		return *new(T)
-	}
-	return val
 }
 
 func NewCORSFilter() Filter {

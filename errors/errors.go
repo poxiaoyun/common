@@ -12,7 +12,7 @@ const (
 )
 
 const (
-	StatusReasonUnknown               StatusReason = ""
+	StatusReasonUnknown               StatusReason = "Unknown"
 	StatusReasonNotFound              StatusReason = "NotFound"
 	StatusReasonAlreadyExists         StatusReason = "AlreadyExists"
 	StatusReasonInvalid               StatusReason = "Invalid"

@@ -8,15 +8,7 @@ import (
 )
 
 type WebhookAuthorizerOptions struct {
-	Server                string `json:"server,omitempty"`
-	ProxyURL              string `json:"proxyURL,omitempty"`
-	Token                 string `json:"token,omitempty"`
-	Username              string `json:"username,omitempty"`
-	Password              string `json:"password,omitempty"`
-	CertFile              string `json:"certFile,omitempty"`
-	KeyFile               string `json:"keyFile,omitempty"`
-	CAFile                string `json:"caFile,omitempty"`
-	InsecureSkipTLSVerify bool   `json:"insecureSkipTLSVerify,omitempty"`
+	WebhookOptions `json:",inline"`
 }
 
 type WebhookAuthorizationRequest struct {
@@ -60,7 +52,7 @@ type WebhookAuthorizer struct {
 	httpclient *httpclient.Client
 }
 
-func (t *WebhookAuthorizer) Authorize(ctx context.Context, user UserInfo, attr Attributes) (authorized Decision, reason string, err error) {
+func (t WebhookAuthorizer) Authorize(ctx context.Context, user UserInfo, attr Attributes) (authorized Decision, reason string, err error) {
 	req := &WebhookAuthorizationRequest{
 		UserInfo:   user,
 		Attributes: attr,

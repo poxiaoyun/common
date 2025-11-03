@@ -8,7 +8,8 @@ import (
 	"xiaoshiai.cn/common/httpclient"
 )
 
-type WebhookAuthenticatorOptions struct {
+// WebhookOptions is the basic options for webhook operations
+type WebhookOptions struct {
 	Server                string `json:"server,omitempty"`
 	ProxyURL              string `json:"proxyURL,omitempty"`
 	Token                 string `json:"token,omitempty"`
@@ -20,8 +21,27 @@ type WebhookAuthenticatorOptions struct {
 	InsecureSkipTLSVerify bool   `json:"insecureSkipTLSVerify,omitempty"`
 }
 
+func NewHttpClientFromWebhookOptions(opts *WebhookOptions) (*httpclient.Client, error) {
+	config := &httpclient.Config{
+		Server:                opts.Server,
+		ProxyURL:              opts.ProxyURL,
+		Token:                 opts.Token,
+		Username:              opts.Username,
+		Password:              opts.Password,
+		CertFile:              opts.CertFile,
+		KeyFile:               opts.KeyFile,
+		CAFile:                opts.CAFile,
+		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
+	}
+	return httpclient.NewClientFromConfig(context.Background(), config)
+}
+
+type WebhookAuthenticatorOptions struct {
+	WebhookOptions `json:",inline"`
+}
+
 func NewTokenWebhookAuthenticator(opts *WebhookAuthenticatorOptions) (*TokenWebhookAuthenticator, error) {
-	processor, err := NewWebhookAuthenticatorProcessor(opts)
+	processor, err := NewWebhookAuthenticatorProcessor(&opts.WebhookOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +62,7 @@ func (t *TokenWebhookAuthenticator) Authenticate(ctx context.Context, token stri
 var _ BasicAuthenticator = &BasicAuthWebhookAuthenticator{}
 
 func NewBasicAuthWebhookAuthenticator(opts *WebhookAuthenticatorOptions) (*BasicAuthWebhookAuthenticator, error) {
-	processor, err := NewWebhookAuthenticatorProcessor(opts)
+	processor, err := NewWebhookAuthenticatorProcessor(&opts.WebhookOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +97,7 @@ func (t *TokenOrBasicAuthWebhookAuthenticator) Authenticate(w http.ResponseWrite
 }
 
 func NewWebhookAuthenticator(opts *WebhookAuthenticatorOptions, getRequest func(r *http.Request) (*WebhookAuthenticationRequest, error)) (*WebhookAuthenticator, error) {
-	processor, err := NewWebhookAuthenticatorProcessor(opts)
+	processor, err := NewWebhookAuthenticatorProcessor(&opts.WebhookOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -99,19 +119,8 @@ func (w *WebhookAuthenticator) Authenticate(wr http.ResponseWriter, r *http.Requ
 	return w.Process.Process(r.Context(), req)
 }
 
-func NewWebhookAuthenticatorProcessor(opts *WebhookAuthenticatorOptions) (*WebhookAuthenticatorProcessor, error) {
-	config := &httpclient.Config{
-		Server:                opts.Server,
-		ProxyURL:              opts.ProxyURL,
-		Token:                 opts.Token,
-		Username:              opts.Username,
-		Password:              opts.Password,
-		CertFile:              opts.CertFile,
-		KeyFile:               opts.KeyFile,
-		CAFile:                opts.CAFile,
-		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
-	}
-	cli, err := httpclient.NewClientFromConfig(context.Background(), config)
+func NewWebhookAuthenticatorProcessor(opts *WebhookOptions) (*WebhookAuthenticatorProcessor, error) {
+	cli, err := NewHttpClientFromWebhookOptions(opts)
 	if err != nil {
 		return nil, err
 	}

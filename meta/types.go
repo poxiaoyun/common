@@ -145,3 +145,24 @@ type Duration = metav1.Duration
 func Now() Time {
 	return Time(metav1.Now())
 }
+
+// ObjectMetadata represents the metadata of an object
+// it commonly used in API objects
+type ObjectMetadata struct {
+	// ID is the unique identifier of the object
+	// it must not be changed once created
+	ID string `json:"id,omitempty"`
+	// Name is the name of the object
+	// it's used for display only, can be changed to anything
+	Name string `json:"name,omitempty"`
+	// CreationTimestamp is the creation timestamp of the object
+	CreationTimestamp Time `json:"creationTimestamp,omitempty"`
+	// DeletionTimestamp is the deletion timestamp of the object
+	DeletionTimestamp *Time `json:"deletionTimestamp,omitempty"`
+	// Labels is a set of key/value labels for the object
+	Labels map[string]string `json:"labels,omitempty"`
+	// Annotations is a set of key/value annotations for the object
+	Annotations map[string]string `json:"annotations,omitempty"`
+	// Description is the description of the object
+	Description string `json:"description,omitempty"`
+}
