@@ -84,7 +84,7 @@ func PageFrom[T any](list []T, page, size int, pickfun func(item T) bool, sortfu
 	}
 	// page
 	if size == 0 {
-		return Page[T]{Total: int64(len(list)), Items: list}
+		return Page[T]{Total: len(list), Items: list}
 	}
 	if page < 1 {
 		page = 1
@@ -101,10 +101,10 @@ func PageFrom[T any](list []T, page, size int, pickfun func(item T) bool, sortfu
 	}
 	list = list[startIdx:endIdx]
 	return Page[T]{
-		Total: int64(total),
+		Total: total,
 		Items: list,
-		Page:  int64(page),
-		Size:  int64(size),
+		Page:  page,
+		Size:  size,
 	}
 }
 

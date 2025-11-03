@@ -19,13 +19,13 @@ type Empty struct{}
 type Page[T any] struct {
 	// Total is the total number of items matching the query
 	// it used for page style pagination
-	Total int64 `json:"total"`
+	Total int `json:"total"`
 	// Items is the list of items in the current page
 	Items []T `json:"items"`
 	// Page is the current page number
-	Page int64 `json:"page"`
+	Page int `json:"page"`
 	// Size is the number of items per page
-	Size int64 `json:"size"`
+	Size int `json:"size"`
 	// for continue style pagination
 	// if continue is not empty, means there are more items
 	// when use continue style pagination, total is not returned and page is ignored
