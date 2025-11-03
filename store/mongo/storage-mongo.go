@@ -641,7 +641,7 @@ func sortstage(sort string) bson.M {
 			s.Field = "creationTimestamp"
 		}
 		direction := 1
-		if s.Order == store.SortOrderDesc {
+		if s.Direction == meta.SortDirectionDesc {
 			direction = -1
 		}
 		sorts = append(sorts, bson.E{Key: s.Field, Value: direction})

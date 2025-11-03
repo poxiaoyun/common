@@ -22,13 +22,10 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"strconv"
-	"strings"
-	"time"
 
 	yaml "sigs.k8s.io/yaml/goyaml.v2"
 	"xiaoshiai.cn/common/errors"
-	"xiaoshiai.cn/common/store"
+	"xiaoshiai.cn/common/meta"
 )
 
 var PageParams = []Param{
@@ -65,15 +62,7 @@ func (p PathVarList) Map() map[string]string {
 	return m
 }
 
-type ListOptions struct {
-	Page   int    `json:"page,omitempty"`
-	Size   int    `json:"size,omitempty"`
-	Search string `json:"search,omitempty"`
-	Sort   string `json:"sort,omitempty"`
-	// Continue is a token to continue the list
-	// it is used for pagination
-	Continue string `json:"continue,omitempty"`
-}
+type ListOptions = meta.ListOptions
 
 func GetListOptions(r *http.Request) ListOptions {
 	return ListOptions{
@@ -82,22 +71,6 @@ func GetListOptions(r *http.Request) ListOptions {
 		Search:   Query(r, "search", ""),
 		Sort:     Query(r, "sort", ""),
 		Continue: Query(r, "continue", ""),
-	}
-}
-
-func ParseSort(sort string) (field, order string) {
-	store.ParseSorts(sort)
-	if sort == "" {
-		return "", "asc"
-	}
-	lastrune := sort[len(sort)-1]
-	switch lastrune {
-	case '+':
-		return sort[:len(sort)-1], "asc"
-	case '-':
-		return sort[:len(sort)-1], "desc"
-	default:
-		return sort, "asc"
 	}
 }
 
@@ -126,64 +99,7 @@ func Query[T any](r *http.Request, key string, defaultValue T) T {
 // nolint: forcetypeassert,gomnd,ifshort
 // ValueOrDefault return default value if empty string
 func ValueOrDefault[T any](val string, defaultValue T) T {
-	if val == "" {
-		return defaultValue
-	}
-	switch any(defaultValue).(type) {
-	case string:
-		return any(val).(T)
-	case []string:
-		if val == "" {
-			return defaultValue
-		}
-		return any(strings.Split(val, ",")).(T)
-	case int:
-		if v, err := strconv.Atoi(val); err == nil {
-			return any(v).(T)
-		}
-	case bool:
-		if v, err := strconv.ParseBool(val); err == nil {
-			return any(v).(T)
-		}
-	case int64:
-		if v, err := strconv.ParseInt(val, 10, 64); err == nil {
-			return any(v).(T)
-		}
-	case uint64:
-		if v, err := strconv.ParseUint(val, 10, 64); err == nil {
-			return any(v).(T)
-		}
-	case uint32:
-		if v, err := strconv.ParseUint(val, 10, 32); err == nil {
-			return any(uint32(v)).(T)
-		}
-	case float64:
-		if v, err := strconv.ParseFloat(val, 64); err == nil {
-			return any(v).(T)
-		}
-	case time.Time:
-		if v, err := time.Parse(time.RFC3339, val); err == nil {
-			return any(v).(T)
-		}
-	case time.Duration:
-		if v, err := time.ParseDuration(val); err == nil {
-			return any(v).(T)
-		}
-	// 指针类型
-	case *int:
-		if v, err := strconv.Atoi(val); err == nil {
-			return any(&v).(T)
-		}
-	case *int64:
-		if v, err := strconv.ParseInt(val, 10, 64); err == nil {
-			return any(&v).(T)
-		}
-	case *bool:
-		if v, err := strconv.ParseBool(val); err == nil {
-			return any(&v).(T)
-		}
-	}
-	return defaultValue
+	return meta.ParseString(val, defaultValue)
 }
 
 func Body(r *http.Request, into any) error {

@@ -594,7 +594,7 @@ func (c *core) list(ctx context.Context, scope []store.Scope, list store.ObjectL
 		return mapSQLError(err, resource, "")
 	}
 	for _, sort := range store.ParseSorts(opts.Sort) {
-		if sort.Order == store.SortOrderAsc {
+		if sort.Direction ==  meta.SortDirectionAsc {
 			db = db.Order(c.quoteKey(sort.Field) + " ASC")
 		} else {
 			db = db.Order(c.quoteKey(sort.Field) + " DESC")

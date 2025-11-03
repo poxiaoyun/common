@@ -470,7 +470,7 @@ func (u *Unstructured) MarshalBSON() ([]byte, error) {
 	return bson.Marshal(u.Object)
 }
 
-func CompareUnstructuredField(a, b *Unstructured, sorts []SortBy) int {
+func CompareUnstructuredField(a, b *Unstructured, sorts []meta.SortField) int {
 	for _, sort := range sorts {
 		if cmp := CompareDataFieldSort(a, b, sort); cmp != 0 {
 			return cmp
@@ -479,23 +479,23 @@ func CompareUnstructuredField(a, b *Unstructured, sorts []SortBy) int {
 	return 0
 }
 
-func CompareDataFieldSort(a, b *Unstructured, sort SortBy) int {
+func CompareDataFieldSort(a, b *Unstructured, sort meta.SortField) int {
 	switch sort.Field {
 	case "name":
-		switch sort.Order {
-		case SortOrderAsc:
+		switch sort.Direction {
+		case meta.SortDirectionAsc:
 			return strings.Compare(a.GetName(), b.GetName())
-		case SortOrderDesc:
+		case meta.SortDirectionDesc:
 			return strings.Compare(b.GetName(), a.GetName())
 		default:
 			return 0
 		}
 	case "time":
 		at, bt := a.GetCreationTimestamp(), b.GetCreationTimestamp()
-		switch sort.Order {
-		case SortOrderAsc:
+		switch sort.Direction {
+		case meta.SortDirectionAsc:
 			return at.Compare(bt.Time)
-		case SortOrderDesc:
+		case meta.SortDirectionDesc:
 			return bt.Compare(at.Time)
 		default:
 			return 0
@@ -509,10 +509,10 @@ func CompareDataFieldSort(a, b *Unstructured, sort SortBy) int {
 	if !ok {
 		bv = ""
 	}
-	switch sort.Order {
-	case SortOrderAsc:
+	switch sort.Direction {
+	case meta.SortDirectionAsc:
 		return CompareField(av, bv)
-	case SortOrderDesc:
+	case meta.SortDirectionDesc:
 		return CompareField(bv, av)
 	default:
 		return 0
@@ -556,38 +556,6 @@ func CompareField(a, b any) int {
 	}
 }
 
-type SortOrder string
-
-const (
-	SortOrderAsc  SortOrder = "asc"
-	SortOrderDesc SortOrder = "desc"
-)
-
-type SortBy struct {
-	Field string
-	Order SortOrder
-}
-
-// ParseSorts parse a sort query string into a list of SortBy
-// example: "name-,time+" => []SortBy{{Field: "name", ASC: false}, {Field: "time", ASC: true}}
-func ParseSorts(sort string) []SortBy {
-	if sort == "" {
-		return nil
-	}
-	sortbys := []SortBy{}
-	for _, s := range strings.Split(sort, ",") {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		order := SortOrderAsc
-		if strings.HasSuffix(s, "-") {
-			order = SortOrderDesc
-			s = s[:len(s)-1]
-		} else if strings.HasSuffix(s, "+") {
-			s = s[:len(s)-1]
-		}
-		sortbys = append(sortbys, SortBy{Field: s, Order: order})
-	}
-	return sortbys
+func ParseSorts(sort string) []meta.SortField {
+	return meta.ParseSort(sort)
 }

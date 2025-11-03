@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/cache"
 	kjson "sigs.k8s.io/json"
+	"xiaoshiai.cn/common/meta"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -90,17 +91,17 @@ func FlatterMap(m map[string]any) map[string]string {
 	return ret
 }
 
-func SortUnstructuredList(list []StorageObject, bys []store.SortBy) {
+func SortUnstructuredList(list []StorageObject, bys []meta.SortField) {
 	slices.SortFunc(list, func(a, b StorageObject) int {
 		for _, by := range bys {
 			av, _ := getFieldIndex(&a, strings.Split(by.Field, ".")...)
 			bv, _ := getFieldIndex(&b, strings.Split(by.Field, ".")...)
-			switch by.Order {
-			case store.SortOrderAsc:
+			switch by.Direction {
+			case meta.SortDirectionAsc:
 				if ret := store.CompareField(av, bv); ret != 0 {
 					return ret
 				}
-			case store.SortOrderDesc:
+			case meta.SortDirectionDesc:
 				if ret := store.CompareField(bv, av); ret != 0 {
 					return ret
 				}
