@@ -94,6 +94,10 @@ func FlatterMap(m map[string]any) map[string]string {
 func SortUnstructuredList(list []StorageObject, bys []meta.SortField) {
 	slices.SortFunc(list, func(a, b StorageObject) int {
 		for _, by := range bys {
+			switch by.Field {
+			case "time":
+				by.Field = "creationTimestamp"
+			}
 			av, _ := getFieldIndex(&a, strings.Split(by.Field, ".")...)
 			bv, _ := getFieldIndex(&b, strings.Split(by.Field, ".")...)
 			switch by.Direction {
