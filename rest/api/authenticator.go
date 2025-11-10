@@ -2,12 +2,10 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"time"
+	"strings"
 
-	"golang.org/x/crypto/ssh"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"xiaoshiai.cn/common/errors"
 )
 
 type TokenAuthenticatorChain []TokenAuthenticator
@@ -24,7 +22,7 @@ func (c TokenAuthenticatorChain) Authenticate(ctx context.Context, token string)
 		}
 		return info, nil
 	}
-	return nil, utilerrors.NewAggregate(errlist)
+	return nil, errors.NewAggregate(errlist)
 }
 
 type BasicAuthenticatorChain []BasicAuthenticator
@@ -41,10 +39,79 @@ func (c BasicAuthenticatorChain) Authenticate(ctx context.Context, username, pas
 		}
 		return info, nil
 	}
-	return nil, utilerrors.NewAggregate(errlist)
+	return nil, errors.NewAggregate(errlist)
 }
 
 var _ Authenticator = AuthenticateFunc(nil)
+
+func SessionAuthenticatorWrap(authn TokenAuthenticator, sessionkey string) Authenticator {
+	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+		token := ExtractTokenFromCookie(r, sessionkey)
+		if token == "" {
+			return nil, ErrNotProvided
+		}
+		ctx := WithResponseHeader(r.Context(), w.Header())
+		return authn.Authenticate(ctx, token)
+	})
+}
+
+func ExtractTokenFromCookie(r *http.Request, cookieName string) string {
+	cookie, _ := r.Cookie(cookieName)
+	if cookie != nil && cookie.Value != "" {
+		return cookie.Value
+	}
+	return ""
+}
+
+func BearerTokenAuthenticatorWrap(authn TokenAuthenticator) Authenticator {
+	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+		token := ExtractBearerTokenFromRequest(r)
+		if token == "" {
+			return nil, ErrNotProvided
+		}
+		ctx := WithResponseHeader(r.Context(), w.Header())
+		return authn.Authenticate(ctx, token)
+	})
+}
+
+func ExtractBearerTokenFromRequest(r *http.Request) string {
+	token := r.Header.Get("Authorization")
+	// only support bearer token
+	if after, ok := strings.CutPrefix(token, "Bearer "); ok {
+		return after
+	}
+	return r.URL.Query().Get("token")
+}
+
+func BasicAuthenticatorWrap(authn BasicAuthenticator) Authenticator {
+	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+		username, password, ok := r.BasicAuth()
+		if !ok {
+			return nil, ErrNotProvided
+		}
+		return authn.Authenticate(r.Context(), username, password)
+	})
+}
+
+type DelegateAuthenticator []Authenticator
+
+func (d DelegateAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+	var errs []error
+	for _, a := range d {
+		info, err := a.Authenticate(w, r)
+		if err == nil {
+			return info, nil
+		}
+		if err == ErrNotProvided {
+			continue
+		}
+		errs = append(errs, err)
+	}
+	if len(errs) == 0 {
+		return nil, ErrNotProvided
+	}
+	return nil, errors.NewAggregate(errs)
+}
 
 type AuthenticateFunc func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error)
 
@@ -65,52 +132,3 @@ func (a *AnonymousAuthenticator) Authenticate(w http.ResponseWriter, r *http.Req
 }
 
 var _ TokenAuthenticator = &LRUCacheAuthenticator{}
-
-func NewCacheTokenAuthenticator(authenticator TokenAuthenticator, size int, ttl time.Duration) *LRUCacheAuthenticator {
-	return &LRUCacheAuthenticator{
-		Authenticator: authenticator,
-		Cache:         NewLRUCache[*AuthenticateInfo](size, ttl),
-	}
-}
-
-type LRUCacheAuthenticator struct {
-	Authenticator TokenAuthenticator
-	Cache         LRUCache[*AuthenticateInfo]
-}
-
-// Authenticate implements TokenAuthenticator.
-func (a *LRUCacheAuthenticator) Authenticate(ctx context.Context, token string) (*AuthenticateInfo, error) {
-	// do not cache anonymous user
-	if token == "" {
-		return a.Authenticator.Authenticate(ctx, token)
-	}
-	return a.Cache.GetOrAdd(token, func() (*AuthenticateInfo, error) {
-		return a.Authenticator.Authenticate(ctx, token)
-	})
-}
-
-func NewCachedSSHAuthenticator(authenticator SSHAuthenticator, size int, ttl time.Duration) *LRUCacheSSHAuthenticator {
-	return &LRUCacheSSHAuthenticator{Authenticator: authenticator, Cache: NewLRUCache[*AuthenticateInfo](size, ttl)}
-}
-
-var _ SSHAuthenticator = &LRUCacheSSHAuthenticator{}
-
-type LRUCacheSSHAuthenticator struct {
-	Authenticator SSHAuthenticator
-	Cache         LRUCache[*AuthenticateInfo]
-}
-
-// AuthenticatePublibcKey implements SSHAuthenticator.
-func (a *LRUCacheSSHAuthenticator) AuthenticatePublibcKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error) {
-	return a.Cache.GetOrAdd(ssh.FingerprintSHA256(pubkey), func() (*AuthenticateInfo, error) {
-		return a.Authenticator.AuthenticatePublibcKey(ctx, pubkey)
-	},
-	)
-}
-
-// AuthenticatePassword implements SSHAuthenticator.
-func (a *LRUCacheSSHAuthenticator) Authenticate(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
-	return a.Cache.GetOrAdd(fmt.Sprintf("%s:%s", username, password), func() (*AuthenticateInfo, error) {
-		return a.Authenticator.Authenticate(ctx, username, password)
-	})
-}

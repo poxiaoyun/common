@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/ssh"
-	"xiaoshiai.cn/common/errors"
 )
 
 var ErrNotProvided = fmt.Errorf("no authentication provided")
@@ -80,58 +78,6 @@ func WithResponseHeader(ctx context.Context, header http.Header) context.Context
 	return SetContextValue(ctx, "response-header", header)
 }
 
-func SessionAuthenticatorWrap(authn TokenAuthenticator, sessionkey string) Authenticator {
-	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-		token := ExtractTokenFromCookie(r, sessionkey)
-		if token == "" {
-			return nil, ErrNotProvided
-		}
-		ctx := WithResponseHeader(r.Context(), w.Header())
-		return authn.Authenticate(ctx, token)
-	})
-}
-
-func BearerTokenAuthenticatorWrap(authn TokenAuthenticator) Authenticator {
-	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-		token := ExtractBearerTokenFromRequest(r)
-		if token == "" {
-			return nil, ErrNotProvided
-		}
-		ctx := WithResponseHeader(r.Context(), w.Header())
-		return authn.Authenticate(ctx, token)
-	})
-}
-
-func BasicAuthenticatorWrap(authn BasicAuthenticator) Authenticator {
-	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-		username, password, ok := r.BasicAuth()
-		if !ok {
-			return nil, ErrNotProvided
-		}
-		return authn.Authenticate(r.Context(), username, password)
-	})
-}
-
-type DelegateAuthenticator []Authenticator
-
-func (d DelegateAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-	var errs []error
-	for _, a := range d {
-		info, err := a.Authenticate(w, r)
-		if err == nil {
-			return info, nil
-		}
-		if err == ErrNotProvided {
-			continue
-		}
-		errs = append(errs, err)
-	}
-	if len(errs) == 0 {
-		return nil, ErrNotProvided
-	}
-	return nil, errors.NewAggregate(errs)
-}
-
 type AuthenticateErrorHandleFunc func(w http.ResponseWriter, r *http.Request, err error)
 
 func NewAuthenticateFilter(authn Authenticator, onerr AuthenticateErrorHandleFunc) Filter {
@@ -152,21 +98,4 @@ func NewAuthenticateFilter(authn Authenticator, onerr AuthenticateErrorHandleFun
 		)
 		next.ServeHTTP(w, r.WithContext(WithAuthenticate(r.Context(), *info)))
 	})
-}
-
-func ExtractTokenFromCookie(r *http.Request, cookieName string) string {
-	cookie, _ := r.Cookie(cookieName)
-	if cookie != nil && cookie.Value != "" {
-		return cookie.Value
-	}
-	return ""
-}
-
-func ExtractBearerTokenFromRequest(r *http.Request) string {
-	token := r.Header.Get("Authorization")
-	// only support bearer token
-	if strings.HasPrefix(token, "Bearer ") {
-		return strings.TrimPrefix(token, "Bearer ")
-	}
-	return r.URL.Query().Get("token")
 }
