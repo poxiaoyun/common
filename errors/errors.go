@@ -77,16 +77,8 @@ func NewUnauthorized(reason string) *Status {
 	return &Status{Status: StatusFailure, Code: http.StatusUnauthorized, Reason: StatusReasonUnauthorized, Message: message}
 }
 
-func NewForbidden(resource, name string, err error) *Status {
-	var message string
-	if resource == "" && name == "" {
-		message = fmt.Sprintf("forbidden: %v", err)
-	} else if name == "" {
-		message = fmt.Sprintf("%s is forbidden: %v", resource, err)
-	} else {
-		message = fmt.Sprintf("%s %q is forbidden: %v", resource, name, err)
-	}
-	return &Status{Status: StatusFailure, Code: http.StatusForbidden, Reason: StatusReasonForbidden, Message: message}
+func NewForbidden(err error) *Status {
+	return &Status{Status: StatusFailure, Code: http.StatusForbidden, Reason: StatusReasonForbidden, Message: fmt.Sprintf("forbidden: %v", err)}
 }
 
 func NewBadRequest(reason string) *Status {

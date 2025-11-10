@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/meta"
 )
 
 type Decision string
@@ -57,19 +58,22 @@ func NewAuthorizationFilter(authorizer Authorizer) Filter {
 		user := AuthenticateFromContext(r.Context()).User
 		decision, message, err := authorizer.Authorize(r.Context(), user, *attributes)
 		if err != nil {
-			return DecisionDeny, message, errors.NewForbidden("", "", err)
+			return DecisionDeny, message, errors.NewForbidden(err)
 		}
 		if message == "" {
-			act, res := ShowMessage(attributes)
-			message = fmt.Sprintf("access denied for %s %s", act, res)
+			act, res := forbiddenMessage(attributes)
+			message = fmt.Sprintf("User %s cannot %s %s", meta.Or(user.Name, user.Email, user.ID), act, res)
 		}
 		return decision, message, nil
 	}
 	return NewRequestAuthorizationFilter(RequestAuthorizerFunc(fn))
 }
 
-func ShowMessage(a *Attributes) (string, string) {
+func forbiddenMessage(a *Attributes) (string, string) {
 	res := []string{}
+	if len(a.Resources) == 0 {
+		return a.Action, a.Path
+	}
 	for _, resource := range a.Resources {
 		if resource.Resource != "" {
 			res = append(res, resource.Resource)

@@ -55,7 +55,7 @@ func Unauthorized(w http.ResponseWriter, message string) {
 }
 
 func Forbidden(w http.ResponseWriter, message string) {
-	Error(w, liberrors.NewForbidden("", "", errors.New(message)))
+	Error(w, liberrors.NewForbidden(errors.New(message)))
 }
 
 func ServerError(w http.ResponseWriter, err error) {
