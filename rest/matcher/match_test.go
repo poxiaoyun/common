@@ -77,7 +77,7 @@ func TestCompileSection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := compileSections(tt.name)
+			got, err := CompilePattern(tt.name)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Compile() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -105,8 +105,8 @@ func TestSection_score(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.a, func(t *testing.T) {
-			seca, _ := compile(tt.a)
-			secb, _ := compile(tt.b)
+			seca, _ := Compile(tt.a)
+			secb, _ := Compile(tt.b)
 
 			scorea, scoreb := seca.score(), secb.score()
 			if (scorea == scoreb && tt.eq != 0) ||

@@ -33,7 +33,7 @@ type Node[T any] struct {
 }
 
 func (n *Node[T]) Get(pattern string) ([]Section, *Node[T], error) {
-	sections, err := compileSections(pattern)
+	sections, err := CompilePattern(pattern)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -49,20 +49,24 @@ func (n *Node[T]) Get(pattern string) ([]Section, *Node[T], error) {
 			cur.Children = append(cur.Children, child)
 			// sort children by score, so that we can match the most likely child first
 			slices.SortFunc(cur.Children, func(a, b *Node[T]) int {
-				ascore, bscore := a.Section.score(), b.Section.score()
-				if ascore > bscore {
-					return -1
-				}
-				if ascore < bscore {
-					return 1
-				}
-				return 0
+				return compareSection(a.Section, b.Section)
 			})
 		}
 		nodeapath = append(nodeapath, child)
 		cur = child
 	}
 	return sections, cur, nil
+}
+
+func compareSection(a, b Section) int {
+	ascore, bscore := a.score(), b.score()
+	if ascore > bscore {
+		return -1
+	}
+	if ascore < bscore {
+		return 1
+	}
+	return 0
 }
 
 func indexnode[T any](node *Node[T], section Section) *Node[T] {
@@ -119,9 +123,9 @@ func (s Section) score() int {
 			continue
 		}
 		if v.VarName != "" {
-			score -= 10
+			score += 10
 			if v.Greedy {
-				score -= 1
+				score -= 1000
 			}
 			continue
 		}
@@ -219,8 +223,8 @@ func (e CompileError) Error() string {
 	return fmt.Sprintf("invalid [%s] in [%s] at position %d: %s", e.Str, e.Pattern, e.Position, e.Message)
 }
 
-func compileSections(patten string) ([]Section, error) {
-	elems, err := compile(patten)
+func CompilePattern(pattern string) ([]Section, error) {
+	elems, err := Compile(pattern)
 	if err != nil {
 		return nil, err
 	}
@@ -243,8 +247,8 @@ func compileSections(patten string) ([]Section, error) {
 	return sections, nil
 }
 
-// compile reads a variable name and a regular expression from a string.
-func compile(pattern string) (Section, error) {
+// Compile reads a variable name and a regular expression from a string.
+func Compile(pattern string) (Section, error) {
 	elems := []Element{}
 	pre, curly := -1, 0
 	for i := 0; i < len(pattern); i++ {

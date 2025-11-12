@@ -114,15 +114,15 @@ func Test_matcher_Match(t *testing.T) {
 		},
 		{
 			registered: []string{
-				"/api/v{a}*",
+				"/api/v2/{a}*",
 				"/api/{a}/{b}/{c}",
 				"/api/{path}*",
 			},
 			req:       "/api/v2/v/k",
 			matched:   true,
-			wantMatch: "/api/v{a}*",
+			wantMatch: "/api/v2/{a}*",
 			vars: []MatchVar{
-				{Name: "a", Value: "2/v/k"},
+				{Name: "a", Value: "v/k"},
 			},
 		},
 		{
@@ -176,6 +176,36 @@ func Test_matcher_Match(t *testing.T) {
 			},
 			req:     "/api/tenants//organizations",
 			matched: false,
+		},
+		{
+			registered: []string{
+				"/api/organizations/{org}/roles",
+				"/api/{scopes}*/roles",
+				"/api/{scopes}*/members/{member}/roles/{role}",
+				"/api/{scopes}*/members",
+				"/api/{scopes}*/members/{member}",
+			},
+			req:     "/api/regions/global/members/john/roles/admin",
+			matched: true,
+			vars: []MatchVar{
+				{Name: "scopes", Value: "regions/global"},
+				{Name: "member", Value: "john"},
+				{Name: "role", Value: "admin"},
+			},
+		},
+		{
+			registered: []string{
+				"/api/{scopes}*/members/abc",
+				"/api/{scopes}*/members/{member}/roles/{role}",
+				"/api/{scopes}*/members/{member}",
+			},
+			req:     "/api/regions/global/members/john/roles/admin",
+			matched: true,
+			vars: []MatchVar{
+				{Name: "scopes", Value: "regions/global"},
+				{Name: "member", Value: "john"},
+				{Name: "role", Value: "admin"},
+			},
 		},
 	}
 	for _, tt := range tests {
