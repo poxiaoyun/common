@@ -128,7 +128,10 @@ func (le *StorageLeaderElectionLock) release() bool {
 	}
 	now := meta.Now()
 	leaderElectionRecord := &Lease{
-		ObjectMeta:           store.ObjectMeta{Name: le.Name},
+		ObjectMeta: store.ObjectMeta{
+			ID:   le.Name,
+			Name: le.Name,
+		},
 		LeaderTransitions:    le.observedRecord.LeaderTransitions,
 		LeaseDurationSeconds: 1,
 		RenewTime:            now,
@@ -175,7 +178,10 @@ func (l *StorageLeaderElectionLock) identity() string {
 func (le *StorageLeaderElectionLock) tryAcquireOrRenew(ctx context.Context) bool {
 	now := meta.Now()
 	leaderElectionRecord := &Lease{
-		ObjectMeta:           store.ObjectMeta{Name: le.Name},
+		ObjectMeta: store.ObjectMeta{
+			ID:   le.Name,
+			Name: le.Name,
+		},
 		HolderIdentity:       le.identity(),
 		LeaseDurationSeconds: int(le.LeaseDuration / time.Second),
 		RenewTime:            now,
