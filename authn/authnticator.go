@@ -16,8 +16,8 @@ type SelfAuthAuthenticator struct {
 	Provider AuthProvider
 }
 
-// Authenticate implements api.TokenAuthenticator.
-func (s *SelfAuthAuthenticator) Authenticate(ctx context.Context, token string) (*api.AuthenticateInfo, error) {
+// AuthenticateToken implements api.TokenAuthenticator.
+func (s *SelfAuthAuthenticator) AuthenticateToken(ctx context.Context, token string) (*api.AuthenticateInfo, error) {
 	session, err := s.Provider.GetCurrentProfile(ctx, token)
 	if err != nil {
 		return nil, err

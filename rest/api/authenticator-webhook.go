@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"golang.org/x/crypto/ssh"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/httpclient"
 )
@@ -54,8 +55,8 @@ type TokenWebhookAuthenticator struct {
 	Process *WebhookAuthenticatorProcessor
 }
 
-// Authenticate implements TokenAuthenticator.
-func (t *TokenWebhookAuthenticator) Authenticate(ctx context.Context, token string) (*AuthenticateInfo, error) {
+// AuthenticateToken implements TokenAuthenticator.
+func (t *TokenWebhookAuthenticator) AuthenticateToken(ctx context.Context, token string) (*AuthenticateInfo, error) {
 	return t.Process.Process(ctx, &WebhookAuthenticationRequest{Token: token})
 }
 
@@ -73,8 +74,8 @@ type BasicAuthWebhookAuthenticator struct {
 	Process *WebhookAuthenticatorProcessor
 }
 
-// Authenticate implements TokenAuthenticator.
-func (t *BasicAuthWebhookAuthenticator) Authenticate(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
+// AuthenticateBasic implements TokenAuthenticator.
+func (t *BasicAuthWebhookAuthenticator) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
 	return t.Process.Process(ctx, &WebhookAuthenticationRequest{Username: username, Password: password})
 }
 
@@ -94,6 +95,30 @@ func (t *TokenOrBasicAuthWebhookAuthenticator) Authenticate(w http.ResponseWrite
 		return t.Process.Process(r.Context(), &WebhookAuthenticationRequest{Username: username, Password: password})
 	}
 	return nil, ErrNotProvided
+}
+
+var _ SSHAuthenticator = &SSHCertWebhookAuthenticator{}
+
+func NewSSHCertWebhookAuthenticator(opts *WebhookAuthenticatorOptions) (*SSHCertWebhookAuthenticator, error) {
+	processor, err := NewWebhookAuthenticatorProcessor(&opts.WebhookOptions)
+	if err != nil {
+		return nil, err
+	}
+	return &SSHCertWebhookAuthenticator{Process: processor}, nil
+}
+
+type SSHCertWebhookAuthenticator struct {
+	Process *WebhookAuthenticatorProcessor
+}
+
+// AuthenticateBasic implements SSHAuthenticator.
+func (s *SSHCertWebhookAuthenticator) AuthenticateBasic(ctx context.Context, username string, password string) (*AuthenticateInfo, error) {
+	return s.Process.Process(ctx, &WebhookAuthenticationRequest{Username: username, Password: password})
+}
+
+// AuthenticatePublicKey implements SSHAuthenticator.
+func (s *SSHCertWebhookAuthenticator) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error) {
+	return s.Process.Process(ctx, &WebhookAuthenticationRequest{SSHCert: string(ssh.MarshalAuthorizedKey(pubkey))})
 }
 
 func NewWebhookAuthenticator(opts *WebhookAuthenticatorOptions, getRequest func(r *http.Request) (*WebhookAuthenticationRequest, error)) (*WebhookAuthenticator, error) {
@@ -132,9 +157,22 @@ type WebhookAuthenticatorProcessor struct {
 }
 
 type WebhookAuthenticationRequest struct {
-	Token     string   `json:"token"`
-	Username  string   `json:"username,omitempty"`
-	Password  string   `json:"password,omitempty"`
+	// token auth
+	Token string `json:"token"`
+
+	// basic auth
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+
+	// ssh auth
+	// SSHCert is the SSH certificate used for authentication
+	// It should be in OpenSSH certificate format
+	// example:
+	// -----BEGIN OPENSSH CERTIFICATE-----
+	// ...
+	// -----END OPENSSH CERTIFICATE-----
+	SSHCert string `json:"sshCert,omitempty"`
+
 	Audiences []string `json:"audiences,omitempty"`
 }
 

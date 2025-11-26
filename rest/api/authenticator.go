@@ -12,10 +12,10 @@ type TokenAuthenticatorChain []TokenAuthenticator
 
 var _ TokenAuthenticator = TokenAuthenticatorChain{}
 
-func (c TokenAuthenticatorChain) Authenticate(ctx context.Context, token string) (*AuthenticateInfo, error) {
+func (c TokenAuthenticatorChain) AuthenticateToken(ctx context.Context, token string) (*AuthenticateInfo, error) {
 	var errlist []error
 	for _, authn := range c {
-		info, err := authn.Authenticate(ctx, token)
+		info, err := authn.AuthenticateToken(ctx, token)
 		if err != nil {
 			errlist = append(errlist, err)
 			continue
@@ -29,10 +29,10 @@ type BasicAuthenticatorChain []BasicAuthenticator
 
 var _ BasicAuthenticator = BasicAuthenticatorChain{}
 
-func (c BasicAuthenticatorChain) Authenticate(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
+func (c BasicAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
 	var errlist []error
 	for _, authn := range c {
-		info, err := authn.Authenticate(ctx, username, password)
+		info, err := authn.AuthenticateBasic(ctx, username, password)
 		if err != nil {
 			errlist = append(errlist, err)
 			continue
@@ -51,7 +51,7 @@ func SessionAuthenticatorWrap(authn TokenAuthenticator, sessionkey string) Authe
 			return nil, ErrNotProvided
 		}
 		ctx := WithResponseHeader(r.Context(), w.Header())
-		return authn.Authenticate(ctx, token)
+		return authn.AuthenticateToken(ctx, token)
 	})
 }
 
@@ -70,7 +70,7 @@ func BearerTokenAuthenticatorWrap(authn TokenAuthenticator) Authenticator {
 			return nil, ErrNotProvided
 		}
 		ctx := WithResponseHeader(r.Context(), w.Header())
-		return authn.Authenticate(ctx, token)
+		return authn.AuthenticateToken(ctx, token)
 	})
 }
 
@@ -89,7 +89,7 @@ func BasicAuthenticatorWrap(authn BasicAuthenticator) Authenticator {
 		if !ok {
 			return nil, ErrNotProvided
 		}
-		return authn.Authenticate(r.Context(), username, password)
+		return authn.AuthenticateBasic(r.Context(), username, password)
 	})
 }
 

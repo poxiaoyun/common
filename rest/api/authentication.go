@@ -10,6 +10,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// ErrNotProvided is returned when no authentication information is provided.
+// it useful for chaining multiple authenticators
 var ErrNotProvided = fmt.Errorf("no authentication provided")
 
 const AnonymousUser = "anonymous" // anonymous username
@@ -33,15 +35,20 @@ type Authenticator interface {
 }
 
 type TokenAuthenticator interface {
-	// Authenticate authenticates the token and returns the authentication info.
+	// AuthenticateToken authenticates the token and returns the authentication info.
 	// if unauthorized, return nil, err
 	// if no decision can be made, return nil, [ErrNotProvided]
 	// if unexpected error, return nil, "", err
-	Authenticate(ctx context.Context, token string) (*AuthenticateInfo, error)
+	AuthenticateToken(ctx context.Context, token string) (*AuthenticateInfo, error)
 }
 
 type BasicAuthenticator interface {
-	Authenticate(ctx context.Context, username, password string) (*AuthenticateInfo, error)
+	// AuthenticateBasic authenticates the username and password and returns the authentication info.
+	// It also use for APIKey/SecretKey authentication.
+	// if unauthorized, return nil, err
+	// if no decision can be made, return nil, [ErrNotProvided]
+	// if unexpected error, return nil, "", err
+	AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticateInfo, error)
 }
 
 type AuthenticateInfo struct {
@@ -55,7 +62,7 @@ type AuthenticateInfo struct {
 
 type SSHAuthenticator interface {
 	BasicAuthenticator
-	AuthenticatePublibcKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error)
+	AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error)
 }
 
 func WithAuthenticate(ctx context.Context, info AuthenticateInfo) context.Context {

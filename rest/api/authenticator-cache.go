@@ -20,14 +20,14 @@ type LRUCacheAuthenticator struct {
 	Cache         LRUCache[*AuthenticateInfo]
 }
 
-// Authenticate implements TokenAuthenticator.
-func (a *LRUCacheAuthenticator) Authenticate(ctx context.Context, token string) (*AuthenticateInfo, error) {
+// AuthenticateToken implements TokenAuthenticator.
+func (a *LRUCacheAuthenticator) AuthenticateToken(ctx context.Context, token string) (*AuthenticateInfo, error) {
 	// do not cache anonymous user
 	if token == "" {
-		return a.Authenticator.Authenticate(ctx, token)
+		return a.Authenticator.AuthenticateToken(ctx, token)
 	}
 	return a.Cache.GetOrAdd(token, func() (*AuthenticateInfo, error) {
-		return a.Authenticator.Authenticate(ctx, token)
+		return a.Authenticator.AuthenticateToken(ctx, token)
 	})
 }
 
@@ -42,17 +42,17 @@ type LRUCacheSSHAuthenticator struct {
 	Cache         LRUCache[*AuthenticateInfo]
 }
 
-// AuthenticatePublibcKey implements SSHAuthenticator.
-func (a *LRUCacheSSHAuthenticator) AuthenticatePublibcKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error) {
+// AuthenticatePublicKey implements SSHAuthenticator.
+func (a *LRUCacheSSHAuthenticator) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error) {
 	return a.Cache.GetOrAdd(ssh.FingerprintSHA256(pubkey), func() (*AuthenticateInfo, error) {
-		return a.Authenticator.AuthenticatePublibcKey(ctx, pubkey)
+		return a.Authenticator.AuthenticatePublicKey(ctx, pubkey)
 	},
 	)
 }
 
 // AuthenticatePassword implements SSHAuthenticator.
-func (a *LRUCacheSSHAuthenticator) Authenticate(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
+func (a *LRUCacheSSHAuthenticator) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
 	return a.Cache.GetOrAdd(fmt.Sprintf("%s:%s", username, password), func() (*AuthenticateInfo, error) {
-		return a.Authenticator.Authenticate(ctx, username, password)
+		return a.Authenticator.AuthenticateBasic(ctx, username, password)
 	})
 }
