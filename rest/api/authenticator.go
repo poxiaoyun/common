@@ -169,16 +169,3 @@ func (f AuthenticateFunc) Authenticate(w http.ResponseWriter, r *http.Request) (
 	return f(w, r)
 }
 
-func NewAnonymousAuthenticator() *AnonymousAuthenticator {
-	return &AnonymousAuthenticator{}
-}
-
-type AnonymousAuthenticator struct{}
-
-var _ Authenticator = &AnonymousAuthenticator{}
-
-func (a *AnonymousAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-	return &AuthenticateInfo{User: UserInfo{Name: AnonymousUser, Groups: []string{AnonymousUser}}}, nil
-}
-
-var _ TokenAuthenticator = &LRUCacheAuthenticator{}

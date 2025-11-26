@@ -41,107 +41,49 @@ type WebhookAuthenticatorOptions struct {
 	WebhookOptions `json:",inline"`
 }
 
-func NewTokenWebhookAuthenticator(opts *WebhookAuthenticatorOptions) (*TokenWebhookAuthenticator, error) {
+func NewWebhookAuthenticator(opts *WebhookAuthenticatorOptions) (*WebhookAuthenticator, error) {
 	processor, err := NewWebhookAuthenticatorProcessor(&opts.WebhookOptions)
 	if err != nil {
 		return nil, err
 	}
-	return &TokenWebhookAuthenticator{Process: processor}, nil
+	return &WebhookAuthenticator{Process: processor}, nil
 }
 
-var _ TokenAuthenticator = &TokenWebhookAuthenticator{}
-
-type TokenWebhookAuthenticator struct {
-	Process *WebhookAuthenticatorProcessor
-}
-
-// AuthenticateToken implements TokenAuthenticator.
-func (t *TokenWebhookAuthenticator) AuthenticateToken(ctx context.Context, token string) (*AuthenticateInfo, error) {
-	return t.Process.Process(ctx, &WebhookAuthenticationRequest{Token: token})
-}
-
-var _ BasicAuthenticator = &BasicAuthWebhookAuthenticator{}
-
-func NewBasicAuthWebhookAuthenticator(opts *WebhookAuthenticatorOptions) (*BasicAuthWebhookAuthenticator, error) {
-	processor, err := NewWebhookAuthenticatorProcessor(&opts.WebhookOptions)
-	if err != nil {
-		return nil, err
-	}
-	return &BasicAuthWebhookAuthenticator{Process: processor}, nil
-}
-
-type BasicAuthWebhookAuthenticator struct {
-	Process *WebhookAuthenticatorProcessor
-}
-
-// AuthenticateBasic implements TokenAuthenticator.
-func (t *BasicAuthWebhookAuthenticator) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
-	return t.Process.Process(ctx, &WebhookAuthenticationRequest{Username: username, Password: password})
-}
-
-type TokenOrBasicAuthWebhookAuthenticator struct {
-	Process *WebhookAuthenticatorProcessor
-}
-
-var _ Authenticator = &TokenOrBasicAuthWebhookAuthenticator{}
-
-func (t *TokenOrBasicAuthWebhookAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-	token := ExtractBearerTokenFromRequest(r)
-	if token != "" {
-		return t.Process.Process(r.Context(), &WebhookAuthenticationRequest{Token: token})
-	}
-	username, password, ok := r.BasicAuth()
-	if ok {
-		return t.Process.Process(r.Context(), &WebhookAuthenticationRequest{Username: username, Password: password})
-	}
-	return nil, ErrNotProvided
-}
-
-var _ SSHAuthenticator = &SSHCertWebhookAuthenticator{}
-
-func NewSSHCertWebhookAuthenticator(opts *WebhookAuthenticatorOptions) (*SSHCertWebhookAuthenticator, error) {
-	processor, err := NewWebhookAuthenticatorProcessor(&opts.WebhookOptions)
-	if err != nil {
-		return nil, err
-	}
-	return &SSHCertWebhookAuthenticator{Process: processor}, nil
-}
-
-type SSHCertWebhookAuthenticator struct {
-	Process *WebhookAuthenticatorProcessor
-}
-
-// AuthenticateBasic implements SSHAuthenticator.
-func (s *SSHCertWebhookAuthenticator) AuthenticateBasic(ctx context.Context, username string, password string) (*AuthenticateInfo, error) {
-	return s.Process.Process(ctx, &WebhookAuthenticationRequest{Username: username, Password: password})
-}
-
-// AuthenticatePublicKey implements SSHAuthenticator.
-func (s *SSHCertWebhookAuthenticator) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error) {
-	return s.Process.Process(ctx, &WebhookAuthenticationRequest{SSHCert: string(ssh.MarshalAuthorizedKey(pubkey))})
-}
-
-func NewWebhookAuthenticator(opts *WebhookAuthenticatorOptions, getRequest func(r *http.Request) (*WebhookAuthenticationRequest, error)) (*WebhookAuthenticator, error) {
-	processor, err := NewWebhookAuthenticatorProcessor(&opts.WebhookOptions)
-	if err != nil {
-		return nil, err
-	}
-	return &WebhookAuthenticator{GetRequest: getRequest, Process: processor}, nil
-}
+var (
+	_ Authenticator      = &WebhookAuthenticator{}
+	_ TokenAuthenticator = &WebhookAuthenticator{}
+	_ BasicAuthenticator = &WebhookAuthenticator{}
+	_ SSHAuthenticator   = &WebhookAuthenticator{}
+)
 
 type WebhookAuthenticator struct {
-	GetRequest func(r *http.Request) (*WebhookAuthenticationRequest, error)
-	Process    *WebhookAuthenticatorProcessor
+	Process *WebhookAuthenticatorProcessor
 }
 
 var _ Authenticator = &WebhookAuthenticator{}
 
 func (w *WebhookAuthenticator) Authenticate(wr http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-	req, err := w.GetRequest(r)
-	if err != nil {
-		return nil, err
+	token := ExtractBearerTokenFromRequest(r)
+	if token != "" {
+		return w.AuthenticateToken(r.Context(), token)
 	}
-	return w.Process.Process(r.Context(), req)
+	username, password, ok := r.BasicAuth()
+	if ok {
+		return w.AuthenticateBasic(r.Context(), username, password)
+	}
+	return nil, ErrNotProvided
+}
+
+func (w *WebhookAuthenticator) AuthenticateToken(ctx context.Context, token string) (*AuthenticateInfo, error) {
+	return w.Process.Process(ctx, &WebhookAuthenticationRequest{Token: token})
+}
+
+func (w *WebhookAuthenticator) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
+	return w.Process.Process(ctx, &WebhookAuthenticationRequest{Username: username, Password: password})
+}
+
+func (w *WebhookAuthenticator) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error) {
+	return w.Process.Process(ctx, &WebhookAuthenticationRequest{SSHCert: string(ssh.MarshalAuthorizedKey(pubkey))})
 }
 
 func NewWebhookAuthenticatorProcessor(opts *WebhookOptions) (*WebhookAuthenticatorProcessor, error) {
