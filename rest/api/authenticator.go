@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
 	"xiaoshiai.cn/common/errors"
 )
 
@@ -17,10 +18,16 @@ func (c TokenAuthenticatorChain) AuthenticateToken(ctx context.Context, token st
 	for _, authn := range c {
 		info, err := authn.AuthenticateToken(ctx, token)
 		if err != nil {
+			if err == ErrNotProvided {
+				continue
+			}
 			errlist = append(errlist, err)
 			continue
 		}
 		return info, nil
+	}
+	if len(errlist) == 0 {
+		return nil, ErrNotProvided
 	}
 	return nil, errors.NewAggregate(errlist)
 }
@@ -34,10 +41,55 @@ func (c BasicAuthenticatorChain) AuthenticateBasic(ctx context.Context, username
 	for _, authn := range c {
 		info, err := authn.AuthenticateBasic(ctx, username, password)
 		if err != nil {
+			if err == ErrNotProvided {
+				continue
+			}
 			errlist = append(errlist, err)
 			continue
 		}
 		return info, nil
+	}
+	if len(errlist) == 0 {
+		return nil, ErrNotProvided
+	}
+	return nil, errors.NewAggregate(errlist)
+}
+
+type SSHAuthenticatorChain []SSHAuthenticator
+
+var _ SSHAuthenticator = SSHAuthenticatorChain{}
+
+func (c SSHAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
+	var errlist []error
+	for _, authn := range c {
+		info, err := authn.AuthenticateBasic(ctx, username, password)
+		if err != nil {
+			if err == ErrNotProvided {
+				continue
+			}
+			errlist = append(errlist, err)
+			continue
+		}
+		return info, nil
+	}
+	if len(errlist) == 0 {
+		return nil, ErrNotProvided
+	}
+	return nil, errors.NewAggregate(errlist)
+}
+
+func (c SSHAuthenticatorChain) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error) {
+	var errlist []error
+	for _, authn := range c {
+		info, err := authn.AuthenticatePublicKey(ctx, pubkey)
+		if err != nil {
+			errlist = append(errlist, err)
+			continue
+		}
+		return info, nil
+	}
+	if len(errlist) == 0 {
+		return nil, ErrNotProvided
 	}
 	return nil, errors.NewAggregate(errlist)
 }
@@ -93,19 +145,17 @@ func BasicAuthenticatorWrap(authn BasicAuthenticator) Authenticator {
 	})
 }
 
-type DelegateAuthenticator []Authenticator
+type AuthenticatorChain []Authenticator
 
-func (d DelegateAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+func (d AuthenticatorChain) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
 	var errs []error
 	for _, a := range d {
 		info, err := a.Authenticate(w, r)
-		if err == nil {
-			return info, nil
-		}
-		if err == ErrNotProvided {
+		if err != nil {
+			errs = append(errs, err)
 			continue
 		}
-		errs = append(errs, err)
+		return info, nil
 	}
 	if len(errs) == 0 {
 		return nil, ErrNotProvided

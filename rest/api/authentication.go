@@ -61,7 +61,9 @@ type AuthenticateInfo struct {
 }
 
 type SSHAuthenticator interface {
+	// BasicAuthenticator is ssh user/password mode authenticator
 	BasicAuthenticator
+	// AuthenticatePublicKey authenticate in ssh public key mode
 	AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error)
 }
 
