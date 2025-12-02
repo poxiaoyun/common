@@ -199,3 +199,120 @@ func TestOrderedMapUnmarshal(t *testing.T) {
 		})
 	}
 }
+
+func TestOrderedMap_Methods(t *testing.T) {
+	t.Run("Set and Get", func(t *testing.T) {
+		var m OrderedMap[string, int]
+		m.Set("a", 1)
+		if m.Len() != 1 {
+			t.Errorf("expected len 1, got %d", m.Len())
+		}
+		if v, ok := m.Get("a"); !ok || v != 1 {
+			t.Errorf("expected key 'a' to be 1, got %d (ok=%v)", v, ok)
+		}
+
+		m.Set("b", 2)
+		if m.Len() != 2 {
+			t.Errorf("expected len 2, got %d", m.Len())
+		}
+		if v, ok := m.Get("b"); !ok || v != 2 {
+			t.Errorf("expected key 'b' to be 2, got %d (ok=%v)", v, ok)
+		}
+
+		// Update existing
+		m.Set("a", 3)
+		if m.Len() != 2 {
+			t.Errorf("expected len 2 after update, got %d", m.Len())
+		}
+		if v, ok := m.Get("a"); !ok || v != 3 {
+			t.Errorf("expected key 'a' to be 3, got %d (ok=%v)", v, ok)
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		m := OrderedMap[string, int]{
+			{Key: "a", Value: 1},
+			{Key: "b", Value: 2},
+			{Key: "c", Value: 3},
+		}
+
+		m.Delete("b")
+		if m.Len() != 2 {
+			t.Errorf("expected len 2, got %d", m.Len())
+		}
+		if _, ok := m.Get("b"); ok {
+			t.Error("expected key 'b' to be deleted")
+		}
+
+		// Check order
+		keys := m.Keys()
+		if !reflect.DeepEqual(keys, []string{"a", "c"}) {
+			t.Errorf("expected keys [a c], got %v", keys)
+		}
+
+		m.Delete("non-existent")
+		if m.Len() != 2 {
+			t.Errorf("expected len 2, got %d", m.Len())
+		}
+	})
+
+	t.Run("Keys and Values", func(t *testing.T) {
+		m := OrderedMap[string, int]{
+			{Key: "a", Value: 1},
+			{Key: "b", Value: 2},
+		}
+
+		keys := m.Keys()
+		if !reflect.DeepEqual(keys, []string{"a", "b"}) {
+			t.Errorf("expected keys [a b], got %v", keys)
+		}
+
+		values := m.Values()
+		if !reflect.DeepEqual(values, []int{1, 2}) {
+			t.Errorf("expected values [1 2], got %v", values)
+		}
+	})
+
+	t.Run("ToMap", func(t *testing.T) {
+		m := OrderedMap[string, int]{
+			{Key: "a", Value: 1},
+			{Key: "b", Value: 2},
+		}
+
+		stdMap := m.ToMap()
+		if len(stdMap) != 2 {
+			t.Errorf("expected map len 2, got %d", len(stdMap))
+		}
+		if stdMap["a"] != 1 || stdMap["b"] != 2 {
+			t.Errorf("map content mismatch: %v", stdMap)
+		}
+	})
+}
+
+func TestOrderedMap_JSONErrors(t *testing.T) {
+	t.Run("Marshal Error", func(t *testing.T) {
+		m := OrderedMap[string, func()]{
+			{Key: "a", Value: func() {}},
+		}
+		_, err := m.MarshalJSON()
+		if err == nil {
+			t.Error("expected error marshaling func, got nil")
+		}
+	})
+
+	t.Run("Unmarshal Error - Invalid JSON", func(t *testing.T) {
+		var m OrderedMap[string, int]
+		err := m.UnmarshalJSON([]byte(`invalid`))
+		if err == nil {
+			t.Error("expected error unmarshaling invalid json, got nil")
+		}
+	})
+
+	t.Run("Unmarshal Error - Not an Object", func(t *testing.T) {
+		var m OrderedMap[string, int]
+		err := m.UnmarshalJSON([]byte(`[]`))
+		if err == nil {
+			t.Error("expected error unmarshaling array, got nil")
+		}
+	})
+}

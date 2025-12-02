@@ -3,6 +3,7 @@ package openapi
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -11,63 +12,123 @@ import (
 	"xiaoshiai.cn/common/collections"
 )
 
+const (
+	SchemaTypeObject  = "object"
+	SchemaTypeArray   = "array"
+	SchemaTypeString  = "string"
+	SchemaTypeNumber  = "number"
+	SchemaTypeInteger = "integer"
+	SchemaTypeBoolean = "boolean"
+	SchemaTypeFile    = "file"
+	SchemaTypeNull    = "null"
+)
+
 const XOrder = "x-order"
 
-type Schema struct {
-	SchemaProps `json:",inline"`
-	Comment     string         `json:"-"`
-	ExtraProps  map[string]any `json:"-"`
-	Extensions  map[string]any `json:"-"`
-}
+var knownSchemaFields map[string]bool
 
-func (s Schema) GetExtension(name string) any {
-	if s.Extensions == nil {
-		return nil
+func init() {
+	knownSchemaFields = make(map[string]bool)
+	t := reflect.TypeOf(Schema{})
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		tag := f.Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		name := strings.Split(tag, ",")[0]
+		knownSchemaFields[name] = true
 	}
-	return s.Extensions[name]
 }
 
-type SchemaProps struct {
-	Ref                  string                         `json:"$ref,omitempty"`
-	Schema               string                         `json:"$schema,omitempty"`
-	ID                   string                         `json:"id,omitempty"`
-	Description          string                         `json:"description,omitempty"`
-	Type                 spec.StringOrArray             `json:"type,omitempty"`
-	Nullable             bool                           `json:"nullable,omitempty"`
-	Format               string                         `json:"format,omitempty"`
-	Title                string                         `json:"title,omitempty"`
-	Default              any                            `json:"default,omitempty"`
-	Maximum              *float64                       `json:"maximum,omitempty"`
-	ExclusiveMaximum     bool                           `json:"exclusiveMaximum,omitempty"`
-	Minimum              *float64                       `json:"minimum,omitempty"`
-	ExclusiveMinimum     bool                           `json:"exclusiveMinimum,omitempty"`
-	MaxLength            *int64                         `json:"maxLength,omitempty"`
-	MinLength            *int64                         `json:"minLength,omitempty"`
-	Pattern              string                         `json:"pattern,omitempty"`
-	MaxItems             *int64                         `json:"maxItems,omitempty"`
-	MinItems             *int64                         `json:"minItems,omitempty"`
-	UniqueItems          bool                           `json:"uniqueItems,omitempty"`
-	MultipleOf           *float64                       `json:"multipleOf,omitempty"`
-	Enum                 []any                          `json:"enum,omitempty"`
+type Schema struct {
+	ID            string            `json:"$id,omitempty"`
+	Schema        string            `json:"$schema,omitempty"`
+	Ref           string            `json:"$ref,omitempty"`
+	DynamicRef    string            `json:"$dynamicRef,omitempty"`
+	Comment       string            `json:"$comment,omitempty"`
+	Defs          map[string]Schema `json:"$defs,omitempty"`
+	Anchor        string            `json:"$anchor,omitempty"`
+	DynamicAnchor string            `json:"$dynamicAnchor,omitempty"`
+	Vocabulary    map[string]bool   `json:"$vocabulary,omitempty"`
+
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Deprecated  bool   `json:"deprecated,omitempty"`
+	ReadOnly    bool   `json:"readOnly,omitempty"`
+	WriteOnly   bool   `json:"writeOnly,omitempty"`
+	Examples    []any  `json:"examples,omitempty"`
+
+	AllOf []Schema `json:"allOf,omitempty"`
+	AnyOf []Schema `json:"anyOf,omitempty"`
+	OneOf []Schema `json:"oneOf,omitempty"`
+	Not   *Schema  `json:"not,omitempty"`
+
+	If               *Schema           `json:"if,omitempty"`
+	Then             *Schema           `json:"then,omitempty"`
+	Else             *Schema           `json:"else,omitempty"`
+	DependentSchemas map[string]Schema `json:"dependentSchemas,omitempty"`
+
+	Type    StringOrArray `json:"type,omitempty"`
+	Const   any           `json:"const,omitempty"`
+	Enum    []any         `json:"enum,omitempty"`
+	Default any           `json:"default,omitempty"`
+
+	// This string SHOULD be a valid regular expression, according to the ECMA-262 regular expression dialect.
+	Pattern   string `json:"pattern,omitempty"`
+	Format    string `json:"format,omitempty"`
+	MaxLength *int64 `json:"maxLength,omitempty"`
+	MinLength *int64 `json:"minLength,omitempty"`
+
+	MultipleOf       *float64 `json:"multipleOf,omitempty"`
+	Maximum          *float64 `json:"maximum,omitempty"`
+	Minimum          *float64 `json:"minimum,omitempty"`
+	ExclusiveMaximum *float64 `json:"exclusiveMaximum,omitempty"`
+	ExclusiveMinimum *float64 `json:"exclusiveMinimum,omitempty"`
+
+	Properties           SchemaProperties               `json:"properties,omitempty"`
+	Required             []string                       `json:"required,omitempty"`
 	MaxProperties        *int64                         `json:"maxProperties,omitempty"`
 	MinProperties        *int64                         `json:"minProperties,omitempty"`
-	Required             []string                       `json:"required,omitempty"`
-	AllOf                []Schema                       `json:"allOf,omitempty"`
-	OneOf                []Schema                       `json:"oneOf,omitempty"`
-	AnyOf                []Schema                       `json:"anyOf,omitempty"`
-	Not                  *Schema                        `json:"not,omitempty"`
-	Properties           SchemaProperties               `json:"properties,omitempty"`
 	AdditionalProperties *SchemaOrBool                  `json:"additionalProperties,omitempty"`
 	PatternProperties    SchemaProperties               `json:"patternProperties,omitempty"`
+	PropertyNames        *Schema                        `json:"propertyNames,omitempty"`
+	DependentRequired    map[string][]string            `json:"dependentRequired,omitempty"`
 	Dependencies         map[string]SchemaOrStringArray `json:"dependencies,omitempty"`
-	AdditionalItems      *SchemaOrBool                  `json:"additionalItems,omitempty"`
-	Definitions          map[string]Schema              `json:"definitions,omitempty"`
-	Items                SchemaOrArray                  `json:"items,omitempty"`
-	Example              any                            `json:"example,omitempty"`
-	Discriminator        string                         `json:"discriminator,omitempty"`
-	ReadOnly             bool                           `json:"readOnly,omitempty"`
-	XML                  *spec.XMLObject                `json:"xml,omitempty"`
-	ExternalDocs         *spec.ExternalDocumentation    `json:"externalDocs,omitempty"`
+
+	PrefixItems     []Schema      `json:"prefixItems,omitempty"`
+	Items           *Schema       `json:"items,omitempty"`
+	AdditionalItems *SchemaOrBool `json:"additionalItems,omitempty"`
+	MaxItems        *int64        `json:"maxItems,omitempty"`
+	MinItems        *int64        `json:"minItems,omitempty"`
+	Contains        *Schema       `json:"contains,omitempty"`
+	MinContains     *int64        `json:"minContains,omitempty"`
+	MaxContains     *int64        `json:"maxContains,omitempty"`
+	UniqueItems     bool          `json:"uniqueItems,omitempty"`
+
+	ContentEncoding  string  `json:"contentEncoding,omitempty"`
+	ContentMediaType string  `json:"contentMediaType,omitempty"`
+	ContentSchema    *Schema `json:"contentSchema,omitempty"`
+
+	UnevaluatedItems      *SchemaOrBool `json:"unevaluatedItems,omitempty"`
+	UnevaluatedProperties *SchemaOrBool `json:"unevaluatedProperties,omitempty"`
+
+	// fileds below are not specified in JSON Schema but widely used.
+	Example       any                         `json:"example,omitempty"`
+	Definitions   map[string]Schema           `json:"definitions,omitempty"`
+	Nullable      bool                        `json:"nullable,omitempty"`
+	Discriminator string                      `json:"discriminator,omitempty"`
+	XML           *spec.XMLObject             `json:"xml,omitempty"`
+	ExternalDocs  *spec.ExternalDocumentation `json:"externalDocs,omitempty"`
+
+	ExtraProps map[string]any `json:"-"`
+}
+
+func (s *Schema) GetExtension(name string) any {
+	if s.ExtraProps == nil {
+		return nil
+	}
+	return s.ExtraProps[name]
 }
 
 func (s Schema) Empty() bool {
@@ -76,11 +137,8 @@ func (s Schema) Empty() bool {
 
 // MarshalJSON marshal this to JSON
 func (s Schema) MarshalJSON() ([]byte, error) {
-	props, err := json.Marshal(s.SchemaProps)
-	if err != nil {
-		return nil, err
-	}
-	extjson, err := json.Marshal(s.Extensions)
+	type schemaAlias Schema
+	props, err := json.Marshal(schemaAlias(s))
 	if err != nil {
 		return nil, err
 	}
@@ -88,39 +146,21 @@ func (s Schema) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return swag.ConcatJSON(props, extjson, extprops), nil
+	return swag.ConcatJSON(props, extprops), nil
 }
 
 func (s *Schema) UnmarshalJSON(data []byte) error {
-	props := SchemaProps{}
-	if err := json.Unmarshal(data, &props); err != nil {
+	type schemaAlias Schema
+	var sch schemaAlias
+	if err := json.Unmarshal(data, &sch); err != nil {
 		return err
 	}
-	sch := Schema{SchemaProps: props}
 	dict := map[string]any{}
 	if err := json.Unmarshal(data, &dict); err != nil {
 		return err
 	}
-	schemanames := []string{
-		"$ref", "$schema", "id", "description", "type", "nullable", "format",
-		"title", "default", "maximum", "exclusiveMaximum", "minimum",
-		"exclusiveMinimum", "maxLength", "minLength", "pattern", "maxItems",
-		"minItems", "uniqueItems", "multipleOf", "enum", "maxProperties",
-		"minProperties", "required", "allOf", "oneOf", "anyOf", "not",
-		"properties", "additionalProperties", "patternProperties",
-		"dependencies", "additionalItems", "definitions", "items",
-		"example", "discriminator", "readOnly", "xml", "externalDocs",
-	}
-	// Remove the known schema properties from the dict
-	for _, name := range schemanames {
-		delete(dict, name)
-	}
 	for k, v := range dict {
-		if strings.HasPrefix(strings.ToLower(k), "x-") {
-			if sch.Extensions == nil {
-				sch.Extensions = map[string]any{}
-			}
-			sch.Extensions[k] = v
+		if knownSchemaFields[k] {
 			continue
 		}
 		if sch.ExtraProps == nil {
@@ -128,10 +168,9 @@ func (s *Schema) UnmarshalJSON(data []byte) error {
 		}
 		sch.ExtraProps[k] = v
 	}
-	*s = sch
+	*s = Schema(sch)
 	return nil
 }
-
 // SchemaProperties is a map representing the properties of a Schema object.
 type SchemaProperties collections.OrderedMap[string, Schema]
 
@@ -271,3 +310,5 @@ func (s *SchemaOrStringArray) UnmarshalJSON(data []byte) error {
 	*s = nw
 	return nil
 }
+
+type StringOrArray = spec.StringOrArray

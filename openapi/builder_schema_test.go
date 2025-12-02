@@ -79,16 +79,25 @@ func TestDefinitionBuilder_Build(t *testing.T) {
 			wantSchema: nil,
 		},
 		{
-			name:       "simple struct",
-			data:       SimpleStruct{},
-			wantSchema: spec.RefSchema(DefinitionsRoot + "openapi.SimpleStruct"),
+			name: "simple struct",
+			data: SimpleStruct{},
+			wantSchema: &spec.Schema{
+				SchemaProps: spec.SchemaProps{
+					AllOf: []spec.Schema{
+						*spec.RefSchema(DefinitionsRoot + "openapi.SimpleStruct"),
+						*ObjectPropertyProperties(map[string]spec.Schema{
+							"value": *ObjectProperty(),
+						}),
+					},
+				},
+			},
 			wantDeinations: map[string]spec.Schema{
 				"openapi.SimpleStruct": {
 					SchemaProps: spec.SchemaProps{
 						Type: []string{"object"},
 						Properties: map[string]spec.Schema{
 							"name":  *spec.StringProperty(),
-							"value": *ObjectProperty(),
+							"value": *NullableProperty(),
 						},
 					},
 				},
@@ -389,7 +398,20 @@ func TestDefinitionBuilder_buildStruct(t *testing.T) {
 			data: InterfacedStruct{},
 			want: &spec.Schema{
 				SchemaProps: spec.SchemaProps{
-					Ref: spec.MustCreateRef(DefinitionsRoot + "openapi.InterfacedStruct"),
+					AllOf: []spec.Schema{
+						*spec.RefSchema(DefinitionsRoot + "openapi.InterfacedStruct"),
+						*ObjectPropertyProperties(map[string]spec.Schema{
+							"data": *ObjectProperty(),
+							"items": {
+								SchemaProps: spec.SchemaProps{
+									Type: []string{"array"},
+									Items: &spec.SchemaOrArray{
+										Schema: ObjectProperty(),
+									},
+								},
+							},
+						}),
+					},
 				},
 			},
 			wantDefinitions: map[string]spec.Schema{
@@ -397,8 +419,9 @@ func TestDefinitionBuilder_buildStruct(t *testing.T) {
 					SchemaProps: spec.SchemaProps{
 						Type: []string{"object"},
 						Properties: map[string]spec.Schema{
-							"name": *spec.StringProperty(),
-							"data": *ObjectProperty(),
+							"name":  *spec.StringProperty(),
+							"data":  *NullableProperty(),
+							"items": *NullableProperty(),
 						},
 					},
 				},
@@ -418,6 +441,14 @@ func TestDefinitionBuilder_buildStruct(t *testing.T) {
 								Type: []string{"object"},
 								Properties: map[string]spec.Schema{
 									"data": *spec.RefSchema(DefinitionsRoot + "openapi.Value"),
+									"items": {
+										SchemaProps: spec.SchemaProps{
+											Type: []string{"array"},
+											Items: &spec.SchemaOrArray{
+												Schema: ObjectProperty(),
+											},
+										},
+									},
 								},
 							},
 						},
@@ -437,8 +468,9 @@ func TestDefinitionBuilder_buildStruct(t *testing.T) {
 					SchemaProps: spec.SchemaProps{
 						Type: []string{"object"},
 						Properties: map[string]spec.Schema{
-							"name": *spec.StringProperty(),
-							"data": *ObjectProperty(),
+							"name":  *spec.StringProperty(),
+							"data":  *NullableProperty(),
+							"items": *NullableProperty(),
 						},
 					},
 				},
@@ -478,7 +510,14 @@ func TestDefinitionBuilder_buildStruct(t *testing.T) {
 							SchemaProps: spec.SchemaProps{
 								Type: []string{"object"},
 								Properties: map[string]spec.Schema{
-									"items": *spec.StringProperty(),
+									"items": {
+										SchemaProps: spec.SchemaProps{
+											Type: []string{"array"},
+											Items: &spec.SchemaOrArray{
+												Schema: spec.StringProperty(),
+											},
+										},
+									},
 								},
 							},
 						},
@@ -487,7 +526,7 @@ func TestDefinitionBuilder_buildStruct(t *testing.T) {
 			},
 			wantDefinitions: map[string]spec.Schema{
 				"openapi.GenericStruct": *ObjectPropertyProperties(spec.SchemaProperties{
-					"items": *ObjectProperty(),
+					"items": *NullableProperty(),
 				}),
 			},
 		},

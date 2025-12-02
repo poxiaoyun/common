@@ -16,16 +16,14 @@ func TestSchema_UnmarshalJSON(t *testing.T) {
 			data: `{"type":"object","properties":{"property1":{"type":"string"},"property0":{"type":"integer"}}}`,
 			name: "valid object",
 			want: &Schema{
-				SchemaProps: SchemaProps{
-					Properties: SchemaProperties{
-						{
-							Key:   "property1",
-							Value: Schema{SchemaProps: SchemaProps{Type: []string{"string"}}},
-						},
-						{
-							Key:   "property0",
-							Value: Schema{SchemaProps: SchemaProps{Type: []string{"integer"}}},
-						},
+				Properties: SchemaProperties{
+					{
+						Key:   "property1",
+						Value: Schema{Type: []string{"string"}},
+					},
+					{
+						Key:   "property0",
+						Value: Schema{Type: []string{"integer"}},
 					},
 				},
 			},
@@ -34,15 +32,13 @@ func TestSchema_UnmarshalJSON(t *testing.T) {
 			data: `{"type":"object","properties":{"sku":{"type":"string","x-sku-enum": {}}}}`,
 			name: "valid object with x-sku-enum extension but empty config",
 			want: &Schema{
-				SchemaProps: SchemaProps{
-					Properties: SchemaProperties{
-						{
-							Key: "sku",
-							Value: Schema{
-								SchemaProps: SchemaProps{Type: []string{"string"}},
-								Extensions: map[string]any{
-									"x-sku-enum": map[string]any{},
-								},
+				Properties: SchemaProperties{
+					{
+						Key: "sku",
+						Value: Schema{
+							Type: []string{"string"},
+							ExtraProps: map[string]any{
+								"x-sku-enum": map[string]any{},
 							},
 						},
 					},
@@ -68,16 +64,14 @@ func TestSchema_MarshalJSON(t *testing.T) {
 		{
 			name: "valid object with x-sku-enum extension but empty config",
 			data: Schema{
-				SchemaProps: SchemaProps{
-					Type: []string{"object"},
-					Properties: SchemaProperties{
-						{
-							Key: "sku",
-							Value: Schema{
-								SchemaProps: SchemaProps{Type: []string{"string"}},
-								Extensions: map[string]any{
-									"x-sku-enum": map[string]any{},
-								},
+				Type: []string{"object"},
+				Properties: SchemaProperties{
+					{
+						Key: "sku",
+						Value: Schema{
+							Type: []string{"string"},
+							ExtraProps: map[string]any{
+								"x-sku-enum": map[string]any{},
 							},
 						},
 					},

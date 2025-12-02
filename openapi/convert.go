@@ -1,8 +1,30 @@
 package openapi
 
-import "github.com/go-openapi/spec"
+import (
+	"strings"
+
+	"github.com/go-openapi/spec"
+)
 
 func ConvertSchemaToSpecSchema(s Schema) spec.Schema {
+	max, exclMax := resolveMax(s.Maximum, s.ExclusiveMaximum)
+	min, exclMin := resolveMin(s.Minimum, s.ExclusiveMinimum)
+
+	var extensions map[string]any
+	var extraProps map[string]any
+
+	if len(s.ExtraProps) > 0 {
+		extensions = make(map[string]any)
+		extraProps = make(map[string]any)
+		for k, v := range s.ExtraProps {
+			if strings.HasPrefix(strings.ToLower(k), "x-") {
+				extensions[k] = v
+			} else {
+				extraProps[k] = v
+			}
+		}
+	}
+
 	schema := spec.Schema{
 		SchemaProps: spec.SchemaProps{
 			ID:                   s.ID,
@@ -12,10 +34,10 @@ func ConvertSchemaToSpecSchema(s Schema) spec.Schema {
 			Format:               s.Format,
 			Title:                s.Title,
 			Default:              s.Default,
-			Maximum:              s.Maximum,
-			ExclusiveMaximum:     s.ExclusiveMaximum,
-			Minimum:              s.Minimum,
-			ExclusiveMinimum:     s.ExclusiveMinimum,
+			Maximum:              max,
+			ExclusiveMaximum:     exclMax,
+			Minimum:              min,
+			ExclusiveMinimum:     exclMin,
 			MaxLength:            s.MaxLength,
 			MinLength:            s.MinLength,
 			Pattern:              s.Pattern,
@@ -40,9 +62,9 @@ func ConvertSchemaToSpecSchema(s Schema) spec.Schema {
 			Items:                convertSchemaOrArray(s.Items),
 		},
 		VendorExtensible: spec.VendorExtensible{
-			Extensions: s.Extensions,
+			Extensions: extensions,
 		},
-		ExtraProps: s.ExtraProps,
+		ExtraProps: extraProps,
 		SwaggerSchemaProps: spec.SwaggerSchemaProps{
 			Example:       s.Example,
 			Discriminator: s.Discriminator,
@@ -52,6 +74,24 @@ func ConvertSchemaToSpecSchema(s Schema) spec.Schema {
 		},
 	}
 	return schema
+}
+
+func resolveMax(max, exclMax *float64) (*float64, bool) {
+	if exclMax != nil {
+		if max == nil || *exclMax <= *max {
+			return exclMax, true
+		}
+	}
+	return max, false
+}
+
+func resolveMin(min, exclMin *float64) (*float64, bool) {
+	if exclMin != nil {
+		if min == nil || *exclMin >= *min {
+			return exclMin, true
+		}
+	}
+	return min, false
 }
 
 func convertSchemas(schemas []Schema) []spec.Schema {
@@ -101,13 +141,10 @@ func convertDefinitions(defs map[string]Schema) map[string]spec.Schema {
 	return result
 }
 
-func convertSchemaOrArray(s SchemaOrArray) *spec.SchemaOrArray {
-	if len(s) == 0 {
+func convertSchemaOrArray(s *Schema) *spec.SchemaOrArray {
+	if s == nil {
 		return nil
 	}
-	result := make([]spec.Schema, len(s))
-	for i, schema := range s {
-		result[i] = ConvertSchemaToSpecSchema(schema)
-	}
-	return &spec.SchemaOrArray{Schemas: result}
+	schema := ConvertSchemaToSpecSchema(*s)
+	return &spec.SchemaOrArray{Schema: &schema}
 }

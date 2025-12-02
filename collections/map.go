@@ -57,20 +57,20 @@ func (m OrderedMap[K, V]) Get(key K) (V, bool) {
 	return zero, false
 }
 
-func (m OrderedMap[K, V]) Set(key K, value V) {
-	for i, entry := range m {
+func (m *OrderedMap[K, V]) Set(key K, value V) {
+	for i, entry := range *m {
 		if entry.Key == key {
-			m[i].Value = value
+			(*m)[i].Value = value
 			return
 		}
 	}
-	m = append(m, OrderedMapEntry[K, V]{Key: key, Value: value})
+	*m = append(*m, OrderedMapEntry[K, V]{Key: key, Value: value})
 }
 
-func (m OrderedMap[K, V]) Delete(key K) {
-	for i, entry := range m {
+func (m *OrderedMap[K, V]) Delete(key K) {
+	for i, entry := range *m {
 		if entry.Key == key {
-			m = slices.Delete(m, i, i+1)
+			*m = slices.Delete(*m, i, i+1)
 			return
 		}
 	}
