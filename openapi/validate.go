@@ -565,7 +565,7 @@ func (v *Validator) validateObject(ctx context.Context, schema Schema, keywordLo
 	validatedKeys := map[string]struct{}{}
 	// properties
 	for _, prop := range schema.Properties {
-		propName, propSchema := prop.Key, prop.Value
+		propName, propSchema := prop.Name, prop.Schema
 		// record validated keys
 		validatedKeys[propName] = struct{}{}
 		propValue := data[propName]
@@ -576,7 +576,7 @@ func (v *Validator) validateObject(ctx context.Context, schema Schema, keywordLo
 	}
 	// patternProperties
 	for _, prop := range schema.PatternProperties {
-		pattern, propSchema := prop.Key, prop.Value
+		pattern, propSchema := prop.Name, prop.Schema
 		regexp, err := regexp.Compile(pattern)
 		if err != nil {
 			outputs = append(outputs, OutPutError{

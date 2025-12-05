@@ -171,11 +171,21 @@ func (s *Schema) UnmarshalJSON(data []byte) error {
 	*s = Schema(sch)
 	return nil
 }
+
 // SchemaProperties is a map representing the properties of a Schema object.
-type SchemaProperties collections.OrderedMap[string, Schema]
+type SchemaProperties []SchemaProperty
+
+type SchemaProperty struct {
+	Name   string
+	Schema Schema
+}
 
 func (s SchemaProperties) MarshalJSON() ([]byte, error) {
-	return json.Marshal(collections.OrderedMap[string, Schema](s))
+	orderedMap := collections.OrderedMap[string, Schema]{}
+	for _, prop := range s {
+		orderedMap.Set(prop.Name, prop.Schema)
+	}
+	return json.Marshal(orderedMap)
 }
 
 func (s *SchemaProperties) UnmarshalJSON(data []byte) error {
@@ -189,7 +199,11 @@ func (s *SchemaProperties) UnmarshalJSON(data []byte) error {
 		bOrder, _ := b.Value.GetExtension(XOrder).(float64)
 		return CompareFloat(aOrder, bOrder)
 	})
-	*s = SchemaProperties(props)
+	var propsList []SchemaProperty
+	for _, entry := range props {
+		propsList = append(propsList, SchemaProperty{Name: entry.Key, Schema: entry.Value})
+	}
+	*s = SchemaProperties(propsList)
 	return nil
 }
 

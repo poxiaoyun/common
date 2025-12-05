@@ -18,12 +18,12 @@ func TestSchema_UnmarshalJSON(t *testing.T) {
 			want: &Schema{
 				Properties: SchemaProperties{
 					{
-						Key:   "property1",
-						Value: Schema{Type: []string{"string"}},
+						Name:   "property1",
+						Schema: Schema{Type: []string{"string"}},
 					},
 					{
-						Key:   "property0",
-						Value: Schema{Type: []string{"integer"}},
+						Name:   "property0",
+						Schema: Schema{Type: []string{"integer"}},
 					},
 				},
 			},
@@ -34,8 +34,8 @@ func TestSchema_UnmarshalJSON(t *testing.T) {
 			want: &Schema{
 				Properties: SchemaProperties{
 					{
-						Key: "sku",
-						Value: Schema{
+						Name: "sku",
+						Schema: Schema{
 							Type: []string{"string"},
 							ExtraProps: map[string]any{
 								"x-sku-enum": map[string]any{},
@@ -67,8 +67,8 @@ func TestSchema_MarshalJSON(t *testing.T) {
 				Type: []string{"object"},
 				Properties: SchemaProperties{
 					{
-						Key: "sku",
-						Value: Schema{
+						Name: "sku",
+						Schema: Schema{
 							Type: []string{"string"},
 							ExtraProps: map[string]any{
 								"x-sku-enum": map[string]any{},

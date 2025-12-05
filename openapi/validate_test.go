@@ -223,7 +223,7 @@ func TestValidator_ValidateJson(t *testing.T) {
 			schema: Schema{
 				Type: spec.StringOrArray{"object"},
 				Properties: SchemaProperties{
-					{Key: "name", Value: Schema{Type: spec.StringOrArray{"string"}}},
+					{Name: "name", Schema: Schema{Type: spec.StringOrArray{"string"}}},
 				},
 			},
 			data:        map[string]any{"name": "test"},
@@ -234,7 +234,7 @@ func TestValidator_ValidateJson(t *testing.T) {
 			schema: Schema{
 				Type: spec.StringOrArray{"object"},
 				Properties: SchemaProperties{
-					{Key: "name", Value: Schema{Type: spec.StringOrArray{"string"}}},
+					{Name: "name", Schema: Schema{Type: spec.StringOrArray{"string"}}},
 				},
 			},
 			data:        map[string]any{"name": 123},
