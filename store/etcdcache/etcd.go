@@ -147,14 +147,14 @@ func (c *generic) Count(ctx context.Context, obj store.Object, opts ...store.Cou
 	for _, opt := range opts {
 		opt(&options)
 	}
-	preficate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
+	predicate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
 	if err != nil {
 		return 0, err
 	}
 	count := 0
 	if err := c.core.on(ctx, obj, func(ctx context.Context, db *db) error {
 		key := getlistkey(c.scopes, db.resource.String())
-		listopts := storage.ListOptions{Recursive: true, Predicate: preficate}
+		listopts := storage.ListOptions{Recursive: true, Predicate: predicate}
 		list := &StorageObjectList{}
 		if err := db.storage.GetList(ctx, key, listopts, list); err != nil {
 			return err
@@ -184,6 +184,7 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 		}
 		obj.SetUID(uuid.New().String())
 		obj.SetCreationTimestamp(libmeta.Now())
+		obj.SetGeneration(1)
 		obj.SetScopes(c.scopes)
 		obj.SetResource(db.resource.String())
 		uns, err := ConvertToUnstructured(obj)
@@ -469,7 +470,9 @@ func (c *generic) Update(ctx context.Context, obj store.Object, opts ...store.Up
 	if obj.GetUID() != "" {
 		preconditions.UID = ptr.To(types.UID(obj.GetUID()))
 	}
-
+	if rev := obj.GetResourceVersion(); rev != 0 {
+		preconditions.ResourceVersion = ptr.To(strconv.FormatInt(rev, 10))
+	}
 	predicate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
 	if err != nil {
 		return err
@@ -477,8 +480,8 @@ func (c *generic) Update(ctx context.Context, obj store.Object, opts ...store.Up
 	return c.update(ctx, obj, preconditions, predicate, updatefunc)
 }
 
-func (c *generic) update(ctx context.Context, obj store.Object, preconditions *storage.Preconditions, predicate storage.SelectionPredicate, updatefunc updatFunc) error {
-	return c.core.update(ctx, c.scopes, obj, preconditions, predicate, updatefunc, true)
+func (c *generic) update(ctx context.Context, obj store.Object, preconditions *storage.Preconditions, predicate storage.SelectionPredicate, updatefunc updateFunc) error {
+	return c.core.update(ctx, c.scopes, obj, preconditions, predicate, updatefunc, false)
 }
 
 // Status implements store.Store.
@@ -520,8 +523,8 @@ func (s *status) Patch(ctx context.Context, obj store.Object, patch store.Patch,
 	return s.update(ctx, obj, preconditions, predicate, updatefunc)
 }
 
-func (s *status) update(ctx context.Context, obj store.Object, preconditions *storage.Preconditions, predicate storage.SelectionPredicate, updatefunc updatFunc) error {
-	return s.core.update(ctx, s.scopes, obj, preconditions, predicate, updatefunc, false)
+func (s *status) update(ctx context.Context, obj store.Object, preconditions *storage.Preconditions, predicate storage.SelectionPredicate, updatefunc updateFunc) error {
+	return s.core.update(ctx, s.scopes, obj, preconditions, predicate, updatefunc, true)
 }
 
 // Update implements store.StatusStorage.
@@ -583,9 +586,9 @@ func convertError(err error) error {
 	return err
 }
 
-type updatFunc func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error)
+type updateFunc func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error)
 
-func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Object, preconditions *storage.Preconditions, predicate storage.SelectionPredicate, fn updatFunc, ignoreStatus bool) error {
+func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Object, preconditions *storage.Preconditions, predicate storage.SelectionPredicate, fn updateFunc, statusOnly bool) error {
 	if !predicate.Empty() {
 		return errors.NewBadRequest("predicate is not supported")
 	}
@@ -603,7 +606,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 			if err := ConvertFromUnstructured(current, unsobj, db.resource); err != nil {
 				return nil, nil, err
 			}
-			scopes, id, uid, creation, deletion := unsobj.GetScopes(), unsobj.GetID(), unsobj.GetUID(), unsobj.GetCreationTimestamp(), unsobj.GetDeletionTimestamp()
+			scopes, id, uid, creation, deletion, generation := unsobj.GetScopes(), unsobj.GetID(), unsobj.GetUID(), unsobj.GetCreationTimestamp(), unsobj.GetDeletionTimestamp(), unsobj.GetGeneration()
 			unsobjchanged, err := fn(ctx, unsobj)
 			if err != nil {
 				return nil, nil, err
@@ -626,9 +629,16 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 			// resource can not be changed
 			newuns.GetObjectKind().SetGroupVersionKind(current.GetObjectKind().GroupVersionKind())
 			// restore ignored fields
-			if ignoreStatus {
-				// keep status field
+			if statusOnly {
+				// status-only update: keep only status field from new object, preserve all other fields (including generation)
+				status, _, _ := unstructured.NestedFieldNoCopy(newuns.Object, "status")
+				newuns.Object = (&unstructured.Unstructured{Object: current.Object}).DeepCopy().Object
+				_ = unstructured.SetNestedField(newuns.Object, status, "status")
+				// generation is already preserved in the copied object
+			} else {
+				// spec update: keep status field from old object, increment generation
 				_ = unstructured.SetNestedField(newuns.Object, statusfield, "status")
+				_ = unstructured.SetNestedField(newuns.Object, generation+1, "generation")
 			}
 
 			if ShouldDeleteDuringUpdate(ctx, key, newuns, current) {
@@ -700,10 +710,7 @@ func (c *core) getResource(resource string) *db {
 
 		fields := c.resourceFields[resource]
 		groupResource := schema.GroupResource{Resource: resource}
-		newresourceStorage, err := newResourceStorage(c.cli, c.storagePrefix, groupResource, fields)
-		if err != nil {
-			return nil
-		}
+		newresourceStorage := newResourceStorage(c.cli, c.storagePrefix, groupResource, fields)
 		c.resources[resource] = newresourceStorage
 		resourceStorage = newresourceStorage
 	}
@@ -715,7 +722,7 @@ type db struct {
 	resource schema.GroupResource
 }
 
-func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource schema.GroupResource, indexfields []string) (*db, error) {
+func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource schema.GroupResource, indexfields []string) *db {
 	transformer := identity.NewEncryptCheckTransformer()
 	leaseConfig := etcd3.NewDefaultLeaseManagerConfig()
 	newFunc := func() runtime.Object { return &StorageObject{} }
@@ -745,13 +752,13 @@ func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource sch
 	}
 	cacher, err := cacherstorage.NewCacherFromConfig(cacherConfig)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 	cacheDelegator := cacherstorage.NewCacheDelegator(cacher, etcd3storage)
 	return &db{
 		storage:  cacheDelegator,
 		resource: groupResource,
-	}, nil
+	}
 }
 
 func ScopesObjectKeyFunc(obj runtime.Object) (string, error) {

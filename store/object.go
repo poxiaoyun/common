@@ -23,6 +23,8 @@ type Object interface {
 	SetScopes([]Scope)
 	GetResourceVersion() int64
 	SetResourceVersion(int64)
+	GetGeneration() int64
+	SetGeneration(int64)
 	GetLabels() map[string]string
 	SetLabels(map[string]string)
 	GetAnnotations() map[string]string
@@ -85,6 +87,7 @@ type ObjectMeta struct {
 	Scopes            []Scope           `json:"scopes,omitempty"`
 	Resource          string            `json:"resource,omitempty"`
 	ResourceVersion   int64             `json:"resourceVersion,omitempty"`
+	Generation        int64             `json:"generation,omitempty"`
 	CreationTimestamp meta.Time         `json:"creationTimestamp,omitempty"`
 	DeletionTimestamp *meta.Time        `json:"deletionTimestamp,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
@@ -220,6 +223,16 @@ func (o *ObjectMeta) SetResource(resource string) {
 // SetResourceVersion implements Object.
 func (o *ObjectMeta) SetResourceVersion(resourceVersion int64) {
 	o.ResourceVersion = resourceVersion
+}
+
+// GetGeneration implements Object.
+func (o *ObjectMeta) GetGeneration() int64 {
+	return o.Generation
+}
+
+// SetGeneration implements Object.
+func (o *ObjectMeta) SetGeneration(generation int64) {
+	o.Generation = generation
 }
 
 // SetScopes implements Object.

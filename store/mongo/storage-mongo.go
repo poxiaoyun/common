@@ -176,6 +176,7 @@ func NewMongoDB(ctx context.Context,
 }
 
 var setUpdateTimestampQuery = bson.E{Key: "$currentDate", Value: bson.D{{Key: "updationTimestamp", Value: true}}}
+var incGenerationQuery = bson.E{Key: "$inc", Value: bson.D{{Key: "generation", Value: 1}}}
 
 type MongoStorageCore struct {
 	scheme             *ObjectScheme
@@ -325,6 +326,7 @@ func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...st
 		}
 		into.SetCreationTimestamp(meta.Now())
 		into.SetUID(uuid.NewString())
+		into.SetGeneration(1)
 		data, err := m.mergeConditionOnChange(into, []string{"status"})
 		if err != nil {
 			return err
@@ -463,7 +465,7 @@ func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...sto
 		filter = append(filter, bson.E{Key: "id", Value: id})
 		filter = conditionsmatch(filter, SelectorToReqirements(updateoptions.LabelRequirements, updateoptions.FieldRequirements))
 		// in order not to update creation time or creator
-		fields, err := m.mergeConditionOnChange(obj, []string{"creator", "creationTimestamp", "status"})
+		fields, err := m.mergeConditionOnChange(obj, []string{"creator", "creationTimestamp", "status", "generation"})
 		if err != nil {
 			return err
 		}
@@ -471,7 +473,7 @@ func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...sto
 			return e.Key == "id"
 		})
 		fields = m.beforeSave(fields)
-		update := bson.D{{Key: "$set", Value: fields}}
+		update := bson.D{{Key: "$set", Value: fields}, incGenerationQuery}
 		if m.core.setUpdateTimestamp {
 			update = append(update, setUpdateTimestampQuery)
 		}
@@ -496,10 +498,11 @@ func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: id})
 		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
-		update, err := convertPatch(patch, obj, []string{"status"}, nil)
+		update, err := convertPatch(patch, obj, []string{"creator", "creationTimestamp", "status", "generation"}, nil)
 		if err != nil {
 			return err
 		}
+		update = append(update, incGenerationQuery)
 		if m.core.setUpdateTimestamp {
 			update = append(update, setUpdateTimestampQuery)
 		}
@@ -520,7 +523,7 @@ func (m *MongoStorage) PatchBatch(ctx context.Context, obj store.ObjectList, pat
 	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
-		update, err := convertBatchPatch(patch, []string{"status"}, nil)
+		update, err := convertBatchPatch(patch, []string{"creator", "creationTimestamp", "status", "generation"}, nil)
 		if err != nil {
 			return err
 		}

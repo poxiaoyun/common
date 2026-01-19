@@ -101,6 +101,16 @@ func (u *Unstructured) SetResourceVersion(v int64) {
 	u.setNestedField(v, "resourceVersion")
 }
 
+// GetGeneration implements Object.
+func (u *Unstructured) GetGeneration() int64 {
+	return GetNestedInt64(u.Object, "generation")
+}
+
+// SetGeneration implements Object.
+func (u *Unstructured) SetGeneration(v int64) {
+	u.setNestedField(v, "generation")
+}
+
 // GetLabels implements Object.
 func (u *Unstructured) GetLabels() map[string]string {
 	return GetNestedStringMap(u.Object, "labels")

@@ -37,11 +37,11 @@ type ResourceScopedKey struct {
 }
 
 func EncodeScopes(scopes []store.Scope) string {
-	ret := ""
+	var ret strings.Builder
 	for _, scope := range scopes {
-		ret += "/" + scope.Resource + "/" + scope.Name
+		ret.WriteString("/" + scope.Resource + "/" + scope.Name)
 	}
-	return ret
+	return ret.String()
 }
 
 func EncodeReference(ref store.ObjectReference) string {
@@ -105,7 +105,7 @@ type TypedReconciler[T any] interface {
 
 type Controller = TypedController[ScopedKey]
 
-// InitalizeReconciler is an optional interface that can be implemented by a Reconciler to
+// InitializeReconciler is an optional interface that can be implemented by a Reconciler to
 type InitializeReconciler interface {
 	Initialize(ctx context.Context) error
 }
@@ -180,8 +180,8 @@ type TypedController[T comparable] struct {
 	ratelimiter workqueue.TypedRateLimitingInterface[T]
 }
 
-func (h *TypedController[T]) Watch(souce ...Source[T]) *TypedController[T] {
-	h.sources = append(h.sources, souce...)
+func (h *TypedController[T]) Watch(source ...Source[T]) *TypedController[T] {
+	h.sources = append(h.sources, source...)
 	return h
 }
 
@@ -225,7 +225,7 @@ func (h *TypedController[T]) run(ctx context.Context) error {
 	return eg.Wait()
 }
 
-func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], syncfunc func(ctx context.Context, key T) (Result, error), concurent int) error {
+func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], syncfunc func(ctx context.Context, key T) (Result, error), concurrent int) error {
 	go func() {
 		<-ctx.Done()
 		queue.ShutDown()
@@ -238,8 +238,8 @@ func RunQueueConsumer[T comparable](ctx context.Context, queue TypedQueue[T], sy
 
 	// get item from queue and process
 	wg := sync.WaitGroup{}
-	wg.Add(concurent)
-	for range concurent {
+	wg.Add(concurrent)
+	for range concurrent {
 		go func() {
 			defer wg.Done()
 			for {
