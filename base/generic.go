@@ -27,28 +27,11 @@ func GenericList[T store.ObjectList](r *http.Request, storage store.Store, list 
 }
 
 func GenericListFromRequest(r *http.Request, storage store.Store, list store.ObjectList, options ...store.ListOption) error {
-	labelsSelector, err := ParseLabelSelector(api.Query(r, "label-selector", ""))
+	reqOptions, err := ListOptionsToStoreListOptions(api.GetListOptions(r))
 	if err != nil {
 		return err
-	}
-	fieldsSelector, err := store.ParseRequirements(api.Query(r, "field-selector", ""))
-	if err != nil {
-		return err
-	}
-	reqlistopetions := api.GetListOptions(r)
-	reqOptions := []store.ListOption{
-		store.WithPageSize(reqlistopetions.Page, reqlistopetions.Size),
-		store.WithSort(reqlistopetions.Sort),
-		store.WithSearch(reqlistopetions.Search),
-	}
-	if labelsSelector != nil {
-		reqOptions = append(reqOptions, store.WithLabelRequirementsFromSelector(labelsSelector))
-	}
-	if fieldsSelector != nil {
-		reqOptions = append(reqOptions, store.WithFieldRequirements(fieldsSelector...))
 	}
 	options = append(reqOptions, options...)
-
 	if err := storage.List(r.Context(), list, options...); err != nil {
 		return err
 	}

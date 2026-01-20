@@ -35,8 +35,8 @@ var PageParams = []Param{
 	QueryParam("page", "page number").Optional(),
 	QueryParam("search", "Search string for searching").Optional(),
 	QueryParam("sort", "Sort string for sorting").In("name", "name-", "time", "time-").Optional(),
-	QueryParam("label-selector", "Selector string for filtering").Optional(),
-	QueryParam("field-selector", "Selector string for filtering").Optional(),
+	QueryParam("labelSelector", "Selector string for filtering").Optional(),
+	QueryParam("fieldSelector", "Selector string for filtering").Optional(),
 	QueryParam("continue", "Continue token for pagination").Optional(),
 }
 
@@ -67,14 +67,23 @@ func (p PathVarList) Map() map[string]string {
 type ListOptions = meta.ListOptions
 
 func GetListOptions(r *http.Request) ListOptions {
+	queries := r.URL.Query()
+	fieldSelector := queries.Get("fieldSelector")
+	if fieldSelector == "" {
+		fieldSelector = queries.Get("field-selector")
+	}
+	labelSelector := queries.Get("labelSelector")
+	if labelSelector == "" {
+		labelSelector = queries.Get("label-selector")
+	}
 	return ListOptions{
-		Page:          Query(r, "page", 1),
-		Size:          Query(r, "size", 10),
-		Search:        Query(r, "search", ""),
-		Sort:          Query(r, "sort", ""),
-		Continue:      Query(r, "continue", ""),
-		FieldSelector: Query(r, "field-selector", ""),
-		LabelSelector: Query(r, "label-selector", ""),
+		Page:          ValueOrDefault(queries.Get("page"), 0),
+		Size:          ValueOrDefault(queries.Get("size"), 0),
+		Search:        queries.Get("search"),
+		Sort:          queries.Get("sort"),
+		Continue:      queries.Get("continue"),
+		FieldSelector: fieldSelector,
+		LabelSelector: labelSelector,
 	}
 }
 

@@ -5,7 +5,7 @@ import (
 	"xiaoshiai.cn/common/store"
 )
 
-func ListOptionsToStoreListOptions(opts api.ListOptions) []store.ListOption {
+func ListOptionsToStoreListOptions(opts api.ListOptions) ([]store.ListOption, error) {
 	listOpts := []store.ListOption{}
 	if opts.Size > 0 {
 		listOpts = append(listOpts, store.WithPageSize(opts.Page, opts.Size))
@@ -16,5 +16,19 @@ func ListOptionsToStoreListOptions(opts api.ListOptions) []store.ListOption {
 	if opts.Search != "" {
 		listOpts = append(listOpts, store.WithSearch(opts.Search))
 	}
-	return listOpts
+	if opts.LabelSelector != "" {
+		labelsSelector, err := ParseLabelSelector(opts.LabelSelector)
+		if err != nil {
+			return nil, err
+		}
+		listOpts = append(listOpts, store.WithLabelRequirementsFromSelector(labelsSelector))
+	}
+	if opts.FieldSelector != "" {
+		fieldsSelector, err := store.ParseRequirements(opts.FieldSelector)
+		if err != nil {
+			return nil, err
+		}
+		listOpts = append(listOpts, store.WithFieldRequirements(fieldsSelector...))
+	}
+	return listOpts, nil
 }
