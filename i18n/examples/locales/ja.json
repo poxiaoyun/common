@@ -1,0 +1,25 @@
+{
+  "common": {
+    "hello": "こんにちは",
+    "welcome": "ようこそ、{{.name}}さん!",
+    "goodbye": "さようなら"
+  },
+  "errors": {
+    "not_found": "リソースが見つかりません",
+    "unauthorized": "権限がありません",
+    "internal_error": "内部サーバーエラー",
+    "validation_failed": "検証に失敗しました: %s"
+  },
+  "items": {
+    "other": "{{.count}} 個のアイテム"
+  },
+  "user": {
+    "profile": {
+      "title": "ユーザープロフィール",
+      "age": "年齢: {{.age}}",
+      "email": "メール: {{.email}}"
+    },
+    "created": "ユーザーが作成されました",
+    "updated": "ユーザーが更新されました"
+  }
+}

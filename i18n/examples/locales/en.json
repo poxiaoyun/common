@@ -1,0 +1,26 @@
+{
+  "common": {
+    "hello": "Hello",
+    "welcome": "Welcome, {{.name}}!",
+    "goodbye": "Goodbye"
+  },
+  "errors": {
+    "not_found": "Resource not found",
+    "unauthorized": "Unauthorized access",
+    "internal_error": "Internal server error",
+    "validation_failed": "Validation failed: %s"
+  },
+  "items": {
+    "one": "{{.count}} item",
+    "other": "{{.count}} items"
+  },
+  "user": {
+    "profile": {
+      "title": "User Profile",
+      "age": "Age: {{.age}}",
+      "email": "Email: {{.email}}"
+    },
+    "created": "User created successfully",
+    "updated": "User updated successfully"
+  }
+}

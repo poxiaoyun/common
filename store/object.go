@@ -80,8 +80,8 @@ var _ Object = &ObjectMeta{}
 
 // +k8s:openapi-gen=true
 type ObjectMeta struct {
-	ID                string            `json:"id,omitempty"`
-	Name              string            `json:"name,omitempty" validate:"name"`
+	ID                string            `json:"id,omitempty"  validation:"name"`
+	Name              string            `json:"name,omitempty"`
 	UID               string            `json:"uid,omitempty"`
 	APIVersion        string            `json:"apiVersion,omitempty"`
 	Scopes            []Scope           `json:"scopes,omitempty"`

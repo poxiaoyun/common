@@ -1,0 +1,25 @@
+{
+  "common": {
+    "hello": "你好",
+    "welcome": "欢迎, {{.name}}!",
+    "goodbye": "再见"
+  },
+  "errors": {
+    "not_found": "未找到资源",
+    "unauthorized": "未授权访问",
+    "internal_error": "内部服务器错误",
+    "validation_failed": "验证失败: %s"
+  },
+  "items": {
+    "other": "{{.count}} 个项目"
+  },
+  "user": {
+    "profile": {
+      "title": "用户资料",
+      "age": "年龄: {{.age}}",
+      "email": "邮箱: {{.email}}"
+    },
+    "created": "用户创建成功",
+    "updated": "用户更新成功"
+  }
+}
