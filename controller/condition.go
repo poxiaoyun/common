@@ -2,7 +2,7 @@
 package controller
 
 import (
-	"time"
+	"xiaoshiai.cn/common/meta"
 )
 
 type StatusCondition = Condition
@@ -21,7 +21,7 @@ type Condition struct {
 	Type               string          `json:"type" protobuf:"bytes,1,opt,name=type"`
 	Status             ConditionStatus `json:"status" protobuf:"bytes,2,opt,name=status"`
 	ObservedGeneration int64           `json:"observedGeneration,omitempty" protobuf:"varint,3,opt,name=observedGeneration"`
-	LastTransitionTime time.Time       `json:"lastTransitionTime" protobuf:"bytes,4,opt,name=lastTransitionTime"`
+	LastTransitionTime meta.Time       `json:"lastTransitionTime" protobuf:"bytes,4,opt,name=lastTransitionTime"`
 	Reason             string          `json:"reason" protobuf:"bytes,5,opt,name=reason"`
 	Message            string          `json:"message" protobuf:"bytes,6,opt,name=message"`
 }
@@ -52,7 +52,7 @@ func SetStatusCondition(conditions *[]Condition, newCondition Condition) (change
 	existingCondition := FindStatusCondition(*conditions, newCondition.Type)
 	if existingCondition == nil {
 		if newCondition.LastTransitionTime.IsZero() {
-			newCondition.LastTransitionTime = time.Now()
+			newCondition.LastTransitionTime = meta.Now()
 		}
 		*conditions = append(*conditions, newCondition)
 		return true
@@ -63,7 +63,7 @@ func SetStatusCondition(conditions *[]Condition, newCondition Condition) (change
 		if !newCondition.LastTransitionTime.IsZero() {
 			existingCondition.LastTransitionTime = newCondition.LastTransitionTime
 		} else {
-			existingCondition.LastTransitionTime = time.Now()
+			existingCondition.LastTransitionTime = meta.Now()
 		}
 		changed = true
 	}
