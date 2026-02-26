@@ -12,6 +12,7 @@ type MatchVar = matcher.MatchVar
 
 func Test_matcher_Match(t *testing.T) {
 	tests := []struct {
+		name       string
 		registered []string
 		req        string
 		matched    bool
@@ -19,6 +20,7 @@ func Test_matcher_Match(t *testing.T) {
 		vars       []MatchVar
 	}{
 		{
+			name: "trailing_slash_match",
 			registered: []string{
 				"/docs",
 				"/docs/",
@@ -26,6 +28,36 @@ func Test_matcher_Match(t *testing.T) {
 			req:       "/docs/",
 			matched:   true,
 			wantMatch: "/docs/",
+		},
+		{
+			name: "no_trailing_slash_match",
+			registered: []string{
+				"/docs",
+				"/docs/",
+			},
+			req:       "/docs",
+			matched:   true,
+			wantMatch: "/docs",
+		},
+		{
+			name: "console_with_trailing_slash",
+			registered: []string{
+				"/console",
+				"/console/",
+			},
+			req:       "/console/",
+			matched:   true,
+			wantMatch: "/console/",
+		},
+		{
+			name: "console_without_trailing_slash",
+			registered: []string{
+				"/console",
+				"/console/",
+			},
+			req:       "/console",
+			matched:   true,
+			wantMatch: "/console",
 		},
 		{
 			registered: []string{
@@ -207,9 +239,212 @@ func Test_matcher_Match(t *testing.T) {
 				{Name: "role", Value: "admin"},
 			},
 		},
+		{
+			registered: []string{
+				"/",
+				"/{service}",
+			},
+			req:       "/",
+			matched:   true,
+			wantMatch: "/",
+		},
+		{
+			name: "static_vs_dynamic",
+			registered: []string{
+				"/v1/nodes",
+				"/v1/{resource}",
+			},
+			req:       "/v1/nodes",
+			matched:   true,
+			wantMatch: "/v1/nodes",
+		},
+		{
+			name: "static_vs_dynamic_2",
+			registered: []string{
+				"/v1/nodes",
+				"/v1/{resource}",
+			},
+			req:       "/v1/pods",
+			matched:   true,
+			wantMatch: "/v1/{resource}",
+			vars: []MatchVar{
+				{Name: "resource", Value: "pods"},
+			},
+		},
+		{
+			name: "regex_vs_plain_variable",
+			registered: []string{
+				"/api/{id:[0-9]+}",
+				"/api/{id}",
+			},
+			req:       "/api/123",
+			matched:   true,
+			wantMatch: "/api/{id:[0-9]+}",
+			vars: []MatchVar{
+				{Name: "id", Value: "123"},
+			},
+		},
+		{
+			name: "regex_vs_plain_variable_2",
+			registered: []string{
+				"/api/{id:[0-9]+}",
+				"/api/{id}",
+			},
+			req:       "/api/abc",
+			matched:   true,
+			wantMatch: "/api/{id}",
+			vars: []MatchVar{
+				{Name: "id", Value: "abc"},
+			},
+		},
+		{
+			name: "multiple_priority_levels",
+			registered: []string{
+				"/api/users",
+				"/api/{id:[0-9]+}",
+				"/api/{id}",
+				"/api/{path}*",
+			},
+			req:       "/api/users",
+			matched:   true,
+			wantMatch: "/api/users",
+		},
+		{
+			name: "multiple_priority_levels_2",
+			registered: []string{
+				"/api/users",
+				"/api/{id:[0-9]+}",
+				"/api/{id}",
+				"/api/{path}*",
+			},
+			req:       "/api/123",
+			matched:   true,
+			wantMatch: "/api/{id:[0-9]+}",
+			vars: []MatchVar{
+				{Name: "id", Value: "123"},
+			},
+		},
+		{
+			name: "multiple_priority_levels_3",
+			registered: []string{
+				"/api/users",
+				"/api/{id:[0-9]+}",
+				"/api/{id}",
+				"/api/{path}*",
+			},
+			req:       "/api/abc",
+			matched:   true,
+			wantMatch: "/api/{id}",
+			vars: []MatchVar{
+				{Name: "id", Value: "abc"},
+			},
+		},
+		{
+			name: "multiple_priority_levels_4",
+			registered: []string{
+				"/api/users",
+				"/api/{id:[0-9]+}",
+				"/api/{id}",
+				"/api/{path}*",
+			},
+			req:       "/api/a/b/c",
+			matched:   true,
+			wantMatch: "/api/{path}*",
+			vars: []MatchVar{
+				{Name: "path", Value: "a/b/c"},
+			},
+		},
+		{
+			name: "complex_priority",
+			registered: []string{
+				"/api/v1/users",
+				"/api/v1/{resource}",
+				"/api/{version}/users",
+				"/api/{version}/{resource}",
+			},
+			req:       "/api/v1/users",
+			matched:   true,
+			wantMatch: "/api/v1/users",
+		},
+		{
+			name: "complex_priority_2",
+			registered: []string{
+				"/api/v1/users",
+				"/api/v1/{resource}",
+				"/api/{version}/users",
+				"/api/{version}/{resource}",
+			},
+			req:       "/api/v1/pods",
+			matched:   true,
+			wantMatch: "/api/v1/{resource}",
+			vars: []MatchVar{
+				{Name: "resource", Value: "pods"},
+			},
+		},
+		{
+			name: "complex_priority_3",
+			registered: []string{
+				"/api/v1/users",
+				"/api/v1/{resource}",
+				"/api/{version}/users",
+				"/api/{version}/{resource}",
+			},
+			req:       "/api/v2/users",
+			matched:   true,
+			wantMatch: "/api/{version}/users",
+			vars: []MatchVar{
+				{Name: "version", Value: "v2"},
+			},
+		},
+		{
+			name: "complex_priority_4",
+			registered: []string{
+				"/api/v1/users",
+				"/api/v1/{resource}",
+				"/api/{version}/users",
+				"/api/{version}/{resource}",
+			},
+			req:       "/api/v2/pods",
+			matched:   true,
+			wantMatch: "/api/{version}/{resource}",
+			vars: []MatchVar{
+				{Name: "version", Value: "v2"},
+				{Name: "resource", Value: "pods"},
+			},
+		},
+		{
+			name: "greedy_with_suffix",
+			registered: []string{
+				"/files/{path}*",
+				"/files/{path}*/download",
+			},
+			req:       "/files/a/b/c/download",
+			matched:   true,
+			wantMatch: "/files/{path}*/download",
+			vars: []MatchVar{
+				{Name: "path", Value: "a/b/c"},
+			},
+		},
+		{
+			name: "variable_with_slash",
+			registered: []string{
+				"/api/{group}/{version}",
+			},
+			req:       "/api/core/v1",
+			matched:   true,
+			wantMatch: "/api/{group}/{version}",
+			vars: []MatchVar{
+				{Name: "group", Value: "core"},
+				{Name: "version", Value: "v1"},
+			},
+		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.req, func(t *testing.T) {
+		name := tt.req
+		if tt.name != "" {
+			name = tt.name
+		}
+		t.Run(name, func(t *testing.T) {
 			m := NewMux()
 			for _, v := range tt.registered {
 				if err := m.Handle("", v, http.NotFoundHandler()); err != nil {
@@ -223,6 +458,9 @@ func Test_matcher_Match(t *testing.T) {
 			}
 			if !reflect.DeepEqual(vars, tt.vars) {
 				t.Errorf("matcher.Match() vars = %v, want %v", vars, tt.vars)
+			}
+			if tt.wantMatch != "" && node != nil && node.Pattern != tt.wantMatch {
+				t.Errorf("matcher.Match() pattern = %v, want %v", node.Pattern, tt.wantMatch)
 			}
 		})
 	}

@@ -9,30 +9,47 @@ import (
 )
 
 func ParseToken(path string) []string {
-	tokens := []string{}
+	if path == "" {
+		return nil
+	}
+
+	// 预估 token 数量（路径中 '/' 的数量）
+	count := 0
+	for i := 0; i < len(path); i++ {
+		if path[i] == '/' {
+			count++
+		}
+	}
+
+	tokens := make([]string, 0, count)
 	pos := 0
-	for i, char := range path {
-		if char == '/' {
+
+	// 使用索引而不是 range（避免 rune 转换）
+	for i := 0; i < len(path); i++ {
+		if path[i] == '/' {
 			if pos != i {
 				tokens = append(tokens, path[pos:i])
 			}
 			pos = i
 		}
 	}
+
 	if pos != len(path) {
 		tokens = append(tokens, path[pos:])
 	}
+
 	return tokens
 }
 
 type Node[T any] struct {
-	Section Section
-	Value   T
-
+	Section  Section
+	Pattern  string
+	Value    T
 	Children []*Node[T]
+	childMap map[string]*Node[T] // 快速查找缓存
 }
 
-func (n *Node[T]) Get(pattern string) ([]Section, *Node[T], error) {
+func (n *Node[T]) Register(pattern string) ([]Section, *Node[T], error) {
 	sections, err := CompilePattern(pattern)
 	if err != nil {
 		return nil, nil, err
@@ -40,39 +57,35 @@ func (n *Node[T]) Get(pattern string) ([]Section, *Node[T], error) {
 	if len(sections) == 0 {
 		return nil, nil, fmt.Errorf("empty pattern")
 	}
-	nodeapath := []*Node[T]{}
 	cur := n
 	for _, section := range sections {
 		child := indexnode(cur, section)
 		if child == nil {
 			child = &Node[T]{Section: section}
+			// 添加到 children 和 map
 			cur.Children = append(cur.Children, child)
-			// sort children by score, so that we can match the most likely child first
+			if cur.childMap == nil {
+				cur.childMap = make(map[string]*Node[T])
+			}
+			cur.childMap[section.String()] = child
+
+			// 使用优化后的评分机制排序
 			slices.SortFunc(cur.Children, func(a, b *Node[T]) int {
-				return compareSection(a.Section, b.Section)
+				return compareSectionOptimized(a.Section, b.Section)
 			})
 		}
-		nodeapath = append(nodeapath, child)
 		cur = child
 	}
+	cur.Pattern = pattern
 	return sections, cur, nil
 }
 
-func compareSection(a, b Section) int {
-	ascore, bscore := a.score(), b.score()
-	if ascore > bscore {
-		return -1
-	}
-	if ascore < bscore {
-		return 1
-	}
-	return 0
-}
-
 func indexnode[T any](node *Node[T], section Section) *Node[T] {
-	for index, exists := range node.Children {
-		if exists.Section.String() == section.String() {
-			return node.Children[index]
+	// 优先使用 map 查找
+	if node.childMap != nil {
+		key := section.String()
+		if child, ok := node.childMap[key]; ok {
+			return child
 		}
 	}
 	return nil
@@ -88,53 +101,33 @@ type Element struct {
 type Section []Element
 
 func NoRegexpString(sections []Section) string {
-	str := ""
+	var b strings.Builder
 	for _, section := range sections {
 		for _, elem := range section {
 			if elem.VarName != "" {
-				str += fmt.Sprintf("{%s}", elem.VarName)
+				b.WriteByte('{')
+				b.WriteString(elem.VarName)
+				b.WriteByte('}')
 			} else {
-				str += elem.Pattern
+				b.WriteString(elem.Pattern)
 			}
 			if elem.Greedy {
-				str += "*"
+				b.WriteByte('*')
 			}
 		}
 	}
-	return str
+	return b.String()
 }
 
 func (s Section) String() string {
-	patten := ""
+	var b strings.Builder
 	for _, elem := range s {
-		patten += elem.Pattern
+		b.WriteString(elem.Pattern)
 		if elem.Greedy {
-			patten += "*"
+			b.WriteByte('*')
 		}
 	}
-	return patten
-}
-
-func (s Section) score() int {
-	score := 0
-	hasconst := false
-	for _, v := range s {
-		if v.Pattern == "/" {
-			continue
-		}
-		if v.VarName != "" {
-			score += 10
-			if v.Greedy {
-				score -= 1000
-			}
-			continue
-		}
-		if !hasconst {
-			score += 100
-			hasconst = true
-		}
-	}
-	return score
+	return b.String()
 }
 
 func (n *Node[T]) Match(path string, oncandidate func(val T, vars []MatchVar) bool) (*Node[T], []MatchVar) {
@@ -280,11 +273,11 @@ func Compile(pattern string) (Section, error) {
 					name, regstr := elem.VarName[:idx], elem.VarName[idx+1:]
 					elem.VarName = name
 					if regstr != "" {
-						regexp, err := regexp.Compile("^" + regstr + "$")
+						re, err := regexp.Compile("^" + regstr + "$")
 						if err != nil {
 							return nil, CompileError{Pattern: pattern, Position: pre + 1 + idx + 1, Str: regstr, Message: err.Error()}
 						}
-						elem.Validate = regexp
+						elem.Validate = re
 					}
 				}
 				// check greedy
@@ -332,4 +325,89 @@ func Compile(pattern string) (Section, error) {
 		}
 	}
 	return elems, nil
+}
+
+// ========== 优化后的评分机制 ==========
+
+// SectionScore 优化后的评分结构
+type SectionScore struct {
+	Specificity int  // 具体度：常量字符数量
+	HasRegex    int  // 有正则验证的变量数
+	VarCount    int  // 变量数量
+	HasGreedy   bool // 是否有贪婪匹配
+	IsRootOnly  bool // 是否仅为根路径 "/"
+}
+
+// detailedScore 计算 Section 的详细评分
+func (s Section) detailedScore() SectionScore {
+	score := SectionScore{}
+
+	// 特殊处理：单独的 "/" 路径
+	if len(s) == 1 && s[0].Pattern == "/" && s[0].VarName == "" {
+		score.IsRootOnly = true
+		return score
+	}
+
+	for _, v := range s {
+		// 跳过路径分隔符
+		if v.Pattern == "/" {
+			continue
+		}
+
+		if v.VarName != "" {
+			// 变量
+			score.VarCount++
+			if v.Validate != nil {
+				score.HasRegex++
+			}
+			if v.Greedy {
+				score.HasGreedy = true
+			}
+		} else {
+			// 常量：按字符长度计算具体度
+			score.Specificity += len(v.Pattern)
+		}
+	}
+
+	return score
+}
+
+// compareSectionOptimized 比较两个 Section 的优先级
+// 返回值：< 0 表示 a 优先级更高，> 0 表示 b 优先级更高，= 0 表示相同
+func compareSectionOptimized(a, b Section) int {
+	aScore := a.detailedScore()
+	bScore := b.detailedScore()
+
+	// 1. 根路径 "/" 优先级高于带变量的路径
+	if aScore.IsRootOnly != bScore.IsRootOnly {
+		if aScore.IsRootOnly {
+			return -1
+		}
+		return 1
+	}
+
+	// 2. 具体度最重要：常量字符越多越优先
+	if aScore.Specificity != bScore.Specificity {
+		return bScore.Specificity - aScore.Specificity
+	}
+
+	// 3. 有正则验证的变量优先级更高
+	if aScore.HasRegex != bScore.HasRegex {
+		return bScore.HasRegex - aScore.HasRegex
+	}
+
+	// 4. 变量越少越优先
+	if aScore.VarCount != bScore.VarCount {
+		return aScore.VarCount - bScore.VarCount
+	}
+
+	// 5. 非贪婪优先于贪婪
+	if aScore.HasGreedy != bScore.HasGreedy {
+		if aScore.HasGreedy {
+			return 1
+		}
+		return -1
+	}
+
+	return 0
 }

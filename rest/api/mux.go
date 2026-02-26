@@ -97,7 +97,7 @@ func NewMux() *Mux {
 }
 
 func (m *Mux) Handle(method, pattern string, handler http.Handler) error {
-	_, node, err := m.GlobalTree.Get(pattern)
+	_, node, err := m.GlobalTree.Register(pattern)
 	if err != nil {
 		return err
 	}
@@ -143,7 +143,7 @@ func (m *Mux) Register(route *Route) error {
 
 func (m *Mux) register(route *Route, tree *matcher.Node[MethodsHandler]) error {
 	method, pattern := route.Method, route.Path
-	sections, node, err := tree.Get(pattern)
+	sections, node, err := tree.Register(pattern)
 	if err != nil {
 		return err
 	}
