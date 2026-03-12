@@ -130,7 +130,7 @@ func SortByFunc[T any](by string, getname func(T) string, gettime func(T) time.T
 				return timcmp
 			}
 		}
-	case "createTimeDesc", "time-", "": // default sort by time desc
+	case "createTimeDesc", "creationTimestamp-", "time-", "": // default sort by time desc
 		if gettime == nil {
 			return nil
 		}
