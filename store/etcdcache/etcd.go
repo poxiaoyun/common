@@ -735,7 +735,10 @@ func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource sch
 
 	dec := etcd3.NewDefaultDecoder(codec, versioner)
 	compact := etcd3.NewCompactor(cli.Client, time.Hour, clock.RealClock{}, nil)
-	etcd3storage := etcd3.New(cli, compact, codec, newFunc, newListFunc, prefix, resourcePrefix, groupResource, transformer, leaseConfig, dec, versioner)
+	etcd3storage, err := etcd3.New(cli, compact, codec, newFunc, newListFunc, prefix, resourcePrefix, groupResource, transformer, leaseConfig, dec, versioner)
+	if err != nil {
+		panic(err)
+	}
 
 	cacherConfig := cacherstorage.Config{
 		Storage:             etcd3storage,
