@@ -76,6 +76,72 @@ func TestEtcdStore_Watch(t *testing.T) {
 	}
 }
 
+func TestEtcdStore_Watch_EmptyInitThenCreate(t *testing.T) {
+	cli := testserver.RunEtcd(t, nil)
+
+	s, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	if err != nil {
+		t.Fatalf("Failed to create etcd cacher: %v", err)
+	}
+
+	ctx := context.Background()
+
+	watcher, err := watchWithRetry(ctx, s, &store.List[MyObject]{}, store.WithSendInitialEvents())
+	if err != nil {
+		t.Fatalf("failed to create watcher: %v", err)
+	}
+	defer watcher.Stop()
+
+	obj := &MyObject{
+		ObjectMeta: store.ObjectMeta{ID: "created-after-watch", Resource: "myobjects"},
+		Spec:       MyObjectSpec{Value: "value1"},
+	}
+	if err := s.Create(ctx, obj); err != nil {
+		t.Fatalf("failed to create object: %v", err)
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			t.Fatal("did not receive create event after empty initial watch")
+		case e, ok := <-watcher.Events():
+			if !ok {
+				t.Fatal("watcher channel closed")
+			}
+			if e.Error != nil {
+				t.Fatalf("watch event error: %v", e.Error)
+			}
+			if e.Type != store.WatchEventCreate {
+				continue
+			}
+			got, ok := e.Object.(*MyObject)
+			if !ok {
+				t.Fatalf("unexpected object type: %T", e.Object)
+			}
+			if !reflect.DeepEqual(got, obj) {
+				t.Fatalf("expected object %+v, got %+v", obj, got)
+			}
+			return
+		}
+	}
+}
+
+func watchWithRetry(ctx context.Context, s store.Store, list store.ObjectList, opts ...store.WatchOption) (store.Watcher, error) {
+	var lastErr error
+	for range 10 {
+		w, err := s.Watch(ctx, list, opts...)
+		if err == nil {
+			return w, nil
+		}
+		lastErr = err
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil, lastErr
+}
+
 func receiveEvents(ctx context.Context, max int, w store.Watcher) []store.WatchEvent {
 	events := []store.WatchEvent{}
 	for {

@@ -142,16 +142,16 @@ func RunWatch(ctx context.Context, storage store.Store, resource string, handler
 			if !ok {
 				return fmt.Errorf("watcher channel closed")
 			}
+			if event.Error != nil {
+				log.Error(event.Error, "watch error")
+				return event.Error
+			}
 			switch event.Type {
 			case store.WatchEventCreate, store.WatchEventUpdate, store.WatchEventDelete:
 				obj, ok := event.Object.(*store.Unstructured)
 				if !ok {
 					log.Error(errors.New("watch event value is not T"), "watch error")
 					return errors.New("watch event value is not T")
-				}
-				if event.Error != nil {
-					log.Error(event.Error, "watch error")
-					return event.Error
 				}
 				log.V(5).Info("watch event", "type", event.Type, "id", obj.GetID(), "resource", obj.GetResource())
 				if err := handler.OnEvent(ctx, event.Type, obj); err != nil {
@@ -217,16 +217,16 @@ func RunTypedWatch[T any](ctx context.Context, storage store.Store, handler Even
 			if !ok {
 				return fmt.Errorf("watcher channel closed")
 			}
+			if event.Error != nil {
+				log.Error(event.Error, "watch error")
+				return event.Error
+			}
 			switch event.Type {
 			case store.WatchEventCreate, store.WatchEventUpdate, store.WatchEventDelete:
 				obj, ok := any(event.Object).(*T)
 				if !ok {
 					log.Error(errors.New("watch event value is not *T"), "watch error")
 					return errors.New("watch event value is not *T")
-				}
-				if event.Error != nil {
-					log.Error(event.Error, "watch error")
-					return event.Error
 				}
 				log.V(5).Info("watch event", "type", event.Type, "data", event.Object)
 				if err := handler.OnEvent(ctx, event.Type, obj); err != nil {

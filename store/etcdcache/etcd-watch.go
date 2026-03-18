@@ -11,6 +11,7 @@ import (
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage"
 	storeerr "k8s.io/apiserver/pkg/storage/errors"
+	etcdfeature "k8s.io/apiserver/pkg/storage/feature"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/log"
@@ -49,6 +50,9 @@ func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store
 	}
 	// allow watch bookmarks to enabled watchlist
 	if options.SendInitialEvents {
+		if !etcdfeature.DefaultFeatureSupportChecker.Supports(storage.RequestWatchProgress) {
+			return nil, fmt.Errorf("storage feature %q is not enabled", storage.RequestWatchProgress)
+		}
 		storageOptions.SendInitialEvents = ptr.To(true)
 		storageOptions.Predicate.AllowWatchBookmarks = true
 	}
@@ -96,6 +100,7 @@ type warpWatcher struct {
 }
 
 func (w *warpWatcher) run(ctx context.Context) {
+	defer close(w.result)
 	defer log.V(5).Info("watcher stopped", "resource", w.resource, "scopes", w.scopes)
 	go func() {
 		<-ctx.Done()
@@ -110,14 +115,18 @@ func (w *warpWatcher) run(ctx context.Context) {
 				return
 			}
 			if e.Type == watch.Error {
-				w.result <- store.WatchEvent{
+				if !w.sendEvent(ctx, store.WatchEvent{
 					Error: fmt.Errorf("watch error: %v", e.Object),
+				}) {
+					return
 				}
 				return
 			}
 			if e.Type == watch.Bookmark {
-				w.result <- store.WatchEvent{
+				if !w.sendEvent(ctx, store.WatchEvent{
 					Type: store.WatchEventBookmark,
+				}) {
+					return
 				}
 				continue
 			}
@@ -125,16 +134,20 @@ func (w *warpWatcher) run(ctx context.Context) {
 			if !ok {
 				cachable, ok := e.Object.(runtime.CacheableObject)
 				if !ok {
-					w.result <- store.WatchEvent{
+					if !w.sendEvent(ctx, store.WatchEvent{
 						Error: fmt.Errorf("object is not an runtime.CacheableObject, current type: %T", e.Object),
+					}) {
+						return
 					}
 					return
 				}
 				obj := cachable.GetObject()
 				uns, ok = obj.(*StorageObject)
 				if !ok {
-					w.result <- store.WatchEvent{
+					if !w.sendEvent(ctx, store.WatchEvent{
 						Error: fmt.Errorf("cacheable object is not an StorageObject, current type: %T", obj),
+					}) {
+						return
 					}
 					return
 				}
@@ -150,7 +163,7 @@ func (w *warpWatcher) run(ctx context.Context) {
 				continue
 			}
 
-			w.result <- store.WatchEvent{
+			if !w.sendEvent(ctx, store.WatchEvent{
 				Type: func(et watch.EventType) store.WatchEventType {
 					switch et {
 					case watch.Added:
@@ -164,8 +177,19 @@ func (w *warpWatcher) run(ctx context.Context) {
 					}
 				}(e.Type),
 				Object: newobj,
+			}) {
+				return
 			}
 		}
+	}
+}
+
+func (w *warpWatcher) sendEvent(ctx context.Context, event store.WatchEvent) bool {
+	select {
+	case w.result <- event:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 

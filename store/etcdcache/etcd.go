@@ -25,12 +25,15 @@ import (
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/registry/rest"
+	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage"
 	cacherstorage "k8s.io/apiserver/pkg/storage/cacher"
 	storeerr "k8s.io/apiserver/pkg/storage/errors"
 	"k8s.io/apiserver/pkg/storage/etcd3"
+	etcdfeature "k8s.io/apiserver/pkg/storage/feature"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/identity"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
@@ -738,6 +741,9 @@ func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource sch
 	etcd3storage, err := etcd3.New(cli, compact, codec, newFunc, newListFunc, prefix, resourcePrefix, groupResource, transformer, leaseConfig, dec, versioner)
 	if err != nil {
 		panic(err)
+	}
+	if utilfeature.DefaultFeatureGate.Enabled(features.ConsistentListFromCache) || utilfeature.DefaultFeatureGate.Enabled(features.WatchList) {
+		etcdfeature.DefaultFeatureSupportChecker.CheckClient(cli.Ctx(), cli, storage.RequestWatchProgress)
 	}
 
 	cacherConfig := cacherstorage.Config{
