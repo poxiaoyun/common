@@ -11,6 +11,7 @@ import (
 
 var (
 	_ runtime.Object            = &StorageObject{}
+	_ metav1.Object             = &StorageObject{}
 	_ metav1.ObjectMetaAccessor = &StorageObject{}
 )
 
@@ -335,14 +336,47 @@ func (s *StorageObject) GetAnnotations() map[string]string {
 	return annotations
 }
 
-func (s *StorageObject) GetResourceVersion() int64 {
+// GetRevision returns the resource version as int64 (internal storage use only).
+func (s *StorageObject) GetRevision() int64 {
 	val, _ := NestedFieldInt64(s.Object, "resourceVersion")
 	return val
 }
 
-func (s *StorageObject) SetResourceVersion(version int64) {
+// SetRevision sets the resource version from int64 (internal storage use only).
+func (s *StorageObject) SetRevision(version int64) {
 	s.setNestedField(version, "resourceVersion")
 }
+
+// The following methods implement metav1.Object by delegating to StorageObjectMeta.
+
+func (s *StorageObject) GetNamespace() string                             { return (*StorageObjectMeta)(s).GetNamespace() }
+func (s *StorageObject) SetNamespace(ns string)                           { (*StorageObjectMeta)(s).SetNamespace(ns) }
+func (s *StorageObject) GetName() string                                  { return (*StorageObjectMeta)(s).GetName() }
+func (s *StorageObject) SetName(name string)                              { (*StorageObjectMeta)(s).SetName(name) }
+func (s *StorageObject) GetGenerateName() string                          { return (*StorageObjectMeta)(s).GetGenerateName() }
+func (s *StorageObject) SetGenerateName(name string)                      { (*StorageObjectMeta)(s).SetGenerateName(name) }
+func (s *StorageObject) GetUID() types.UID                                { return (*StorageObjectMeta)(s).GetUID() }
+func (s *StorageObject) SetUID(uid types.UID)                             { (*StorageObjectMeta)(s).SetUID(uid) }
+func (s *StorageObject) GetResourceVersion() string                       { return (*StorageObjectMeta)(s).GetResourceVersion() }
+func (s *StorageObject) SetResourceVersion(version string)                { (*StorageObjectMeta)(s).SetResourceVersion(version) }
+func (s *StorageObject) GetGeneration() int64                             { return (*StorageObjectMeta)(s).GetGeneration() }
+func (s *StorageObject) SetGeneration(generation int64)                   { (*StorageObjectMeta)(s).SetGeneration(generation) }
+func (s *StorageObject) GetSelfLink() string                              { return (*StorageObjectMeta)(s).GetSelfLink() }
+func (s *StorageObject) SetSelfLink(selfLink string)                      { (*StorageObjectMeta)(s).SetSelfLink(selfLink) }
+func (s *StorageObject) GetCreationTimestamp() metav1.Time                { return (*StorageObjectMeta)(s).GetCreationTimestamp() }
+func (s *StorageObject) SetCreationTimestamp(t metav1.Time)               { (*StorageObjectMeta)(s).SetCreationTimestamp(t) }
+func (s *StorageObject) GetDeletionTimestamp() *metav1.Time               { return (*StorageObjectMeta)(s).GetDeletionTimestamp() }
+func (s *StorageObject) SetDeletionTimestamp(t *metav1.Time)              { (*StorageObjectMeta)(s).SetDeletionTimestamp(t) }
+func (s *StorageObject) GetDeletionGracePeriodSeconds() *int64            { return (*StorageObjectMeta)(s).GetDeletionGracePeriodSeconds() }
+func (s *StorageObject) SetDeletionGracePeriodSeconds(v *int64)           { (*StorageObjectMeta)(s).SetDeletionGracePeriodSeconds(v) }
+func (s *StorageObject) SetLabels(labels map[string]string)               { (*StorageObjectMeta)(s).SetLabels(labels) }
+func (s *StorageObject) SetAnnotations(annotations map[string]string)     { (*StorageObjectMeta)(s).SetAnnotations(annotations) }
+func (s *StorageObject) GetFinalizers() []string                          { return (*StorageObjectMeta)(s).GetFinalizers() }
+func (s *StorageObject) SetFinalizers(finalizers []string)                { (*StorageObjectMeta)(s).SetFinalizers(finalizers) }
+func (s *StorageObject) GetOwnerReferences() []metav1.OwnerReference      { return (*StorageObjectMeta)(s).GetOwnerReferences() }
+func (s *StorageObject) SetOwnerReferences(refs []metav1.OwnerReference)  { (*StorageObjectMeta)(s).SetOwnerReferences(refs) }
+func (s *StorageObject) GetManagedFields() []metav1.ManagedFieldsEntry    { return (*StorageObjectMeta)(s).GetManagedFields() }
+func (s *StorageObject) SetManagedFields(f []metav1.ManagedFieldsEntry)   { (*StorageObjectMeta)(s).SetManagedFields(f) }
 
 func (s *StorageObject) GetObjectKind() schema.ObjectKind {
 	return s

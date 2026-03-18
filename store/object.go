@@ -21,20 +21,28 @@ type Object interface {
 
 	GetScopes() []Scope
 	SetScopes([]Scope)
+
 	GetResourceVersion() int64
 	SetResourceVersion(int64)
+
 	GetGeneration() int64
 	SetGeneration(int64)
+
 	GetLabels() map[string]string
 	SetLabels(map[string]string)
+
 	GetAnnotations() map[string]string
 	SetAnnotations(map[string]string)
+
 	GetDeletionTimestamp() *meta.Time
 	SetDeletionTimestamp(*meta.Time)
+
 	GetCreationTimestamp() meta.Time
 	SetCreationTimestamp(meta.Time)
+
 	GetFinalizers() []string
 	SetFinalizers([]string)
+
 	GetOwnerReferences() []OwnerReference
 	SetOwnerReferences([]OwnerReference)
 }

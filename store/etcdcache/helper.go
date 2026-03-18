@@ -136,7 +136,7 @@ func (a APIObjectVersioner) ObjectResourceVersion(obj runtime.Object) (uint64, e
 	if !ok {
 		return 0, fmt.Errorf("object is not a StorageObject")
 	}
-	return uint64(object.GetResourceVersion()), nil
+	return uint64(object.GetRevision()), nil
 }
 
 // ParseResourceVersion implements storage.Versioner.
@@ -163,7 +163,7 @@ func (a APIObjectVersioner) UpdateObject(obj runtime.Object, resourceVersion uin
 	if !ok {
 		return fmt.Errorf("object is not a StorageObject")
 	}
-	object.SetResourceVersion(int64(resourceVersion))
+	object.SetRevision(int64(resourceVersion))
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package etcdcache
 
 import (
+	"strings"
 	"context"
 	"fmt"
 	"reflect"
@@ -24,8 +25,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/apiserver/pkg/features"
+	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/apiserver/pkg/storage"
 	cacherstorage "k8s.io/apiserver/pkg/storage/cacher"
 	storeerr "k8s.io/apiserver/pkg/storage/errors"
@@ -805,19 +806,19 @@ func ConvertFromUnstructured(uns *StorageObject, obj store.Object, resource sche
 }
 
 func getObjectKey(scopes []store.Scope, resource, name string) string {
-	key := "/" + resource
+	var key strings.Builder; key.WriteString("/" + resource)
 	for _, scope := range scopes {
-		key += "/" + scope.Resource + "/" + scope.Name
+		key .WriteString("/" + scope.Resource + "/" + scope.Name)
 	}
-	return key + "/" + name
+	return key.String() + "/" + name
 }
 
 func getlistkey(scopes []store.Scope, resource string) string {
-	key := "/" + resource
+	var key strings.Builder; key.WriteString("/" + resource)
 	for _, scope := range scopes {
-		key += "/" + scope.Resource + "/" + scope.Name
+		key .WriteString("/" + scope.Resource + "/" + scope.Name)
 	}
-	return key + "/"
+	return key.String() + "/"
 }
 
 func FilterByScopes(list []StorageObject, scopes []store.Scope) []StorageObject {
