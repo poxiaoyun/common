@@ -157,6 +157,7 @@ func (v *Validator) validateValue(ctx context.Context, path *FieldPath, tag stri
 			if err != nil {
 				err.Path = path.JSONPointer()
 				errs.Add(*err)
+				break
 			}
 		}
 	}

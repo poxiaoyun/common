@@ -51,7 +51,7 @@ func TestValidator_Validate(t *testing.T) {
 				},
 			},
 			wantErrors: 1,
-			wantRules:  []string{"len"},
+			wantRules:  []string{"required"},
 		},
 		{
 			name: "age out of range",
@@ -78,7 +78,7 @@ func TestValidator_Validate(t *testing.T) {
 					Street: "",
 				},
 			},
-			wantErrors: 4, // len + range + len(city) + required(street)
+			wantErrors: 5, // required(name) + range(age) + regexp(email) + required(city) + required(street)
 		},
 	}
 

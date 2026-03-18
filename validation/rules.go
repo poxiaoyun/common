@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -13,25 +14,109 @@ type RuleFunc func(ctx context.Context, value any, params ...string) *Validation
 
 // DefaultRules 默认的规则集
 var DefaultRules = map[string]RuleFunc{
+	// 存在性
 	"required": requiredRule,
-	"in":       inRule,
-	"len":      lenRule,
-	"min":      minRule,
-	"max":      maxRule,
-	"range":    rangeRule,
-	"regexp":   regexpRule,
-	"port":     portRule,
+	"notempty": notEmptyRule,
+	// 数值与集合
+	"in":    inRule,
+	"len":   lenRule,
+	"min":   minRule,
+	"max":   maxRule,
+	"range": rangeRule,
+	// 格式
+	"regexp": regexpRule,
+	"port":   portRule,
+	// 字符串格式 (空字符串视为跳过，搭配 required/notempty 使用)
+	"email":        stringFormatRule("email", IsEmail),
+	"url":          stringFormatRule("url", IsURL),
+	"ip":           stringFormatRule("ip", IsIP),
+	"ipv4":         stringFormatRule("ipv4", IsIPv4),
+	"ipv6":         stringFormatRule("ipv6", IsIPv6),
+	"cidr":         stringFormatRule("cidr", IsCIDR),
+	"host":         stringFormatRule("host", IsHost),
+	"alpha":        stringFormatRule("alpha", IsAlpha),
+	"alphanumeric": stringFormatRule("alphanumeric", IsAlphanumeric),
+	"numeric":      stringFormatRule("numeric", IsNumeric),
+	"dnsname":      stringFormatRule("dnsname", IsDNSName),
+	"semver":       stringFormatRule("semver", IsSemver),
+	"base64":       stringFormatRule("base64", IsBase64),
+	"uuid":         stringFormatRule("uuid", IsUUID),
+	"envname":      stringFormatRule("envname", IsValidEnvName),
+	// Kubernetes 命名规范
+	"dns1123label":     stringFormatRule("dns1123label", IsDNS1123Label),
+	"dns1123subdomain": stringFormatRule("dns1123subdomain", IsDNS1123Subdomain),
+	"dns1035label":     stringFormatRule("dns1035label", IsDNS1035Label),
+	"labelvalue":       stringFormatRule("labelvalue", IsLabelValue),
 }
 
-// requiredRule 必填字段验证
+// notEmptyRule 非空验证 (字段存在且值不为空字符串/空集合)
+func notEmptyRule(ctx context.Context, value any, params ...string) *ValidationError {
+	v := reflect.ValueOf(value)
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return NewValidationError("notempty", nil, nil)
+		}
+		v = v.Elem()
+	}
+
+	if !v.IsValid() {
+		return NewValidationError("notempty", nil, nil)
+	}
+
+	switch v.Kind() {
+	case reflect.String:
+		if strings.TrimSpace(v.String()) == "" {
+			return NewValidationError("notempty", nil, v.String())
+		}
+	case reflect.Slice, reflect.Array, reflect.Map, reflect.Chan:
+		if v.Len() == 0 {
+			return NewValidationError("notempty", nil, value)
+		}
+	}
+
+	return nil
+}
+
+// stringFormatRule 根据字符串格式校验函数生成规则，空字符串跳过 (配合 required/notempty 使用)
+func stringFormatRule(rule string, check func(string) bool) RuleFunc {
+	return func(ctx context.Context, value any, params ...string) *ValidationError {
+		v := getReflectValue(value)
+		if !v.IsValid() || v.Kind() != reflect.String {
+			return nil
+		}
+		s := v.String()
+		if s == "" {
+			return nil
+		}
+		if !check(s) {
+			return NewValidationError(rule, nil, sanitizeValue(s, 100))
+		}
+		return nil
+	}
+}
+
+// requiredRule 必填字段验证 (nil、零指针、空字符串、空集合均视为缺失)
 func requiredRule(ctx context.Context, value any, params ...string) *ValidationError {
 	if value == nil {
 		return NewValidationError("required", nil, nil)
 	}
 	v := reflect.ValueOf(value)
-	switch v.Kind() {
-	case reflect.Pointer, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		if v.IsNil() {
+			return NewValidationError("required", nil, nil)
+		}
+		v = v.Elem()
+	}
+	if !v.IsValid() {
+		return NewValidationError("required", nil, nil)
+	}
+	switch v.Kind() {
+	case reflect.String:
+		if v.String() == "" {
+			return NewValidationError("required", nil, nil)
+		}
+	case reflect.Slice, reflect.Array, reflect.Map, reflect.Chan:
+		if v.Len() == 0 {
 			return NewValidationError("required", nil, nil)
 		}
 	}
@@ -99,10 +184,8 @@ func inRule(ctx context.Context, value any, params ...string) *ValidationError {
 		strValue = v.String()
 	}
 
-	for _, p := range params {
-		if p == strValue {
-			return nil
-		}
+	if slices.Contains(params, strValue) {
+		return nil
 	}
 
 	return NewValidationError("in", params, strValue)
@@ -317,7 +400,7 @@ func portRule(ctx context.Context, value any, params ...string) *ValidationError
 // getReflectValue 获取值的 reflect.Value，处理指针和接口
 func getReflectValue(value any) reflect.Value {
 	v := reflect.ValueOf(value)
-	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		if v.IsNil() {
 			return v
 		}

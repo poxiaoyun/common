@@ -67,6 +67,17 @@ var (
 	rxInt               = regexp.MustCompile(Int)
 	rxFloat             = regexp.MustCompile(Float)
 	rxResourcesName     = regexp.MustCompile(ResourcesNamePattern)
+	// Kubernetes 命名规范
+	// dns1123Label: 小写字母/数字/连字符，首尾必须是字母或数字，最长 63
+	rxDNS1123Label = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+	// dns1123Subdomain: 由多个 dns1123Label 用 . 连接，最长 253
+	rxDNS1123Subdomain = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?))*$`)
+	// dns1035Label: 首字符必须是小写字母，其余小写字母/数字/连字符，最长 63
+	rxDNS1035Label = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
+	// labelValue: K8s label value，允许空，非空时首尾必须是字母或数字，最长 63
+	rxLabelValue = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9_.-]{0,61}[a-zA-Z0-9])?)?$`)
+	// uuid: 标准 UUID v4 格式
+	rxUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 )
 
 func IsURL(str string) bool {
@@ -315,4 +326,33 @@ func IsNull(str string) bool {
 
 func IsResourcesName(str string) bool {
 	return rxResourcesName.MatchString(str)
+}
+
+// IsDNS1123Label 验证 K8s DNS-1123 label 格式（pod/service/configmap 等资源名）
+// 规则：小写字母数字连字符，首尾为字母或数字，最长 63 字符
+func IsDNS1123Label(str string) bool {
+	return len(str) <= 63 && rxDNS1123Label.MatchString(str)
+}
+
+// IsDNS1123Subdomain 验证 K8s DNS-1123 subdomain 格式（namespace/deployment 等）
+// 规则：由 dns1123label 用 . 连接，最长 253 字符
+func IsDNS1123Subdomain(str string) bool {
+	return len(str) <= 253 && rxDNS1123Subdomain.MatchString(str)
+}
+
+// IsDNS1035Label 验证 K8s DNS-1035 label 格式（pod name prefix 等）
+// 规则：必须以小写字母开头，最长 63 字符
+func IsDNS1035Label(str string) bool {
+	return len(str) <= 63 && rxDNS1035Label.MatchString(str)
+}
+
+// IsLabelValue 验证 K8s label value 格式
+// 规则：允许空，非空时首尾必须是字母或数字，允许 . - _ 在中间，最长 63 字符
+func IsLabelValue(str string) bool {
+	return len(str) <= 63 && rxLabelValue.MatchString(str)
+}
+
+// IsUUID 验证标准 UUID 格式（大小写不敏感）
+func IsUUID(str string) bool {
+	return rxUUID.MatchString(str)
 }
