@@ -1,12 +1,12 @@
 package etcdcache
 
 import (
-	"strings"
 	"context"
 	"fmt"
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,11 +19,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/registry/rest"
@@ -356,61 +353,6 @@ func formatResourceVersion(i *int64) string {
 		return ""
 	}
 	return strconv.FormatInt(*i, 10)
-}
-
-func ConvertPredicate(l store.Requirements, f store.Requirements) (storage.SelectionPredicate, error) {
-	labelssel := labels.Everything()
-	fieldsel := fields.Everything()
-	if l != nil {
-		newlabelssel, err := requirementsToLabelsSelector(l)
-		if err != nil {
-			return storage.SelectionPredicate{}, err
-		}
-		labelssel = newlabelssel
-	}
-	if f != nil {
-		newfieldsel, err := requirementsToFieldsSelector(f)
-		if err != nil {
-			return storage.SelectionPredicate{}, err
-		}
-		fieldsel = newfieldsel
-	}
-	fieldkeys := make([]string, 0, len(f))
-	for _, req := range f {
-		fieldkeys = append(fieldkeys, req.Key)
-	}
-	return storage.SelectionPredicate{
-		Label:    labelssel,
-		Field:    fieldsel,
-		GetAttrs: GetAttrsFunc(fieldkeys),
-	}, nil
-}
-
-func requirementsToLabelsSelector(reqs store.Requirements) (labels.Selector, error) {
-	selector := labels.Everything()
-	for _, req := range reqs {
-		labelreq, err := labels.NewRequirement(req.Key, selection.Operator(req.Operator), store.AnyToStrings(req.Values))
-		if err != nil {
-			return nil, err
-		}
-		selector = selector.Add(*labelreq)
-	}
-	return selector, nil
-}
-
-func requirementsToFieldsSelector(reqs store.Requirements) (fields.Selector, error) {
-	selectors := make([]fields.Selector, 0, len(reqs))
-	for _, req := range reqs {
-		switch req.Operator {
-		case store.Equals, store.DoubleEquals:
-			selectors = append(selectors, fields.OneTermEqualSelector(req.Key, store.AnyToString(req.Values[0])))
-		case store.NotEquals:
-			selectors = append(selectors, fields.OneTermNotEqualSelector(req.Key, store.AnyToString(req.Values[0])))
-		default:
-			return nil, fmt.Errorf("unsupported field selector operator: %s", req.Operator)
-		}
-	}
-	return fields.AndSelectors(selectors...), nil
 }
 
 // Patch implements store.Store.
@@ -806,17 +748,19 @@ func ConvertFromUnstructured(uns *StorageObject, obj store.Object, resource sche
 }
 
 func getObjectKey(scopes []store.Scope, resource, name string) string {
-	var key strings.Builder; key.WriteString("/" + resource)
+	var key strings.Builder
+	key.WriteString("/" + resource)
 	for _, scope := range scopes {
-		key .WriteString("/" + scope.Resource + "/" + scope.Name)
+		key.WriteString("/" + scope.Resource + "/" + scope.Name)
 	}
 	return key.String() + "/" + name
 }
 
 func getlistkey(scopes []store.Scope, resource string) string {
-	var key strings.Builder; key.WriteString("/" + resource)
+	var key strings.Builder
+	key.WriteString("/" + resource)
 	for _, scope := range scopes {
-		key .WriteString("/" + scope.Resource + "/" + scope.Name)
+		key.WriteString("/" + scope.Resource + "/" + scope.Name)
 	}
 	return key.String() + "/"
 }
