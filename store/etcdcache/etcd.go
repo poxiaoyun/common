@@ -689,8 +689,15 @@ func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource sch
 		etcdfeature.DefaultFeatureSupportChecker.CheckClient(cli.Ctx(), cli, storage.RequestWatchProgress)
 	}
 
+	// Wrap etcd3 storage to disable WatchList streaming mode.
+	// The reflector's WatchList sends individual watch events to populate cache,
+	// but the watch connection may close before all events are delivered,
+	// resulting in incomplete data. By opting out, the reflector uses
+	// traditional List+Watch which is more reliable for initial cache population.
+	wrappedStorage := &noWatchListStorage{Interface: etcd3storage}
+
 	cacherConfig := cacherstorage.Config{
-		Storage:             etcd3storage,
+		Storage:             wrappedStorage,
 		Versioner:           versioner,
 		GroupResource:       groupResource,
 		ResourcePrefix:      resourcePrefix,
@@ -711,6 +718,19 @@ func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource sch
 		storage:  cacheDelegator,
 		resource: groupResource,
 	}
+}
+
+// noWatchListStorage wraps a storage.Interface to opt out of WatchList semantics.
+// This forces the reflector to use traditional List+Watch for initial cache population,
+// which is more reliable than streaming WatchList events from etcd.
+type noWatchListStorage struct {
+	storage.Interface
+}
+
+// IsWatchListSemanticsUnSupported tells the reflector that this storage backend
+// does not support WatchList streaming mode.
+func (s *noWatchListStorage) IsWatchListSemanticsUnSupported() bool {
+	return true
 }
 
 func ScopesObjectKeyFunc(obj runtime.Object) (string, error) {
