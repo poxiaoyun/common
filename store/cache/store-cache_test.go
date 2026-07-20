@@ -13,7 +13,14 @@ import (
 
 func SetupEtcdTestEtcdStore(t *testing.T) (context.Context, store.Store, func() error) {
 	client := testserver.RunEtcd(t, nil)
-	etcdStore := etcd.NewEtcdStoreFromClient(client, "/test")
+	schema := store.NewSchema()
+	if err := schema.Register(&TestObject{}, store.ResourceSchema{}); err != nil {
+		t.Fatalf("register schema: %v", err)
+	}
+	etcdStore, err := etcd.NewEtcdStoreFromClient(client, schema, "/test")
+	if err != nil {
+		t.Fatalf("create etcd store: %v", err)
+	}
 	return context.Background(), etcdStore, client.Close
 }
 

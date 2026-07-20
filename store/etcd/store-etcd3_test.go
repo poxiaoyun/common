@@ -13,7 +13,7 @@ import (
 
 func SetupEtcdTestEtcdStore(t *testing.T) store.Store {
 	client := testserver.RunEtcd(t, nil)
-	etcdStore := &EtcdStore{core: newEtcdStoreCore(client, "/test")}
+	etcdStore := &EtcdStore{core: newEtcdStoreCore(client, store.NewSchema(), "/test")}
 	return etcdStore
 }
 

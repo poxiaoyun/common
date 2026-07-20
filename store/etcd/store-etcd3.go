@@ -91,7 +91,7 @@ func NewETCD3Client(ctx context.Context, c *Options) (*kubernetes.Client, error)
 	return kubernetes.New(cfg)
 }
 
-func NewEtcdStore(ctx context.Context, c *Options) (*EtcdStore, error) {
+func NewEtcdStore(ctx context.Context, scheme *store.Schema, c *Options) (*EtcdStore, error) {
 	client, err := NewETCD3Client(ctx, c)
 	if err != nil {
 		return nil, err
@@ -105,20 +105,43 @@ func NewEtcdStore(ctx context.Context, c *Options) (*EtcdStore, error) {
 	if _, err := client.Get(timeouts, "health", kubernetes.GetOptions{}); err != nil {
 		return nil, fmt.Errorf("etcd server is not reachable: %v", err)
 	}
-	return NewEtcdStoreFromClient(client, c.KeyPrefix), nil
+	return NewEtcdStoreFromClient(client, scheme, c.KeyPrefix)
 }
 
-func NewEtcdStoreFromClient(client *kubernetes.Client, keyPrefix string) *EtcdStore {
-	return &EtcdStore{core: newEtcdStoreCore(client, keyPrefix)}
+func NewEtcdStoreFromClient(client *kubernetes.Client, scheme *store.Schema, keyPrefix string) (*EtcdStore, error) {
+	scheme, err := scheme.Clone()
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSchema(scheme); err != nil {
+		return nil, err
+	}
+	return &EtcdStore{core: newEtcdStoreCore(client, scheme, keyPrefix)}, nil
 }
 
-func newEtcdStoreCore(client *kubernetes.Client, keyPrefix string) *etcdStoreCore {
+func newEtcdStoreCore(client *kubernetes.Client, scheme *store.Schema, keyPrefix string) *etcdStoreCore {
 	return &etcdStoreCore{
 		client:     client,
 		KeyPrefix:  keyPrefix,
+		schema:     scheme,
 		serializer: &store.JSONSerializer{},
 		leases:     newEtcd3LeaseManager(client, 0, 0, 0),
 	}
+}
+
+func validateSchema(scheme *store.Schema) error {
+	for _, resource := range scheme.Resources() {
+		definition, err := scheme.Resource(resource)
+		if err != nil {
+			return err
+		}
+		for _, index := range definition.Indexes {
+			if !definition.IsPrimaryIndex(index) {
+				return fmt.Errorf("etcd store does not support resource %q index %q", resource, index.Name)
+			}
+		}
+	}
+	return nil
 }
 
 var _ store.PingableStore = &EtcdStore{}
@@ -366,8 +389,11 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 			}
 			obj.SetResourceVersion(kv.ModRevision)
 
-			// check if the object matches the label requirements
-			if store.MatchLabelReqirements(obj, options.LabelRequirements) {
+			matchesFields, err := matchFieldRequirements(obj, options.FieldRequirements)
+			if err != nil {
+				return err
+			}
+			if store.MatchLabelReqirements(obj, options.LabelRequirements) && matchesFields {
 				v.Set(reflect.Append(v, reflect.ValueOf(obj).Elem()))
 			}
 		}
@@ -509,6 +535,7 @@ func (e *EtcdStatusStore) Update(ctx context.Context, obj store.Object, opts ...
 type etcdStoreCore struct {
 	KeyPrefix  string
 	client     *kubernetes.Client
+	schema     *store.Schema
 	serializer store.Serializer
 	leases     *leaseManager
 }

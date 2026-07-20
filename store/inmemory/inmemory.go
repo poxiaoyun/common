@@ -3,6 +3,9 @@ package inmemory
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -16,6 +19,18 @@ type InMemory struct {
 	core   *inmemory
 	scopes []store.Scope
 	status bool
+}
+
+func New(scheme *store.Schema) (*InMemory, error) {
+	scheme, err := scheme.Clone()
+	if err != nil {
+		return nil, err
+	}
+	return &InMemory{core: &inmemory{
+		kvs:     map[string]kv{},
+		indexes: map[string]map[string]map[string]map[string]struct{}{},
+		schema:  scheme,
+	}}, nil
 }
 
 // Ping implements store.Pinger. An in-memory store has no external backend to
@@ -82,9 +97,11 @@ func (i *InMemory) Status() store.StatusStorage {
 }
 
 type inmemory struct {
-	mu  sync.RWMutex
-	rev atomic.Uint64
-	kvs map[string]kv
+	mu      sync.RWMutex
+	rev     atomic.Uint64
+	kvs     map[string]kv
+	indexes map[string]map[string]map[string]map[string]struct{}
+	schema  *store.Schema
 }
 
 type kv struct {
@@ -98,17 +115,26 @@ func (m *inmemory) create(resource string, scopes []store.Scope, name string, va
 		return errors.NewInternalError(err)
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	indexValues, err := m.indexValues(resource, scopes, data)
+	if err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	key := getkey(resource, scopes, name)
 	if _, ok := m.kvs[key]; ok {
 		return errors.NewAlreadyExists(resource, name)
 	}
+	if err := m.checkUnique(resource, key, indexValues); err != nil {
+		return err
+	}
 	m.kvs[key] = kv{
 		value: data,
 		rev:   m.rev.Add(1),
 	}
+	m.addIndexes(resource, key, indexValues)
 	return nil
 }
 
@@ -135,17 +161,30 @@ func (m *inmemory) put(resource string, scopes []store.Scope, name string, value
 	if err != nil {
 		return errors.NewInternalError(err)
 	}
+	indexValues, err := m.indexValues(resource, scopes, data)
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	key := getkey(resource, scopes, name)
 	kv, ok := m.kvs[key]
-	if ok {
-		return errors.NewAlreadyExists(resource, name)
+	if !ok {
+		return errors.NewNotFound(resource, name)
 	}
+	if err := m.checkUnique(resource, key, indexValues); err != nil {
+		return err
+	}
+	oldIndexValues, err := m.indexValues(resource, scopes, kv.value)
+	if err != nil {
+		return err
+	}
+	m.removeIndexes(resource, key, oldIndexValues)
 	kv.rev = m.rev.Add(1)
 	kv.value = data
 	m.kvs[key] = kv
+	m.addIndexes(resource, key, indexValues)
 	return nil
 }
 
@@ -163,8 +202,111 @@ func (m *inmemory) delete(resource string, scopes []store.Scope, name string, va
 			return errors.NewInternalError(err)
 		}
 	}
+	indexValues, err := m.indexValues(resource, scopes, kv.value)
+	if err != nil {
+		return err
+	}
+	m.removeIndexes(resource, key, indexValues)
 	delete(m.kvs, key)
 	return nil
+}
+
+func (m *inmemory) indexValues(resource string, scopes []store.Scope, data []byte) (map[string]string, error) {
+	definition, err := m.schema.Resource(resource)
+	if err != nil {
+		return nil, err
+	}
+	object := map[string]any{}
+	if err := json.Unmarshal(data, &object); err != nil {
+		return nil, errors.NewInternalError(err)
+	}
+	values := make(map[string]string, len(definition.Indexes))
+	for _, index := range definition.Indexes {
+		parts := make([]any, 0, len(index.Fields))
+		skip := false
+		for _, field := range index.Fields {
+			var value any
+			found := false
+			if scopeIndex := slices.Index(definition.ScopeKeys, field); scopeIndex >= 0 {
+				if scopeIndex < len(scopes) {
+					value, found = scopes[scopeIndex].Name, true
+				}
+			} else {
+				value, found = store.GetNestedField(object, strings.Split(field, ".")...)
+			}
+			if (!found || value == nil) && index.Nullable {
+				skip = true
+				break
+			}
+			parts = append(parts, value)
+		}
+		if skip {
+			continue
+		}
+		encoded, err := json.Marshal(parts)
+		if err != nil {
+			return nil, errors.NewInternalError(err)
+		}
+		values[index.Name] = string(encoded)
+	}
+	return values, nil
+}
+
+func (m *inmemory) checkUnique(resource, objectKey string, values map[string]string) error {
+	definition, err := m.schema.Resource(resource)
+	if err != nil {
+		return err
+	}
+	for _, index := range definition.Indexes {
+		if !index.Unique {
+			continue
+		}
+		value, exists := values[index.Name]
+		if !exists {
+			continue
+		}
+		for key := range m.indexEntries(resource, index.Name, value) {
+			if key != objectKey {
+				return errors.NewAlreadyExists(resource, fmt.Sprintf("index %s", index.Name))
+			}
+		}
+	}
+	return nil
+}
+
+func (m *inmemory) indexEntries(resource, indexName, value string) map[string]struct{} {
+	resourceIndexes := m.indexes[resource]
+	if resourceIndexes == nil {
+		resourceIndexes = map[string]map[string]map[string]struct{}{}
+		m.indexes[resource] = resourceIndexes
+	}
+	index := resourceIndexes[indexName]
+	if index == nil {
+		index = map[string]map[string]struct{}{}
+		resourceIndexes[indexName] = index
+	}
+	entries := index[value]
+	if entries == nil {
+		entries = map[string]struct{}{}
+		index[value] = entries
+	}
+	return entries
+}
+
+func (m *inmemory) addIndexes(resource, objectKey string, values map[string]string) {
+	for indexName, value := range values {
+		m.indexEntries(resource, indexName, value)[objectKey] = struct{}{}
+	}
+}
+
+func (m *inmemory) removeIndexes(resource, objectKey string, values map[string]string) {
+	for indexName, value := range values {
+		entries := m.indexEntries(resource, indexName, value)
+		delete(entries, objectKey)
+		if len(entries) == 0 {
+			delete(m.indexes[resource][indexName], value)
+		}
+	}
 }
 
 func getkey(resource string, scopes []store.Scope, name string) string {

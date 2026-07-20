@@ -21,7 +21,11 @@ func TestMongoStorage_Watch(t *testing.T) {
 	opt.Username = "root"
 	opt.Password = "q1u9D20L0I"
 
-	m, err := NewMongoStorage(ctx, GlobalObjectsScheme, opt)
+	schema := store.NewSchema()
+	if err := schema.Register(&Message{}, store.ResourceSchema{}); err != nil {
+		t.Fatalf("register schema: %v", err)
+	}
+	m, err := NewMongoStorage(ctx, schema, opt)
 	if err != nil {
 		t.Errorf("NewMongoStorage() error = %v", err)
 		return

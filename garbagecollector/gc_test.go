@@ -15,7 +15,7 @@ import (
 func TestNewChildrenGarbageCollector(t *testing.T) {
 	ctx := context.Background()
 
-	etcdstorage, err := etcdcache.NewEtcdCacherFromClient(testserver.RunEtcd(t, nil), "/test", nil)
+	etcdstorage, err := etcdcache.NewEtcdCacherFromClient(ctx, testserver.RunEtcd(t, nil), store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create etcd cacher: %v", err)
 		return

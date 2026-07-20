@@ -265,6 +265,13 @@ func (w *etcdWatcher) parseEvent(e *etcdEvent) (*store.WatchEvent, error) {
 	if !store.MatchLabelReqirements(obj, w.labelSelector) {
 		return nil, nil
 	}
+	matchesFields, err := matchFieldRequirements(obj, w.fieldSelector)
+	if err != nil {
+		return nil, err
+	}
+	if !matchesFields {
+		return nil, nil
+	}
 
 	eventType := store.WatchEventUpdate
 	if e.isDelete {
@@ -277,6 +284,17 @@ func (w *etcdWatcher) parseEvent(e *etcdEvent) (*store.WatchEvent, error) {
 		Type:   eventType,
 	}
 	return &event, nil
+}
+
+func matchFieldRequirements(obj store.Object, requirements store.Requirements) (bool, error) {
+	if len(requirements) == 0 {
+		return true, nil
+	}
+	uns, err := store.ToUnstructured(obj)
+	if err != nil {
+		return false, err
+	}
+	return store.MatchUnstructuredFieldRequirments(uns, requirements), nil
 }
 
 type etcdError interface {

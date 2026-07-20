@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/go-logr/logr"
 	"github.com/go-sql-driver/mysql"
@@ -19,6 +20,7 @@ import (
 	gormmysql "gorm.io/driver/mysql"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormschema "gorm.io/gorm/schema"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/meta"
@@ -76,7 +78,11 @@ func (o *Options) ConnectionString() string {
 	}
 }
 
-func NewGormStorage(ctx context.Context, options *Options) (*Storage, error) {
+func NewGormStorage(ctx context.Context, scheme *store.Schema, options *Options) (*Storage, error) {
+	scheme, err := scheme.Clone()
+	if err != nil {
+		return nil, err
+	}
 	log := logr.FromContextOrDiscard(ctx)
 	dburl := options.ConnectionString()
 	log.Info("database check", "database", options.Database)
@@ -92,7 +98,7 @@ func NewGormStorage(ctx context.Context, options *Options) (*Storage, error) {
 	default:
 		return nil, fmt.Errorf("empty or unsupported database driver: [%s]", options.Driver)
 	}
-	db, err := gorm.Open(driver, &gorm.Config{})
+	db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: jsonNamingStrategy{NamingStrategy: gormschema.NamingStrategy{}}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database connection: %w", err)
 	}
@@ -101,7 +107,30 @@ func NewGormStorage(ctx context.Context, options *Options) (*Storage, error) {
 		helper: NewStructHelper(),
 		driver: options.Driver,
 	}
-	return &Storage{core: core}, nil
+	storage := &Storage{core: core, schema: scheme}
+	if err := storage.ensureSchema(ctx); err != nil {
+		return nil, err
+	}
+	return storage, nil
+}
+
+type jsonNamingStrategy struct {
+	gormschema.NamingStrategy
+}
+
+func (n jsonNamingStrategy) ColumnName(_ string, column string) string {
+	runes := []rune(column)
+	end := 1
+	for end < len(runes) && unicode.IsUpper(runes[end]) {
+		if end+1 < len(runes) && unicode.IsLower(runes[end+1]) {
+			break
+		}
+		end++
+	}
+	for i := 0; i < end; i++ {
+		runes[i] = unicode.ToLower(runes[i])
+	}
+	return string(runes)
 }
 
 func createDatabaseIfNotExists(ctx context.Context, options *Options) error {
@@ -144,6 +173,144 @@ func createDatabaseIfNotExists(ctx context.Context, options *Options) error {
 type Storage struct {
 	conditions []store.Scope
 	core       *core
+	schema     *store.Schema
+}
+
+func (s *Storage) ensureSchema(ctx context.Context) error {
+	for _, resource := range s.schema.Resources() {
+		definition, err := s.schema.Resource(resource)
+		if err != nil {
+			return err
+		}
+		db := s.core.db.WithContext(ctx).Table(resource)
+		if err := db.AutoMigrate(definition.Object); err != nil {
+			return fmt.Errorf("auto migrate resource %q: %w", resource, err)
+		}
+		columns, err := db.Migrator().ColumnTypes(definition.Object)
+		if err != nil {
+			return fmt.Errorf("list columns for resource %q: %w", resource, err)
+		}
+		columnSet := make(map[string]struct{}, len(columns))
+		idIsPrimary := false
+		for _, column := range columns {
+			columnSet[column.Name()] = struct{}{}
+			primary, _ := column.PrimaryKey()
+			if column.Name() == "id" && primary {
+				idIsPrimary = true
+			}
+		}
+		existing, err := db.Migrator().GetIndexes(definition.Object)
+		if err != nil {
+			return fmt.Errorf("list indexes for resource %q: %w", resource, err)
+		}
+		existingByName := make(map[string]gorm.Index, len(existing))
+		automaticPrimaryName := ""
+		var automaticPrimaryFields []string
+		for _, index := range existing {
+			existingByName[index.Name()] = index
+			primary, _ := index.PrimaryKey()
+			if primary && slices.Equal(index.Columns(), []string{"id"}) {
+				automaticPrimaryName = index.Name()
+				automaticPrimaryFields = index.Columns()
+			}
+		}
+		if s.core.driver == DBDriverPostgres && idIsPrimary {
+			primaryColumns := []struct {
+				Name   string `gorm:"column:constraint_name"`
+				Column string `gorm:"column:column_name"`
+			}{}
+			if err := s.core.db.WithContext(ctx).Raw(`
+SELECT tc.constraint_name, kcu.column_name
+FROM information_schema.table_constraints tc
+JOIN information_schema.key_column_usage kcu
+  ON tc.constraint_schema = kcu.constraint_schema
+ AND tc.constraint_name = kcu.constraint_name
+WHERE tc.table_schema = current_schema()
+  AND tc.table_name = ?
+  AND tc.constraint_type = 'PRIMARY KEY'
+ORDER BY kcu.ordinal_position`, resource).Scan(&primaryColumns).Error; err != nil {
+				return fmt.Errorf("find primary key for resource %q: %w", resource, err)
+			}
+			if len(primaryColumns) > 0 {
+				automaticPrimaryName = primaryColumns[0].Name
+				automaticPrimaryFields = make([]string, 0, len(primaryColumns))
+				for _, column := range primaryColumns {
+					automaticPrimaryFields = append(automaticPrimaryFields, column.Column)
+				}
+			}
+		}
+		for _, index := range definition.Indexes {
+			for _, field := range index.Fields {
+				if _, ok := columnSet[field]; !ok {
+					return fmt.Errorf("resource %q index %q references missing column %q", resource, index.Name, field)
+				}
+			}
+			if current, ok := existingByName[index.Name]; ok {
+				unique, _ := current.Unique()
+				if !slices.Equal(current.Columns(), index.Fields) || unique != index.Unique {
+					return fmt.Errorf("resource %q index %q conflicts with existing definition", resource, index.Name)
+				}
+				continue
+			}
+			if definition.IsPrimaryIndex(index) && automaticPrimaryName != "" && slices.Equal(automaticPrimaryFields, index.Fields) {
+				continue
+			}
+			if err := s.createIndex(ctx, resource, index); err != nil {
+				return err
+			}
+		}
+		if automaticPrimaryName != "" && len(definition.ScopeKeys) > 0 && slices.Equal(automaticPrimaryFields, []string{"id"}) {
+			if err := s.dropAutomaticPrimaryKey(ctx, resource, automaticPrimaryName); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Storage) dropAutomaticPrimaryKey(ctx context.Context, resource, name string) error {
+	query := buildDropPrimaryKeyQuery(s.core.driver, resource, name)
+	if err := s.core.db.WithContext(ctx).Exec(query).Error; err != nil {
+		return fmt.Errorf("drop automatic primary key %q for scoped resource %q: %w", name, resource, err)
+	}
+	return nil
+}
+
+func buildDropPrimaryKeyQuery(driver, resource, name string) string {
+	core := core{driver: driver}
+	if driver == DBDriverMySQL {
+		return fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", core.quoteKey(resource))
+	}
+	return fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", core.quoteKey(resource), core.quoteKey(name))
+}
+
+func (s *Storage) createIndex(ctx context.Context, resource string, index store.Index) error {
+	query := buildCreateIndexQuery(s.core.driver, resource, index)
+	if err := s.core.db.WithContext(ctx).Exec(query).Error; err != nil {
+		return fmt.Errorf("create index %q for resource %q: %w", index.Name, resource, err)
+	}
+	return nil
+}
+
+func buildCreateIndexQuery(driver, resource string, index store.Index) string {
+	core := core{driver: driver}
+	unique := ""
+	if index.Unique {
+		unique = "UNIQUE "
+	}
+	fields := append([]string(nil), index.Fields...)
+	for i := range fields {
+		fields[i] = core.quoteKey(fields[i])
+	}
+	query := fmt.Sprintf("CREATE %sINDEX %s ON %s (%s)", unique, core.quoteKey(index.Name), core.quoteKey(resource), strings.Join(fields, ", "))
+	if index.Nullable && driver == DBDriverPostgres {
+		predicates := make([]string, 0, len(index.Fields))
+		for _, field := range index.Fields {
+			predicates = append(predicates, core.quoteKey(field)+" IS NOT NULL")
+		}
+		query += " WHERE " + strings.Join(predicates, " AND ")
+	}
+	return query
 }
 
 func (s *Storage) Ping(ctx context.Context) error {
@@ -204,6 +371,7 @@ func (s *Storage) Scope(conds ...store.Scope) store.Store {
 	return &Storage{
 		conditions: append(s.conditions, conds...),
 		core:       s.core,
+		schema:     s.schema,
 	}
 }
 
@@ -602,7 +770,7 @@ func (c *core) list(ctx context.Context, scope []store.Scope, list store.ObjectL
 		return mapSQLError(err, resource, "")
 	}
 	for _, sort := range store.ParseSorts(opts.Sort) {
-		if sort.Direction ==  meta.SortDirectionAsc {
+		if sort.Direction == meta.SortDirectionAsc {
 			db = db.Order(c.quoteKey(sort.Field) + " ASC")
 		} else {
 			db = db.Order(c.quoteKey(sort.Field) + " DESC")

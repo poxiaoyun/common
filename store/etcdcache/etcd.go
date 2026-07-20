@@ -70,7 +70,7 @@ const (
 	dialTimeout = 20 * time.Second
 )
 
-func NewETCD3Client(c *Options) (*clientv3.Client, error) {
+func NewETCD3Client(ctx context.Context, c *Options) (*clientv3.Client, error) {
 	tlsInfo := transport.TLSInfo{
 		CertFile:      c.CertFile,
 		KeyFile:       c.KeyFile,
@@ -87,6 +87,7 @@ func NewETCD3Client(c *Options) (*clientv3.Client, error) {
 	}
 	dialOptions := []grpc.DialOption{}
 	cfg := clientv3.Config{
+		Context:              ctx,
 		DialTimeout:          dialTimeout,
 		DialKeepAliveTime:    keepaliveTime,
 		DialKeepAliveTimeout: keepaliveTimeout,
@@ -99,8 +100,8 @@ func NewETCD3Client(c *Options) (*clientv3.Client, error) {
 	return clientv3.New(cfg)
 }
 
-func NewEtcdCacher(options *Options, resFields ResourceFieldsMap) (*generic, error) {
-	cli, err := NewETCD3Client(options)
+func NewEtcdCacher(ctx context.Context, scheme *store.Schema, options *Options) (*generic, error) {
+	cli, err := NewETCD3Client(ctx, options)
 	if err != nil {
 		return nil, err
 	}
@@ -108,18 +109,49 @@ func NewEtcdCacher(options *Options, resFields ResourceFieldsMap) (*generic, err
 		Client: cli,
 	}
 	kubernetescli.Kubernetes = &kubernetescli
-	return NewEtcdCacherFromClient(&kubernetescli, options.KeyPrefix, resFields)
+	return NewEtcdCacherFromClient(ctx, &kubernetescli, scheme, options.KeyPrefix)
 }
 
-func NewEtcdCacherFromClient(cli *kubernetes.Client, storagePrefix string, resFields ResourceFieldsMap) (*generic, error) {
-	if resFields == nil {
-		resFields = make(map[string][]string)
+func NewEtcdCacherFromClient(ctx context.Context, cli *kubernetes.Client, scheme *store.Schema, storagePrefix string) (*generic, error) {
+	scheme, err := scheme.Clone()
+	if err != nil {
+		return nil, err
+	}
+	resourceFields := make(map[string][]string)
+	for _, resource := range scheme.Resources() {
+		definition, err := scheme.Resource(resource)
+		if err != nil {
+			return nil, err
+		}
+		fieldSet := map[string]struct{}{}
+		for _, index := range definition.Indexes {
+			if index.Unique && !definition.IsPrimaryIndex(index) {
+				return nil, fmt.Errorf("etcd cache store does not support resource %q unique index %q", resource, index.Name)
+			}
+			if definition.IsPrimaryIndex(index) {
+				continue
+			}
+			for _, field := range index.Fields {
+				if slices.Contains(definition.ScopeKeys, field) {
+					continue
+				}
+				fieldSet[field] = struct{}{}
+			}
+		}
+		fields := make([]string, 0, len(fieldSet))
+		for field := range fieldSet {
+			fields = append(fields, field)
+		}
+		slices.Sort(fields)
+		resourceFields[resource] = fields
 	}
 	core := &core{
+		ctx:            ctx,
 		storagePrefix:  storagePrefix,
 		cli:            cli,
 		resources:      make(map[string]*db),
-		resourceFields: resFields,
+		resourceFields: resourceFields,
+		schema:         scheme,
 	}
 	return &generic{core: core}, nil
 }
@@ -501,14 +533,14 @@ func (s *status) Update(ctx context.Context, obj store.Object, opts ...store.Upd
 	return s.update(ctx, obj, preconditions, predicate, updatefunc)
 }
 
-type ResourceFieldsMap map[string][]string
-
 type core struct {
+	ctx            context.Context
 	resources      map[string]*db
 	resourcesLock  sync.RWMutex
 	storagePrefix  string
 	cli            *kubernetes.Client
-	resourceFields ResourceFieldsMap
+	resourceFields map[string][]string
+	schema         *store.Schema
 }
 
 func (c *core) on(ctx context.Context, example any, fn func(ctx context.Context, db *db) error) error {
@@ -661,7 +693,7 @@ func (c *core) getResource(resource string) *db {
 
 		fields := c.resourceFields[resource]
 		groupResource := schema.GroupResource{Resource: resource}
-		newresourceStorage := newResourceStorage(c.cli, c.storagePrefix, groupResource, fields)
+		newresourceStorage := newResourceStorage(c.ctx, c.cli, c.storagePrefix, groupResource, fields)
 		c.resources[resource] = newresourceStorage
 		resourceStorage = newresourceStorage
 	}
@@ -673,7 +705,7 @@ type db struct {
 	resource schema.GroupResource
 }
 
-func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource schema.GroupResource, indexfields []string) *db {
+func newResourceStorage(ctx context.Context, cli *kubernetes.Client, prefix string, groupResource schema.GroupResource, indexfields []string) *db {
 	transformer := identity.NewEncryptCheckTransformer()
 	leaseConfig := etcd3.NewDefaultLeaseManagerConfig()
 	newFunc := func() runtime.Object { return &StorageObject{} }
@@ -691,7 +723,7 @@ func newResourceStorage(cli *kubernetes.Client, prefix string, groupResource sch
 		panic(err)
 	}
 	if utilfeature.DefaultFeatureGate.Enabled(features.ConsistentListFromCache) || utilfeature.DefaultFeatureGate.Enabled(features.WatchList) {
-		etcdfeature.DefaultFeatureSupportChecker.CheckClient(cli.Ctx(), cli, storage.RequestWatchProgress)
+		etcdfeature.DefaultFeatureSupportChecker.CheckClient(ctx, cli, storage.RequestWatchProgress)
 	}
 
 	// Wrap etcd3 storage to disable WatchList streaming mode.

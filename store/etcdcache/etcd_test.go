@@ -36,7 +36,7 @@ type MyObjectSpec struct {
 func TestRunResourceCache(t *testing.T) {
 	cli := testserver.RunEtcd(t, nil)
 
-	s, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create etcd cacher: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestRunResourceCache(t *testing.T) {
 func TestListPreExistingData(t *testing.T) {
 	cli := testserver.RunEtcd(t, nil)
 
-	s, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create etcd cacher: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestListWithNewCacherOnExistingData(t *testing.T) {
 	cli := testserver.RunEtcd(t, nil)
 
 	// Phase: Create data using a first cacher instance
-	s1, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	s1, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create first etcd cacher: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestListWithNewCacherOnExistingData(t *testing.T) {
 
 	// Phase: Create a NEW cacher instance (simulates service restart after upgrade)
 	// The new cacher needs to initialize its reflector and populate the btree cache
-	s2, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	s2, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create second etcd cacher: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestListWithNewCacherOnExistingData(t *testing.T) {
 func TestListConsistencyAcrossResourceVersions(t *testing.T) {
 	cli := testserver.RunEtcd(t, nil)
 
-	s, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create etcd cacher: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestListScopedAfterRestart(t *testing.T) {
 	cli := testserver.RunEtcd(t, nil)
 
 	// Create data using first cacher
-	s1, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	s1, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create first cacher: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestListScopedAfterRestart(t *testing.T) {
 	}
 
 	// Create a new cacher (simulates restart)
-	s2, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	s2, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create second cacher: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestListScopedAfterRestart(t *testing.T) {
 func TestDirectCacheVsEtcdComparison(t *testing.T) {
 	cli := testserver.RunEtcd(t, nil)
 
-	s, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create etcd cacher: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestCacheAfterDirectEtcdWrite(t *testing.T) {
 	}
 
 	// Now create a cacher on top of the same etcd data
-	s, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create cacher: %v", err)
 	}
@@ -610,7 +610,7 @@ func TestListFromDevEtcd(t *testing.T) {
 
 	storagePrefix := "/iam"
 
-	s, err := NewEtcdCacherFromClient(&kubernetescli, storagePrefix, nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), &kubernetescli, store.NewSchema(), storagePrefix)
 	if err != nil {
 		t.Fatalf("Failed to create cacher: %v", err)
 	}
@@ -746,13 +746,13 @@ func waitForCondition(timeout, interval time.Duration, fn func() (bool, error)) 
 
 // suppress unused import warnings
 var (
-	_ = schema.GroupResource{}
-	_ = identity.NewEncryptCheckTransformer
-	_ = etcd3.NewDefaultLeaseManagerConfig
-	_ = clock.RealClock{}
+	_                   = schema.GroupResource{}
+	_                   = identity.NewEncryptCheckTransformer
+	_                   = etcd3.NewDefaultLeaseManagerConfig
+	_                   = clock.RealClock{}
 	_ storage.Interface = nil
-	_ = storagebackend.DefaultEventsHistoryWindow
-	_ runtime.Object = nil
-	_ = labels.Everything
-	_ = fields.Everything
+	_                   = storagebackend.DefaultEventsHistoryWindow
+	_ runtime.Object    = nil
+	_                   = labels.Everything
+	_                   = fields.Everything
 )

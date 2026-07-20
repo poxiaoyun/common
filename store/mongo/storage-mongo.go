@@ -125,7 +125,11 @@ func (BsonQuantityCodec) EncodeValue(ctx bsoncodec.EncodeContext, vw bsonrw.Valu
 	return nil
 }
 
-func NewMongoStorage(ctx context.Context, scheme *ObjectScheme, options *MongoDBOptions) (*MongoStorage, error) {
+func NewMongoStorage(ctx context.Context, scheme *store.Schema, options *MongoDBOptions) (*MongoStorage, error) {
+	scheme, err := scheme.Clone()
+	if err != nil {
+		return nil, err
+	}
 	mongoBsonOptions := &mongooptions.BSONOptions{UseJSONStructTags: true, OmitZeroStruct: true}
 	mongoBsonRegistry := GlobalBsonRegistry
 
@@ -180,7 +184,7 @@ var setUpdateTimestampQuery = bson.E{Key: "$currentDate", Value: bson.D{{Key: "u
 var incGenerationQuery = bson.E{Key: "$inc", Value: bson.D{{Key: "generation", Value: 1}}}
 
 type MongoStorageCore struct {
-	scheme             *ObjectScheme
+	scheme             *store.Schema
 	db                 *mongo.Database
 	bsonRegistry       *bsoncodec.Registry
 	bsonOptions        *mongooptions.BSONOptions
@@ -191,49 +195,19 @@ type MongoStorageCore struct {
 }
 
 func (m *MongoStorageCore) initCollections(ctx context.Context) error {
-	for _, resource := range m.scheme.Registered() {
-		defination, err := m.scheme.GetDefination(resource)
+	for _, resource := range m.scheme.Resources() {
+		definition, err := m.scheme.Resource(resource)
 		if err != nil {
 			return err
 		}
-		if defination.Uniques == nil {
-			// default unique index is name
-			defination.Uniques = []UnionFields{{"id"}}
-		}
 		col := m.db.Collection(resource)
-		indexes := []mongo.IndexModel{}
-		// scopes keys
-		scopesKeys := defination.ScopeKeys
-		// unique indexes
-		for _, uniq := range defination.Uniques {
-			// unique index is under scopes
-			uniq = append(uniq, scopesKeys...)
-			indexes = append(indexes, mongo.IndexModel{
-				Keys:    listToBsonD(uniq),
-				Options: mongooptions.Index().SetName(strings.Join(uniq, "_")).SetUnique(true),
-			})
-		}
-		// partial indexes
-		for _, nulluniq := range defination.NullableUniques {
-			// unique index is under scopes
-			nulluniq = append(nulluniq, scopesKeys...)
-			indexes = append(indexes, mongo.IndexModel{
-				Keys: listToBsonD(nulluniq),
-				Options: mongooptions.
-					Index().
-					SetName(strings.Join(nulluniq, "_")).
-					SetUnique(true).
-					SetPartialFilterExpression(PartialFilterExpression(nulluniq)),
-			})
-		}
-		// normal indexes
-		for _, index := range defination.Indexes {
-			// indexes is under scopes
-			index = append(index, scopesKeys...)
-			indexes = append(indexes, mongo.IndexModel{
-				Keys:    listToBsonD(index),
-				Options: mongooptions.Index().SetName(strings.Join(index, "_")),
-			})
+		indexes := make([]mongo.IndexModel, 0, len(definition.Indexes))
+		for _, index := range definition.Indexes {
+			indexOptions := mongooptions.Index().SetName(index.Name).SetUnique(index.Unique)
+			if index.Nullable {
+				indexOptions.SetPartialFilterExpression(PartialFilterExpression(index.Fields))
+			}
+			indexes = append(indexes, mongo.IndexModel{Keys: listToBsonD(index.Fields), Options: indexOptions})
 		}
 		m.logger.V(5).Info("init indexes", "collection", col.Name(), "indexes", indexes)
 		if _, err := col.Indexes().CreateMany(ctx, indexes); err != nil {
@@ -253,11 +227,11 @@ func (m *MongoStorageCore) initCollections(ctx context.Context) error {
 }
 
 func PartialFilterExpression(fields []string) bson.M {
-	expression := bson.M{}
+	expressions := make([]bson.M, 0, len(fields))
 	for _, field := range fields {
-		expression[field] = bson.M{"$exists": true, "$ne": nil}
+		expressions = append(expressions, bson.M{field: bson.M{"$exists": true}})
 	}
-	return bson.M{"$or": []bson.M{expression, {}}}
+	return bson.M{"$and": expressions}
 }
 
 var commonFindOneAndUpdateOptions = mongooptions.FindOneAndUpdate().SetReturnDocument(mongooptions.After)
@@ -272,7 +246,7 @@ func (m *MongoStorage) Ping(ctx context.Context) error {
 }
 
 // Scheme implements Storage.
-func (m *MongoStorage) Scheme() *ObjectScheme {
+func (m *MongoStorage) Scheme() *store.Schema {
 	return m.core.scheme
 }
 

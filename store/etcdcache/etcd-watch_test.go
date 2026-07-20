@@ -13,7 +13,7 @@ import (
 func TestEtcdStore_Watch(t *testing.T) {
 	cli := testserver.RunEtcd(t, nil)
 
-	s, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create etcd cacher: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestEtcdStore_Watch(t *testing.T) {
 func TestEtcdStore_Watch_EmptyInitThenCreate(t *testing.T) {
 	cli := testserver.RunEtcd(t, nil)
 
-	s, err := NewEtcdCacherFromClient(cli, "/test", nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create etcd cacher: %v", err)
 	}
