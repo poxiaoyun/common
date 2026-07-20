@@ -17,7 +17,7 @@ import (
 	"xiaoshiai.cn/common/store"
 )
 
-var _ store.Store = &Client{}
+var _ store.PingableStore = &Client{}
 
 func NewRemoteStore(server *url.URL) *Client {
 	return &Client{cli: &httpclient.Client{
@@ -39,6 +39,10 @@ func NewRemoteStore(server *url.URL) *Client {
 type Client struct {
 	cli          *httpclient.Client
 	scopesPrefix string
+}
+
+func (c *Client) Ping(ctx context.Context) error {
+	return c.cli.Head("").Send(ctx)
 }
 
 // PatchBatch implements store.Store.

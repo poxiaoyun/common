@@ -17,7 +17,7 @@ import (
 	"xiaoshiai.cn/common/store"
 )
 
-var _ store.Store = &CacheStore{}
+var _ store.PingableStore = &CacheStore{}
 
 func NewCacheStore(from store.Store) *CacheStore {
 	return &CacheStore{
@@ -32,6 +32,14 @@ func NewCacheStore(from store.Store) *CacheStore {
 type CacheStore struct {
 	scopes []store.Scope
 	core   *cacheStoreCore
+}
+
+func (g *CacheStore) Ping(ctx context.Context) error {
+	pinger, ok := g.core.store.(store.Pinger)
+	if !ok {
+		return errors.NewNotImplemented("underlying store does not support ping")
+	}
+	return pinger.Ping(ctx)
 }
 
 // PatchBatch implements store.Store.

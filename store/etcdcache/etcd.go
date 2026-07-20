@@ -124,11 +124,16 @@ func NewEtcdCacherFromClient(cli *kubernetes.Client, storagePrefix string, resFi
 	return &generic{core: core}, nil
 }
 
-var _ store.Store = &generic{}
+var _ store.PingableStore = &generic{}
 
 type generic struct {
 	core   *core
 	scopes []store.Scope
+}
+
+func (c *generic) Ping(ctx context.Context) error {
+	_, err := c.core.cli.Client.Get(ctx, c.core.storagePrefix, clientv3.WithLimit(1))
+	return err
 }
 
 // PatchBatch implements store.Store.

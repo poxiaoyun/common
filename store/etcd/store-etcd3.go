@@ -121,11 +121,16 @@ func newEtcdStoreCore(client *kubernetes.Client, keyPrefix string) *etcdStoreCor
 	}
 }
 
-var _ store.Store = &EtcdStore{}
+var _ store.PingableStore = &EtcdStore{}
 
 type EtcdStore struct {
 	scopes []store.Scope
 	core   *etcdStoreCore
+}
+
+func (e *EtcdStore) Ping(ctx context.Context) error {
+	_, err := e.core.client.KV.Get(ctx, e.core.KeyPrefix, clientv3.WithLimit(1))
+	return err
 }
 
 // PatchBatch implements store.Store.

@@ -25,7 +25,7 @@ import (
 	"xiaoshiai.cn/common/store"
 )
 
-var _ store.Store = &Storage{}
+var _ store.PingableStore = &Storage{}
 
 const (
 	DBDriverPostgres = "postgres"
@@ -144,6 +144,14 @@ func createDatabaseIfNotExists(ctx context.Context, options *Options) error {
 type Storage struct {
 	conditions []store.Scope
 	core       *core
+}
+
+func (s *Storage) Ping(ctx context.Context) error {
+	db, err := s.core.db.DB()
+	if err != nil {
+		return err
+	}
+	return db.PingContext(ctx)
 }
 
 // Count implements store.Store.

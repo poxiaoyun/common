@@ -3,12 +3,23 @@ package strategy
 import (
 	"context"
 
+	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/store"
 )
+
+var _ store.PingableStore = &StrategyStore{}
 
 type StrategyStore struct {
 	Store    store.Store
 	Stratage Strategy
+}
+
+func (s *StrategyStore) Ping(ctx context.Context) error {
+	pinger, ok := s.Store.(store.Pinger)
+	if !ok {
+		return errors.NewNotImplemented("underlying store does not support ping")
+	}
+	return pinger.Ping(ctx)
 }
 
 // PatchBatch implements store.Store.

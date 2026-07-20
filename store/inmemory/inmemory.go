@@ -10,12 +10,18 @@ import (
 	"xiaoshiai.cn/common/store"
 )
 
-var _ store.Store = &InMemory{}
+var _ store.PingableStore = &InMemory{}
 
 type InMemory struct {
 	core   *inmemory
 	scopes []store.Scope
 	status bool
+}
+
+// Ping implements store.Pinger. An in-memory store has no external backend to
+// probe, so it is always available while the process is running.
+func (i *InMemory) Ping(context.Context) error {
+	return nil
 }
 
 // PatchBatch implements store.Store.

@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
 	"net/http"
+
+	"xiaoshiai.cn/common/errors"
 )
 
 type Plugin interface {
@@ -37,6 +40,23 @@ func (v VersionPlugin) Install(m *API) error {
 
 type HealthCheckPlugin struct {
 	CheckFun func() error
+}
+
+type ReadyCheckPlugin struct {
+	CheckFun func(context.Context) error
+}
+
+func (p ReadyCheckPlugin) Install(api *API) error {
+	api.Route(GET("/readyz").Doc("ready check").To(func(resp http.ResponseWriter, req *http.Request) {
+		if p.CheckFun != nil {
+			if err := p.CheckFun(req.Context()); err != nil {
+				Error(resp, errors.NewServiceUnavailable(err.Error()))
+				return
+			}
+		}
+		Raw(resp, http.StatusOK, "ok")
+	}))
+	return nil
 }
 
 func (h HealthCheckPlugin) Install(m *API) error {

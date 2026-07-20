@@ -442,6 +442,18 @@ type Store interface {
 	Scope(scope ...Scope) Store
 }
 
+// Pinger reports whether a backend can currently serve requests. Applications
+// may use it as one input to readiness without making it part of Store's data
+// operation contract.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
+type PingableStore interface {
+	Store
+	Pinger
+}
+
 type StatusStorage interface {
 	Update(ctx context.Context, obj Object, opts ...UpdateOption) error
 	Patch(ctx context.Context, obj Object, patch Patch, opts ...PatchOption) error

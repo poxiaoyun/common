@@ -1,11 +1,43 @@
 package rest
 
 import (
+	"context"
+	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"testing"
 
+	"xiaoshiai.cn/common/rest/api"
 	"xiaoshiai.cn/common/store"
 )
+
+type pingStore struct {
+	store.Store
+	called bool
+}
+
+func (s *pingStore) Ping(context.Context) error {
+	s.called = true
+	return nil
+}
+
+func TestRemoteStorePing(t *testing.T) {
+	underlying := &pingStore{}
+	handler := api.New().Group(NewServer(underlying).Group()).Build()
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if err := NewRemoteStore(serverURL).Ping(context.Background()); err != nil {
+		t.Fatalf("Ping() error = %v", err)
+	}
+	if !underlying.called {
+		t.Fatal("Ping() was not delegated to the server store")
+	}
+}
 
 func Test_decodePath(t *testing.T) {
 	tests := []struct {

@@ -48,6 +48,7 @@ func NewDefaultMongoOptions(dbname string) *MongoDBOptions {
 }
 
 var _ store.TransactionStore = &MongoStorage{}
+var _ store.PingableStore = &MongoStorage{}
 
 var GlobalBsonRegistry = bson.NewRegistry()
 
@@ -261,11 +262,13 @@ func PartialFilterExpression(fields []string) bson.M {
 
 var commonFindOneAndUpdateOptions = mongooptions.FindOneAndUpdate().SetReturnDocument(mongooptions.After)
 
-var _ store.Store = &MongoStorage{}
-
 type MongoStorage struct {
 	core   *MongoStorageCore
 	scopes []store.Scope
+}
+
+func (m *MongoStorage) Ping(ctx context.Context) error {
+	return m.core.db.Client().Ping(ctx, nil)
 }
 
 // Scheme implements Storage.

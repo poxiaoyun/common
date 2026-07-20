@@ -26,6 +26,16 @@ func NewServer(store store.Store) *Server {
 	return &Server{Store: store}
 }
 
+func (s *Server) Ping(w http.ResponseWriter, r *http.Request) {
+	api.On(w, r, func(ctx context.Context) (any, error) {
+		pinger, ok := s.Store.(store.Pinger)
+		if !ok {
+			return nil, errors.NewNotImplemented("store does not support ping")
+		}
+		return nil, pinger.Ping(ctx)
+	})
+}
+
 type CountResponse struct {
 	Count int `json:"count"`
 }
@@ -364,6 +374,7 @@ func decodePath(rpath string) store.ResourcedObjectReference {
 func (s *Server) Group() api.Group {
 	return api.NewGroup("/{path}*").
 		Route(
+			api.HEAD("").To(s.Ping),
 			api.GET("").To(s.List),
 			api.POST("").To(s.Create),
 			api.PUT("").To(s.Update),
