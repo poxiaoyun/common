@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	stderrors "errors"
 	"net/http"
 	"strings"
 
@@ -18,7 +19,7 @@ func (c TokenAuthenticatorChain) AuthenticateToken(ctx context.Context, token st
 	for _, authn := range c {
 		info, err := authn.AuthenticateToken(ctx, token)
 		if err != nil {
-			if err == ErrNotProvided {
+			if stderrors.Is(err, ErrNotProvided) {
 				continue
 			}
 			errlist = append(errlist, err)
@@ -41,7 +42,7 @@ func (c BasicAuthenticatorChain) AuthenticateBasic(ctx context.Context, username
 	for _, authn := range c {
 		info, err := authn.AuthenticateBasic(ctx, username, password)
 		if err != nil {
-			if err == ErrNotProvided {
+			if stderrors.Is(err, ErrNotProvided) {
 				continue
 			}
 			errlist = append(errlist, err)
@@ -64,7 +65,7 @@ func (c SSHAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, 
 	for _, authn := range c {
 		info, err := authn.AuthenticateBasic(ctx, username, password)
 		if err != nil {
-			if err == ErrNotProvided {
+			if stderrors.Is(err, ErrNotProvided) {
 				continue
 			}
 			errlist = append(errlist, err)
@@ -83,6 +84,9 @@ func (c SSHAuthenticatorChain) AuthenticatePublicKey(ctx context.Context, pubkey
 	for _, authn := range c {
 		info, err := authn.AuthenticatePublicKey(ctx, pubkey)
 		if err != nil {
+			if stderrors.Is(err, ErrNotProvided) {
+				continue
+			}
 			errlist = append(errlist, err)
 			continue
 		}
@@ -152,6 +156,9 @@ func (d AuthenticatorChain) Authenticate(w http.ResponseWriter, r *http.Request)
 	for _, a := range d {
 		info, err := a.Authenticate(w, r)
 		if err != nil {
+			if stderrors.Is(err, ErrNotProvided) {
+				continue
+			}
 			errs = append(errs, err)
 			continue
 		}
@@ -168,4 +175,3 @@ type AuthenticateFunc func(w http.ResponseWriter, r *http.Request) (*Authenticat
 func (f AuthenticateFunc) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
 	return f(w, r)
 }
-
