@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 )
@@ -71,22 +72,15 @@ func (r *Builder) Query(key, value string) *Builder {
 	return r
 }
 
-func (r *Builder) QueriesData(data any) *Builder {
-	queries, err := ObjectToQuery(data)
-	if err != nil {
-		r.R.Err = err
-		return r
-	}
-	return r.Queries(queries)
+func (r *Builder) QueriesObject(data any) *Builder {
+	return r.Queries(ObjectToQuery(data))
 }
 
 func (r *Builder) Queries(queries url.Values) *Builder {
 	if r.R.Queries == nil {
 		r.R.Queries = url.Values{}
 	}
-	for k, v := range queries {
-		r.R.Queries[k] = v
-	}
+	maps.Copy(r.R.Queries, queries)
 	return r
 }
 
@@ -102,9 +96,7 @@ func (r *Builder) Headers(headers http.Header) *Builder {
 	if r.R.Headers == nil {
 		r.R.Headers = http.Header{}
 	}
-	for k, v := range headers {
-		r.R.Headers[k] = v
-	}
+	maps.Copy(r.R.Headers, headers)
 	return r
 }
 

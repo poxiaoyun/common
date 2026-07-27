@@ -12,7 +12,9 @@ import (
 	libreflect "xiaoshiai.cn/common/reflect"
 )
 
-// Parse 从多个方式加载配置
+// Parse loads environment variables and then parses args into fs.
+// The caller owns argument selection, help handling, usage output, and process
+// lifecycle.
 /*
  * 配置文件加载有如下优先级：
  - 命令行参数
@@ -32,22 +34,15 @@ import (
 
 配置完成后,Parse 会根据 plagset 中已有配置 "foo-bar",获取对应的环境变量 "FOO_BAR"，以及对应的配置文件项 "foo.bar"
 */
-func Parse(fs *pflag.FlagSet) error {
+func Parse(fs *pflag.FlagSet, args []string) error {
 	// 从默认值配置
 	// fs 中已有默认值
 	printDefault(fs)
 	// 从环境变量配置
 	LoadEnv(fs)
 	// 从命令行配置
-	if err := fs.Parse(os.Args[1:]); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	// help
-	if fs.Lookup("help").Value.String() == "true" {
-		if fs.Usage != nil {
-			fs.Usage()
-		}
-		os.Exit(0)
 	}
 	// print
 	Print(fs)

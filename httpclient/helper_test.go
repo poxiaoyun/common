@@ -48,10 +48,7 @@ func TestObjectToQuery(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := httpclient.ObjectToQuery(tt.args)
-			if err != nil {
-				t.Fatal(err)
-			}
+			got := httpclient.ObjectToQuery(tt.args)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ObjectToQuery() = %v, want %v", got, tt.want)
 			}
@@ -115,10 +112,7 @@ func TestObjectToQueryRoundTrip(t *testing.T) {
 		NoTag:       "plain",
 	}
 
-	query, err := httpclient.ObjectToQuery(input)
-	if err != nil {
-		t.Fatal(err)
-	}
+	query := httpclient.ObjectToQuery(input)
 	request := httptest.NewRequest("GET", "/?"+query.Encode(), nil)
 	output, err := api.QueryObject[roundTripOptions](request)
 	if err != nil {
@@ -139,14 +133,17 @@ func (*failingText) UnmarshalText([]byte) error {
 	return nil
 }
 
-func TestObjectToQueryReturnsFieldError(t *testing.T) {
+func TestObjectToQueryIgnoresFieldError(t *testing.T) {
 	input := struct {
 		Value failingText `json:"value"`
-	}{}
-	if _, err := httpclient.ObjectToQuery(input); err == nil {
-		t.Fatal("expected an error")
+		Good  string      `json:"good"`
+	}{Good: "value"}
+	query := httpclient.ObjectToQuery(input)
+	if query.Get("value") != "" || query.Get("good") != "value" {
+		t.Fatalf("query = %#v", query)
 	}
-	if request := httpclient.Get("/").QueriesData(input); request.R.Err == nil {
-		t.Fatal("QueriesData did not retain the query encoding error")
+	request := httpclient.Get("/").QueriesObject(input)
+	if request.R.Err != nil || request.R.Queries.Get("good") != "value" {
+		t.Fatalf("request = %#v", request.R)
 	}
 }

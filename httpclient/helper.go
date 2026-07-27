@@ -244,11 +244,11 @@ func DefaultDecodeFunc(req *http.Request, resp *http.Response, into any) error {
 	}
 }
 
-func ObjectToQuery(v any) (url.Values, error) {
+func ObjectToQuery(v any) url.Values {
 	values := url.Values{}
 	value := reflect.ValueOf(v)
 	if !value.IsValid() {
-		return values, nil
+		return values
 	}
 	if value.Kind() != reflect.Pointer {
 		copy := reflect.New(value.Type()).Elem()
@@ -260,23 +260,23 @@ func ObjectToQuery(v any) (url.Values, error) {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("query object must be a struct, got %s", t.Kind())
+		return values
 	}
-	err := libreflect.WalkStructFields(t, func(name string, index []int, omitEmpty bool) error {
+	_ = libreflect.WalkStructFields(t, func(name string, index []int, omitEmpty bool) error {
 		field, ok := libreflect.FieldByIndex(value, index)
 		if !ok || omitEmpty && field.IsZero() {
 			return nil
 		}
 		encoded, err := queryValueStrings(field)
 		if err != nil {
-			return fmt.Errorf("encode query field %q: %w", name, err)
+			return nil
 		}
 		for _, item := range encoded {
 			values.Add(name, item)
 		}
 		return nil
 	}, "query", "json")
-	return values, err
+	return values
 }
 
 func queryValueStrings(value reflect.Value) ([]string, error) {
