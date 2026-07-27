@@ -3,6 +3,7 @@ package httpclient
 import (
 	"bytes"
 	"context"
+	"encoding"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -243,21 +244,89 @@ func DefaultDecodeFunc(req *http.Request, resp *http.Response, into any) error {
 	}
 }
 
-func ObjectToQuery(v any) url.Values {
+func ObjectToQuery(v any) (url.Values, error) {
 	values := url.Values{}
-	libreflect.FlattenStructOmmitEmpty("", 1, true, reflect.ValueOf(v), func(name string, v reflect.Value) error {
-		if v.Kind() == reflect.Slice || v.Kind() == reflect.Struct {
-			jsondata, err := json.Marshal(v.Interface())
-			if err != nil {
-				return err
-			}
-			values.Add(name, string(jsondata))
+	value := reflect.ValueOf(v)
+	if !value.IsValid() {
+		return values, nil
+	}
+	if value.Kind() != reflect.Pointer {
+		copy := reflect.New(value.Type()).Elem()
+		copy.Set(value)
+		value = copy
+	}
+	t := value.Type()
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("query object must be a struct, got %s", t.Kind())
+	}
+	err := libreflect.WalkStructFields(t, func(name string, index []int, omitEmpty bool) error {
+		field, ok := libreflect.FieldByIndex(value, index)
+		if !ok || omitEmpty && field.IsZero() {
 			return nil
 		}
-		values.Add(name, fmt.Sprint(v.Interface()))
+		encoded, err := queryValueStrings(field)
+		if err != nil {
+			return fmt.Errorf("encode query field %q: %w", name, err)
+		}
+		for _, item := range encoded {
+			values.Add(name, item)
+		}
 		return nil
-	})
-	return values
+	}, "query", "json")
+	return values, err
+}
+
+func queryValueStrings(value reflect.Value) ([]string, error) {
+	if !value.IsValid() || value.Kind() == reflect.Pointer && value.IsNil() ||
+		value.Kind() == reflect.Interface && value.IsNil() {
+		return nil, nil
+	}
+	if value.CanInterface() {
+		if marshaler, ok := value.Interface().(encoding.TextMarshaler); ok {
+			data, err := marshaler.MarshalText()
+			return []string{string(data)}, err
+		}
+		if marshaler, ok := value.Interface().(json.Marshaler); ok {
+			data, err := marshaler.MarshalJSON()
+			return []string{string(data)}, err
+		}
+	}
+	if value.Kind() != reflect.Pointer && value.CanAddr() && value.Addr().CanInterface() {
+		if marshaler, ok := value.Addr().Interface().(encoding.TextMarshaler); ok {
+			data, err := marshaler.MarshalText()
+			return []string{string(data)}, err
+		}
+		if marshaler, ok := value.Addr().Interface().(json.Marshaler); ok {
+			data, err := marshaler.MarshalJSON()
+			return []string{string(data)}, err
+		}
+	}
+	for value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return nil, nil
+		}
+		value = value.Elem()
+	}
+	switch value.Kind() {
+	case reflect.Slice, reflect.Array:
+		result := make([]string, 0, value.Len())
+		for i := 0; i < value.Len(); i++ {
+			items, err := queryValueStrings(value.Index(i))
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, items...)
+		}
+		return result, nil
+	case reflect.Map, reflect.Struct:
+		data, err := json.Marshal(value.Interface())
+		return []string{string(data)}, err
+	default:
+		return []string{fmt.Sprint(value.Interface())}, nil
+	}
 }
 
 func StatusOnResponse(req *http.Request, resp *http.Response) error {

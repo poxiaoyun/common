@@ -19,14 +19,17 @@ import (
 	"compress/zlib"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
+	"reflect"
 
 	yaml "sigs.k8s.io/yaml/goyaml.v2"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/meta"
+	libreflect "xiaoshiai.cn/common/reflect"
 )
 
 var PageParams = []Param{
@@ -115,6 +118,42 @@ func Query[T any](r *http.Request, key string, defaultValue T) T {
 	}
 	val := cached.Get(key)
 	return ValueOrDefault(val, defaultValue)
+}
+
+// QueryObject decodes URL query parameters into a struct.
+//
+// Fields use the query tag, falling back to the json tag. Anonymous structs
+// and fields tagged with ",inline" are flattened; named structs use
+// dot-separated paths. Unknown query parameters are ignored.
+func QueryObject[T any](r *http.Request) (T, error) {
+	var result T
+	value := reflect.ValueOf(&result).Elem()
+	for value.Kind() == reflect.Pointer {
+		value.Set(reflect.New(value.Type().Elem()))
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return result, fmt.Errorf("query object must be a struct, got %s", value.Kind())
+	}
+
+	query := r.URL.Query()
+	err := libreflect.WalkStructFields(value.Type(), func(name string, index []int, _ bool) error {
+		values, ok := query[name]
+		if !ok {
+			return nil
+		}
+		if err := libreflect.SetValueAutoConvert(
+			libreflect.FieldByIndexAlloc(value, index),
+			values,
+		); err != nil {
+			return errors.NewBadRequest(fmt.Sprintf("invalid query parameter %q: %v", name, err))
+		}
+		return nil
+	}, "query", "json")
+	if err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 // nolint: forcetypeassert,gomnd,ifshort

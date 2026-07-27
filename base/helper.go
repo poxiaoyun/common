@@ -16,6 +16,9 @@ func ListOptionsToStoreListOptions(opts api.ListOptions) ([]store.ListOption, er
 	if opts.Search != "" {
 		listOpts = append(listOpts, store.WithSearch(opts.Search))
 	}
+	if opts.Continue != "" {
+		listOpts = append(listOpts, store.WithContinue(opts.Continue))
+	}
 	if opts.LabelSelector != "" {
 		labelsSelector, err := ParseLabelSelector(opts.LabelSelector)
 		if err != nil {

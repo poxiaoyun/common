@@ -1,16 +1,23 @@
-package httpclient
+package httpclient_test
 
 import (
+	"encoding/json"
+	"errors"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"testing"
+
+	"xiaoshiai.cn/common/httpclient"
+	"xiaoshiai.cn/common/meta"
+	"xiaoshiai.cn/common/rest/api"
 )
 
 type TestQeuryOption struct {
 	Foo  string `json:"foo"`
 	ABC  string `json:"abc,omitempty"`
 	Bar  string
-	Bool bool     `yaml:"bool"`
+	Bool bool     `json:"bool"`
 	Json JsonData `json:"json"`
 }
 
@@ -32,18 +39,114 @@ func TestObjectToQuery(t *testing.T) {
 				Json: JsonData{Foo: "foo"},
 			},
 			want: url.Values{
-				"foo":  []string{"foo"},
-				"Bar":  []string{"bar"},
-				"bool": []string{"true"},
-				"json": []string{"{\"foo\":\"foo\"}"},
+				"foo":      []string{"foo"},
+				"Bar":      []string{"bar"},
+				"bool":     []string{"true"},
+				"json.foo": []string{"foo"},
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ObjectToQuery(tt.args); !reflect.DeepEqual(got, tt.want) {
+			got, err := httpclient.ObjectToQuery(tt.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ObjectToQuery() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+type roundTripText string
+
+func (v *roundTripText) MarshalText() ([]byte, error) {
+	return []byte(*v), nil
+}
+
+func (v *roundTripText) UnmarshalText(data []byte) error {
+	*v = roundTripText(data)
+	return nil
+}
+
+type roundTripJSON struct {
+	Name string `json:"name"`
+}
+
+func (v *roundTripJSON) MarshalJSON() ([]byte, error) {
+	type plain roundTripJSON
+	return json.Marshal(plain(*v))
+}
+
+func (v *roundTripJSON) UnmarshalJSON(data []byte) error {
+	type plain roundTripJSON
+	return json.Unmarshal(data, (*plain)(v))
+}
+
+type roundTripFilter struct {
+	Name string `json:"name"`
+}
+
+type roundTripOptions struct {
+	meta.ListOptions
+	Filter     *roundTripFilter  `json:"filter,omitempty"`
+	Labels     []int             `json:"label,omitempty"`
+	Published  *bool             `json:"published,omitempty"`
+	Text       roundTripText     `json:"text,omitempty"`
+	Payload    roundTripJSON     `json:"payload"`
+	Raw        json.RawMessage   `json:"raw"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+	NoTag      string
+	Ignored    string `json:"-"`
+}
+
+func TestObjectToQueryRoundTrip(t *testing.T) {
+	published := false
+	input := roundTripOptions{
+		ListOptions: meta.ListOptions{Size: 20, Continue: "next-token"},
+		Filter:      &roundTripFilter{Name: "demo"},
+		Labels:      []int{1, 2},
+		Published:   &published,
+		Text:        "text",
+		Payload:     roundTripJSON{Name: "json"},
+		Raw:         json.RawMessage(`{"raw":true}`),
+		Attributes:  map[string]string{"region": "cn"},
+		NoTag:       "plain",
+	}
+
+	query, err := httpclient.ObjectToQuery(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("GET", "/?"+query.Encode(), nil)
+	output, err := api.QueryObject[roundTripOptions](request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(output, input) {
+		t.Fatalf("round trip result = %#v, want %#v; query = %s", output, input, query.Encode())
+	}
+}
+
+type failingText string
+
+func (*failingText) MarshalText() ([]byte, error) {
+	return nil, errors.New("failed")
+}
+
+func (*failingText) UnmarshalText([]byte) error {
+	return nil
+}
+
+func TestObjectToQueryReturnsFieldError(t *testing.T) {
+	input := struct {
+		Value failingText `json:"value"`
+	}{}
+	if _, err := httpclient.ObjectToQuery(input); err == nil {
+		t.Fatal("expected an error")
+	}
+	if request := httpclient.Get("/").QueriesData(input); request.R.Err == nil {
+		t.Fatal("QueriesData did not retain the query encoding error")
 	}
 }

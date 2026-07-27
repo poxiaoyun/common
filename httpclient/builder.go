@@ -72,7 +72,12 @@ func (r *Builder) Query(key, value string) *Builder {
 }
 
 func (r *Builder) QueriesData(data any) *Builder {
-	return r.Queries(ObjectToQuery(data))
+	queries, err := ObjectToQuery(data)
+	if err != nil {
+		r.R.Err = err
+		return r
+	}
+	return r.Queries(queries)
 }
 
 func (r *Builder) Queries(queries url.Values) *Builder {
