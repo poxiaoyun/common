@@ -30,7 +30,10 @@ type (
 	GetOption func(*GetOptions)
 
 	ListOptions struct {
-		Page         int
+		// Page selects the pagination model. Values greater than zero use
+		// page/size pagination; zero uses backend continuation pagination.
+		Page int
+		// Size limits the returned items. Zero returns all matching items.
 		Size         int
 		Search       string
 		SearchFields []string
@@ -49,7 +52,8 @@ type (
 		FieldRequirements Requirements
 		//  IncludeSubScopes is a flag to include resources in subscopes of current scope.
 		IncludeSubScopes bool
-		Continue         string
+		// Continue is the opaque token returned by a previous list request.
+		Continue string
 		// Fields is a list of fields to return.  If empty, all fields are returned.
 		Fields []string
 	}

@@ -15,7 +15,7 @@ func TestEtcdStore_Watch(t *testing.T) {
 	etcdStore := SetupEtcdTestEtcdStore(t)
 
 	obj := &TestObject{
-		ObjectMeta: store.ObjectMeta{Name: "test", Resource: "test"},
+		ObjectMeta: store.ObjectMeta{ID: "test", Name: "test", Resource: "test"},
 		Spec:       TestObjectSpec{Replicas: ptr.To(int32(1))},
 	}
 	if err := etcdStore.Create(ctx, obj); err != nil {
@@ -23,14 +23,14 @@ func TestEtcdStore_Watch(t *testing.T) {
 	}
 
 	obj2 := &TestObject{
-		ObjectMeta: store.ObjectMeta{Name: "test2", Resource: "test"},
+		ObjectMeta: store.ObjectMeta{ID: "test2", Name: "test2", Resource: "test"},
 		Spec:       TestObjectSpec{Replicas: ptr.To(int32(1))},
 	}
 	if err := etcdStore.Create(ctx, obj2); err != nil {
 		t.Fatalf("failed to create object: %v", err)
 	}
 
-	w, err := etcdStore.Watch(ctx, &store.List[*TestObject]{Resource: "test"}, store.WithSendInitialEvents())
+	w, err := etcdStore.Watch(ctx, &store.List[TestObject]{}, store.WithSendInitialEvents())
 	if err != nil {
 		t.Fatalf("failed to create watcher: %v", err)
 	}

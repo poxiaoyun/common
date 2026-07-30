@@ -318,54 +318,97 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 	if err != nil {
 		return err
 	}
+	continueMode := options.Page == 0 || options.Continue != ""
 	v, newItemFunc, err := store.NewItemFuncFromList(list)
 	if err != nil {
 		return err
 	}
+	v.SetZero()
 	return c.core.on(ctx, list, func(ctx context.Context, db *db) error {
 		keyprefix := getlistkey(c.scopes, db.resource.String())
-		listopts := storage.ListOptions{
-			Recursive:       true,
-			Predicate:       preficate,
-			ResourceVersion: formatResourceVersion(options.ResourceVersion),
-		}
-		unslist := &StorageObjectList{}
-		const MaxRetry = 3
-		for retries := 0; ; retries++ {
-			if err := db.storage.GetList(ctx, keyprefix, listopts, unslist); err != nil {
-				// is retryable
-				if retries < MaxRetry && apierrors.IsTooManyRequests(err) {
-					if delay, ok := apierrors.SuggestsClientDelay(err); ok {
-						time.Sleep(time.Duration(delay) * time.Second)
-						continue
+		getList := func(predicate storage.SelectionPredicate) (*StorageObjectList, error) {
+			listopts := storage.ListOptions{
+				Recursive:       true,
+				Predicate:       predicate,
+				ResourceVersion: formatResourceVersion(options.ResourceVersion),
+			}
+			unslist := &StorageObjectList{}
+			const MaxRetry = 3
+			for retries := 0; ; retries++ {
+				if err := db.storage.GetList(ctx, keyprefix, listopts, unslist); err != nil {
+					if retries < MaxRetry && apierrors.IsTooManyRequests(err) {
+						if delay, ok := apierrors.SuggestsClientDelay(err); ok {
+							time.Sleep(time.Duration(delay) * time.Second)
+							continue
+						}
 					}
+					return nil, storeerr.InterpretListError(err, db.resource)
 				}
-				err = storeerr.InterpretListError(err, db.resource)
-				return err
-			} else {
-				break
+				return unslist, nil
 			}
 		}
-		// filter
-		filtered := unslist.Items
-		// scopes
-		if !options.IncludeSubScopes {
-			filtered = FilterByScopes(filtered, c.scopes)
+
+		filter := func(items []StorageObject) []StorageObject {
+			filtered := items
+			if !options.IncludeSubScopes {
+				filtered = FilterByScopes(filtered, c.scopes)
+			}
+			if options.Search != "" {
+				filtered = slices.DeleteFunc(filtered, func(uns StorageObject) bool {
+					if len(options.SearchFields) == 0 {
+						options.SearchFields = []string{"id", "name"}
+					}
+					return !searchObject(&uns, options.SearchFields, options.Search)
+				})
+			}
+			return filtered
 		}
-		// search
-		if options.Search != "" {
-			filtered = slices.DeleteFunc(filtered, func(uns StorageObject) bool {
-				if len(options.SearchFields) == 0 {
-					options.SearchFields = []string{"id", "name"}
+
+		var (
+			filtered        []StorageObject
+			continueToken   string
+			resourceVersion int64
+		)
+		if continueMode {
+			continueToken = options.Continue
+			for {
+				predicate := preficate
+				predicate.Continue = continueToken
+				if options.Size > 0 {
+					predicate.Limit = int64(options.Size - len(filtered))
+				} else {
+					predicate.Limit = 0
 				}
-				return !searchObject(&uns, options.SearchFields, options.Search)
-			})
+				unslist, err := getList(predicate)
+				if err != nil {
+					return err
+				}
+				filtered = append(filtered, filter(unslist.Items)...)
+				continueToken = unslist.GetContinue()
+				resourceVersion = unslist.GetResourceVersion()
+				if options.Size <= 0 || continueToken == "" || len(filtered) >= options.Size {
+					break
+				}
+			}
+		} else {
+			unslist, err := getList(preficate)
+			if err != nil {
+				return err
+			}
+			filtered = filter(unslist.Items)
+			resourceVersion = unslist.GetResourceVersion()
+			SortUnstructuredList(filtered, store.ParseSorts(options.Sort))
 		}
-		// sort
-		SortUnstructuredList(filtered, store.ParseSorts(options.Sort))
+
 		// pagination
 		total := len(filtered)
-		filtered = PageUnstructuredList(filtered, options.Page, options.Size)
+		if continueMode {
+			// Native continuation pagination cannot reliably report the complete
+			// number of matching objects without an additional full scan.
+			total = 0
+		} else {
+			filtered = PageUnstructuredList(filtered, options.Page, options.Size)
+		}
 
 		// convert to result
 		for _, uns := range filtered {
@@ -378,7 +421,8 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 		list.SetPage(options.Page)
 		list.SetSize(options.Size)
 		list.SetTotal(total)
-		list.SetResourceVersion(unslist.GetResourceVersion())
+		list.SetResourceVersion(resourceVersion)
+		list.SetContinue(continueToken)
 		list.SetScopes(c.scopes)
 		list.SetResource(db.resource.String())
 		return nil
@@ -837,7 +881,7 @@ func FilterByScopes(list []StorageObject, scopes []store.Scope) []StorageObject 
 }
 
 func PageUnstructuredList(list []StorageObject, page, size int) []StorageObject {
-	if page == 0 && size == 0 {
+	if size <= 0 {
 		return list
 	}
 	if page == 0 {

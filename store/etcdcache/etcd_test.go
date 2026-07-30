@@ -98,6 +98,189 @@ func TestRunResourceCache(t *testing.T) {
 	}
 }
 
+func TestListContinue(t *testing.T) {
+	cli := testserver.RunEtcd(t, nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
+	if err != nil {
+		t.Fatalf("Failed to create etcd cacher: %v", err)
+	}
+	ctx := context.Background()
+
+	const objectCount = 7
+	for i := range objectCount {
+		obj := &MyObject{
+			ObjectMeta: store.ObjectMeta{
+				ID:   fmt.Sprintf("continue-%02d", i),
+				Name: fmt.Sprintf("continue-%02d", i),
+			},
+		}
+		if err := s.Create(ctx, obj); err != nil {
+			t.Fatalf("Failed to create object %d: %v", i, err)
+		}
+	}
+
+	got := make(map[string]struct{}, objectCount)
+	continueToken := ""
+	list := &store.List[MyObject]{}
+	for page := 0; ; page++ {
+		if err := s.List(ctx, list,
+			store.WithPageSize(0, 3),
+			store.WithContinue(continueToken),
+		); err != nil {
+			t.Fatalf("Failed to list page %d: %v", page, err)
+		}
+		if len(list.Items) == 0 {
+			t.Fatalf("Page %d is unexpectedly empty", page)
+		}
+		if len(list.Items) > 3 {
+			t.Fatalf("Page %d returned %d items, want at most 3", page, len(list.Items))
+		}
+		if list.Total != 0 {
+			t.Fatalf("Page %d total is %d, want 0 for continuation pagination", page, list.Total)
+		}
+		for _, item := range list.Items {
+			if _, exists := got[item.ID]; exists {
+				t.Fatalf("Item %q was returned more than once", item.ID)
+			}
+			got[item.ID] = struct{}{}
+		}
+		if list.Continue == "" {
+			break
+		}
+		if list.Continue == continueToken {
+			t.Fatalf("Page %d returned the same continue token", page)
+		}
+		continueToken = list.Continue
+	}
+	if len(got) != objectCount {
+		t.Fatalf("Pagination returned %d unique items, want %d", len(got), objectCount)
+	}
+	for i := range objectCount {
+		id := fmt.Sprintf("continue-%02d", i)
+		if _, exists := got[id]; !exists {
+			t.Errorf("Pagination omitted item %q", id)
+		}
+	}
+}
+
+func TestListContinueFillsLocallyFilteredPages(t *testing.T) {
+	cli := testserver.RunEtcd(t, nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
+	if err != nil {
+		t.Fatalf("Failed to create etcd cacher: %v", err)
+	}
+	ctx := context.Background()
+
+	for _, id := range []string{
+		"aaa-skip-00",
+		"aaa-skip-01",
+		"zzz-match-00",
+		"zzz-match-01",
+		"zzz-match-02",
+	} {
+		if err := s.Create(ctx, &MyObject{
+			ObjectMeta: store.ObjectMeta{ID: id, Name: id},
+		}); err != nil {
+			t.Fatalf("Failed to create object %q: %v", id, err)
+		}
+	}
+
+	list := &store.List[MyObject]{}
+	if err := s.List(ctx, list,
+		store.WithPageSize(0, 2),
+		store.WithSearch("match"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 2 || list.Continue == "" {
+		t.Fatalf("first filtered page = %#v, continue = %q", list.Items, list.Continue)
+	}
+	firstContinue := list.Continue
+
+	if err := s.List(ctx, list,
+		store.WithPageSize(0, 2),
+		store.WithContinue(firstContinue),
+		store.WithSearch("match"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 || list.Items[0].ID != "zzz-match-02" || list.Continue != "" {
+		t.Fatalf("second filtered page = %#v, continue = %q", list.Items, list.Continue)
+	}
+}
+
+func TestListWithoutSizeReturnsAllItems(t *testing.T) {
+	cli := testserver.RunEtcd(t, nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
+	if err != nil {
+		t.Fatalf("Failed to create etcd cacher: %v", err)
+	}
+	ctx := context.Background()
+
+	const objectCount = 5
+	for i := range objectCount {
+		obj := &MyObject{
+			ObjectMeta: store.ObjectMeta{
+				ID:   fmt.Sprintf("all-%02d", i),
+				Name: fmt.Sprintf("all-%02d", i),
+			},
+		}
+		if err := s.Create(ctx, obj); err != nil {
+			t.Fatalf("Failed to create object %d: %v", i, err)
+		}
+	}
+
+	list := &store.List[MyObject]{}
+	if err := s.List(ctx, list); err != nil {
+		t.Fatalf("Failed to list all objects: %v", err)
+	}
+	if len(list.Items) != objectCount {
+		t.Fatalf("List returned %d items, want %d", len(list.Items), objectCount)
+	}
+	if list.Continue != "" {
+		t.Fatalf("Unpaginated list returned continue token %q", list.Continue)
+	}
+	if list.Total != 0 {
+		t.Fatalf("Unpaginated continuation list total is %d, want 0", list.Total)
+	}
+}
+
+func TestListPageUsesLocalPagination(t *testing.T) {
+	cli := testserver.RunEtcd(t, nil)
+	s, err := NewEtcdCacherFromClient(context.Background(), cli, store.NewSchema(), "/test")
+	if err != nil {
+		t.Fatalf("Failed to create etcd cacher: %v", err)
+	}
+	ctx := context.Background()
+
+	const objectCount = 5
+	for i := range objectCount {
+		obj := &MyObject{
+			ObjectMeta: store.ObjectMeta{
+				ID:   fmt.Sprintf("legacy-%02d", i),
+				Name: fmt.Sprintf("legacy-%02d", i),
+			},
+		}
+		if err := s.Create(ctx, obj); err != nil {
+			t.Fatalf("Failed to create object %d: %v", i, err)
+		}
+	}
+
+	list := &store.List[MyObject]{}
+	if err := s.List(ctx, list, store.WithPageSize(1, 2)); err != nil {
+		t.Fatalf("Failed to list page: %v", err)
+	}
+	if len(list.Items) != 2 {
+		t.Fatalf("Page returned %d items, want 2", len(list.Items))
+	}
+	if list.Total != objectCount {
+		t.Fatalf("Page total is %d, want %d", list.Total, objectCount)
+	}
+	if list.Continue != "" {
+		t.Fatalf("Page returned continue token %q", list.Continue)
+	}
+}
+
 // TestListPreExistingData reproduces the bug where GetList returns incomplete data
 // after upgrading to k8s apiserver v0.35.
 //

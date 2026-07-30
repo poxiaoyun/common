@@ -2,6 +2,7 @@ package etcd
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -18,7 +19,7 @@ func SetupEtcdTestEtcdStore(t *testing.T) store.Store {
 }
 
 type TestObject struct {
-	store.ObjectMeta `json:"metadata,omitempty"`
+	store.ObjectMeta `json:",inline"`
 	Spec             TestObjectSpec   `json:"spec,omitempty"`
 	Status           TestObjectStatus `json:"status,omitempty"`
 }
@@ -32,12 +33,154 @@ type TestObjectStatus struct {
 	Current int32  `json:"current,omitempty"`
 }
 
+func TestListContinue(t *testing.T) {
+	ctx := context.Background()
+	etcdStore := SetupEtcdTestEtcdStore(t)
+
+	const objectCount = 7
+	for i := range objectCount {
+		obj := &TestObject{
+			ObjectMeta: store.ObjectMeta{
+				ID:   fmt.Sprintf("continue-%02d", i),
+				Name: fmt.Sprintf("continue-%02d", i),
+			},
+		}
+		if err := etcdStore.Create(ctx, obj); err != nil {
+			t.Fatalf("failed to create object %d: %v", i, err)
+		}
+	}
+
+	got := make(map[string]struct{}, objectCount)
+	continueToken := ""
+	for page := 0; ; page++ {
+		list := &store.List[TestObject]{}
+		if err := etcdStore.List(ctx, list,
+			store.WithPageSize(0, 3),
+			store.WithContinue(continueToken),
+		); err != nil {
+			t.Fatalf("failed to list page %d: %v", page, err)
+		}
+		if len(list.Items) == 0 {
+			t.Fatalf("page %d is unexpectedly empty", page)
+		}
+		if len(list.Items) > 3 {
+			t.Fatalf("page %d returned %d items, want at most 3", page, len(list.Items))
+		}
+		if list.Total != 0 {
+			t.Fatalf("page %d total is %d, want 0 for continuation pagination", page, list.Total)
+		}
+		for _, item := range list.Items {
+			if _, exists := got[item.ID]; exists {
+				t.Fatalf("item %q was returned more than once", item.ID)
+			}
+			got[item.ID] = struct{}{}
+		}
+		if list.Continue == "" {
+			break
+		}
+		if page == 0 {
+			obj := &TestObject{
+				ObjectMeta: store.ObjectMeta{
+					ID:   "continue-025",
+					Name: "continue-025",
+				},
+			}
+			if err := etcdStore.Create(ctx, obj); err != nil {
+				t.Fatalf("failed to create object between pages: %v", err)
+			}
+		}
+		if list.Continue == continueToken {
+			t.Fatalf("page %d returned the same continue token", page)
+		}
+		continueToken = list.Continue
+	}
+	if len(got) != objectCount {
+		t.Fatalf("pagination returned %d unique items, want %d", len(got), objectCount)
+	}
+	for i := range objectCount {
+		id := fmt.Sprintf("continue-%02d", i)
+		if _, exists := got[id]; !exists {
+			t.Errorf("pagination omitted item %q", id)
+		}
+	}
+}
+
+func TestListPagePagination(t *testing.T) {
+	ctx := context.Background()
+	etcdStore := SetupEtcdTestEtcdStore(t)
+
+	for i := range 5 {
+		obj := &TestObject{
+			ObjectMeta: store.ObjectMeta{
+				ID:   fmt.Sprintf("legacy-%02d", i),
+				Name: fmt.Sprintf("legacy-%02d", i),
+			},
+		}
+		if err := etcdStore.Create(ctx, obj); err != nil {
+			t.Fatalf("failed to create object %d: %v", i, err)
+		}
+	}
+
+	first := &store.List[TestObject]{}
+	if err := etcdStore.List(ctx, first, store.WithPageSize(1, 2)); err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 2 || first.Total != 5 || first.Continue != "" {
+		t.Fatalf("first page = %#v", first)
+	}
+
+	second := &store.List[TestObject]{}
+	if err := etcdStore.List(ctx, second, store.WithPageSize(2, 2)); err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 2 ||
+		second.Items[0].ID != "legacy-02" ||
+		second.Items[1].ID != "legacy-03" ||
+		second.Total != 5 ||
+		second.Continue != "" {
+		t.Fatalf("second page = %#v", second)
+	}
+}
+
+func TestListWithoutSizeReturnsAllItems(t *testing.T) {
+	ctx := context.Background()
+	etcdStore := SetupEtcdTestEtcdStore(t)
+
+	const objectCount = 5
+	for i := range objectCount {
+		obj := &TestObject{
+			ObjectMeta: store.ObjectMeta{
+				ID:   fmt.Sprintf("all-%02d", i),
+				Name: fmt.Sprintf("all-%02d", i),
+			},
+		}
+		if err := etcdStore.Create(ctx, obj); err != nil {
+			t.Fatalf("failed to create object %d: %v", i, err)
+		}
+	}
+
+	list := &store.List[TestObject]{}
+	if err := etcdStore.List(ctx, list); err != nil {
+		t.Fatalf("failed to list all objects: %v", err)
+	}
+	if len(list.Items) != objectCount {
+		t.Fatalf("list returned %d items, want %d", len(list.Items), objectCount)
+	}
+	if list.Continue != "" {
+		t.Fatalf("unpaginated list returned continue token %q", list.Continue)
+	}
+	if list.Total != 0 {
+		t.Fatalf("unpaginated continuation list total is %d, want 0", list.Total)
+	}
+}
+
 func TestCacheStore_Get(t *testing.T) {
 	ctx := context.Background()
 	etcdStore := SetupEtcdTestEtcdStore(t)
 
 	obj := &TestObject{
 		ObjectMeta: store.ObjectMeta{
+			ID:       "test",
 			Name:     "test",
 			Resource: "test",
 		},
@@ -55,11 +198,11 @@ func TestCacheStore_Get(t *testing.T) {
 	if err := namespaceedStore.Create(ctx, obj); err != nil {
 		t.Fatalf("failed to create object: %v", err)
 	}
-	exists := &TestObject{ObjectMeta: store.ObjectMeta{Resource: "test"}}
+	exists := &TestObject{ObjectMeta: store.ObjectMeta{ID: "test", Resource: "test"}}
 	if err := namespaceedStore.Get(ctx, "test", exists); err != nil {
 		t.Fatalf("failed to get object: %v", err)
 	}
-	if reflect.DeepEqual(obj, exists) {
+	if !reflect.DeepEqual(obj, exists) {
 		t.Fatalf("expected %v, got %v", obj, exists)
 	}
 

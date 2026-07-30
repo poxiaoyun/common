@@ -16,6 +16,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"google.golang.org/grpc"
+	k8sstorage "k8s.io/apiserver/pkg/storage"
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
@@ -331,41 +332,50 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 		return err
 	}
 	preparedKey := e.core.getlistkey(e.scopes, resource)
-
-	getoptions := make([]clientv3.OpOption, 0, 2)
 	rangeEnd := clientv3.GetPrefixRangeEnd(preparedKey)
-	getoptions = append(getoptions, clientv3.WithRange(rangeEnd))
-
+	continueMode := options.Page == 0 || options.Continue != ""
+	startKey := preparedKey
 	withRev := options.ResourceVersion
-	if withRev != nil {
-		getoptions = append(getoptions, clientv3.WithRev(*withRev))
+	if continueMode && options.Continue != "" {
+		continueKey, continueRevision, err := k8sstorage.DecodeContinue(options.Continue, preparedKey)
+		if err != nil {
+			return errors.NewBadRequest(fmt.Sprintf("invalid continue token: %v", err))
+		}
+		startKey = continueKey
+		withRev = ptr.To(continueRevision)
 	}
-	limit := options.Size
-	skip := 0
-	if options.Page-1 > 0 && limit > 0 {
-		skip = options.Page * limit
-	}
+
 	// clean existing items
 	v.SetZero()
+	var lastKey []byte
+	hasMore := false
 	for {
-		if limit > 0 {
-			// we want to fetch skip + limit items to skip the first `skip` items
-			getoptions = append(getoptions, clientv3.WithLimit(int64(limit+skip)))
+		getoptions := []clientv3.OpOption{clientv3.WithRange(rangeEnd)}
+		if withRev != nil {
+			getoptions = append(getoptions, clientv3.WithRev(*withRev))
 		}
-		getResp, err := e.core.client.KV.Get(ctx, preparedKey, getoptions...)
+		if continueMode && options.Size > 0 {
+			remaining := options.Size - v.Len()
+			if remaining <= 0 {
+				hasMore = true
+				break
+			}
+			getoptions = append(getoptions, clientv3.WithLimit(int64(remaining)))
+		}
+		getResp, err := e.core.client.KV.Get(ctx, startKey, getoptions...)
 		if err != nil {
-			return interpretListError(list.GetResource(), err)
+			return interpretListError(resource, err)
 		}
-		hasMore := getResp.More
+		hasMore = getResp.More
 		if len(getResp.Kvs) == 0 && hasMore {
 			return errors.NewInternalError(fmt.Errorf("etcd returned no keys but more is true"))
 		}
-		if withRev == nil {
+		if withRev == nil || *withRev == 0 {
 			withRev = ptr.To(getResp.Header.Revision)
-			getoptions = append(getoptions, clientv3.WithRev(*withRev))
 		}
 		store.GrowSlice(v, len(getResp.Kvs))
 		for _, kv := range getResp.Kvs {
+			lastKey = kv.Key
 			// has subresources
 			if !options.IncludeSubScopes {
 				if index := bytes.Index(kv.Key[len(preparedKey):], []byte("/")); index != -1 {
@@ -378,10 +388,6 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 				// parent context is canceled or timed out, no point in continuing
 				return errors.NewBadRequest("request timeout")
 			default:
-			}
-			if skip > 0 {
-				skip--
-				continue
 			}
 			obj := newItemFunc()
 			if err := e.core.serializer.Decode(kv.Value, obj); err != nil {
@@ -397,19 +403,56 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 				v.Set(reflect.Append(v, reflect.ValueOf(obj).Elem()))
 			}
 		}
-		if !hasMore || limit == 0 {
+		if !hasMore || !continueMode || options.Size == 0 {
 			break
 		}
-		if limit > 0 && v.Len() >= limit {
+		if v.Len() >= options.Size {
 			break
+		}
+		startKey = string(lastKey) + "\x00"
+	}
+
+	total := v.Len()
+	if continueMode {
+		// Native continuation pagination cannot reliably report the complete
+		// number of matching objects without an additional full scan.
+		total = 0
+	} else {
+		if options.Size > 0 {
+			page := options.Page
+			if page == 0 {
+				page = 1
+			}
+			start := (page - 1) * options.Size
+			end := start + options.Size
+			if start >= total {
+				v.Set(reflect.MakeSlice(v.Type(), 0, 0))
+			} else {
+				if end > total {
+					end = total
+				}
+				v.Set(v.Slice(start, end))
+			}
 		}
 	}
 	if v.IsNil() {
 		// Ensure that we never return a nil Items pointer in the result for consistency.
 		v.Set(reflect.MakeSlice(v.Type(), 0, 0))
 	}
+	continueToken := ""
+	if continueMode && hasMore {
+		continueToken, err = k8sstorage.EncodeContinue(string(lastKey)+"\x00", preparedKey, ptr.Deref(withRev, 0))
+		if err != nil {
+			return errors.NewInternalError(err)
+		}
+	}
+	list.SetPage(options.Page)
+	list.SetSize(options.Size)
+	list.SetTotal(total)
+	list.SetContinue(continueToken)
 	list.SetResourceVersion(ptr.Deref(withRev, 0))
 	list.SetScopes(e.scopes)
+	list.SetResource(resource)
 	return nil
 }
 
