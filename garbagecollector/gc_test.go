@@ -2,6 +2,7 @@ package garbagecollector_test
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 	"time"
 
@@ -13,13 +14,17 @@ import (
 )
 
 func TestNewChildrenGarbageCollector(t *testing.T) {
-	ctx := context.Background()
+	ctx, rootCancel := context.WithCancel(context.Background())
 
 	etcdstorage, err := etcdcache.NewEtcdCacherFromClient(ctx, testserver.RunEtcd(t, nil), store.NewSchema(), "/test")
 	if err != nil {
 		t.Fatalf("Failed to create etcd cacher: %v", err)
 		return
 	}
+	t.Cleanup(func() {
+		rootCancel()
+		etcdstorage.Close()
+	})
 
 	resources := []string{
 		"zoos",
@@ -36,11 +41,16 @@ func TestNewChildrenGarbageCollector(t *testing.T) {
 		t.Fatalf("Failed to create children garbage collector: %v", err)
 		return
 	}
+	runDone := make(chan error, 1)
 	go func() {
-		if err := cgc.Run(ctx); err != nil {
-			panic(err)
-		}
+		runDone <- cgc.Run(ctx)
 	}()
+	t.Cleanup(func() {
+		rootCancel()
+		if err := <-runDone; err != nil && !stderrors.Is(err, context.Canceled) {
+			t.Errorf("garbage collector stopped: %v", err)
+		}
+	})
 
 	time.Sleep(1 * time.Second)
 
@@ -115,7 +125,13 @@ func TestNewChildrenGarbageCollector(t *testing.T) {
 func objfrom(meta store.ObjectMeta) *store.Unstructured {
 	uns := store.Unstructured{}
 	uns.SetResource(meta.Resource)
+	if meta.ID != "" {
+		uns.SetID(meta.ID)
+	} else {
+		uns.SetID(meta.Name)
+	}
 	uns.SetName(meta.Name)
+	uns.SetScopes(meta.Scopes)
 	return &uns
 }
 
@@ -128,6 +144,7 @@ func setParentScopeReferences(ctx context.Context, root store.Store, obj *store.
 
 	parent := &store.Unstructured{}
 	parent.SetResource(last.Resource)
+	parent.SetID(last.Name)
 	if err := root.Scope(parentscopes...).Get(ctx, parent.GetID(), parent); err != nil {
 		panic(err)
 	}
