@@ -245,10 +245,9 @@ func (g *cacheStoreCore) resource(resource string) *cachedResource {
 }
 
 type cachedResource struct {
-	resource  string
-	lock      sync.RWMutex
-	initlized bool
-	kvs       *threadsafeReversionMap
+	resource    string
+	initialized atomic.Bool
+	kvs         *threadsafeReversionMap
 
 	watcherIndex atomic.Int64
 	watcherLock  sync.RWMutex
@@ -309,12 +308,12 @@ func (e *cachedResource) getkey(scopes []store.Scope, name string) string {
 }
 
 func (c *cachedResource) waitSync(ctx context.Context) error {
-	if c.initlized {
+	if c.initialized.Load() {
 		return nil
 	}
 	interval := 500 * time.Millisecond
 	for {
-		if c.initlized {
+		if c.initialized.Load() {
 			return nil
 		}
 		select {
@@ -368,9 +367,7 @@ func (c *cachedResource) sync(ctx context.Context, s store.Store) error {
 				if !firstbookmark {
 					firstbookmark = true
 					log.Info("cache resource synced", "resource", c.resource)
-					if !c.initlized {
-						c.initlized = true
-					}
+					c.initialized.Store(true)
 				}
 				continue
 			}

@@ -25,9 +25,13 @@ func SetupEtcdTestEtcdStore(t *testing.T) (context.Context, store.Store, func() 
 }
 
 type TestObject struct {
-	store.ObjectMeta `json:"metadata,omitempty"`
+	store.ObjectMeta `json:",inline"`
 	Spec             TestObjectSpec   `json:"spec,omitempty"`
 	Status           TestObjectStatus `json:"status,omitempty"`
+}
+
+func (*TestObject) ResourceName() string {
+	return "testobjects"
 }
 
 type TestObjectSpec struct {
@@ -43,9 +47,9 @@ func TestCacheStore_Create(t *testing.T) {
 	ctx, etcdStore, cleanup := SetupEtcdTestEtcdStore(t)
 	defer cleanup()
 
-	testobj1 := &TestObject{ObjectMeta: store.ObjectMeta{Name: "test1", Resource: "test"}, Spec: TestObjectSpec{Replicas: ptr.To(int32(1))}}
-	testobj2 := &TestObject{ObjectMeta: store.ObjectMeta{Name: "test2", Resource: "test"}, Spec: TestObjectSpec{Replicas: ptr.To(int32(1))}}
-	testobj3 := &TestObject{ObjectMeta: store.ObjectMeta{Name: "test3", Resource: "test"}, Spec: TestObjectSpec{Replicas: ptr.To(int32(1))}}
+	testobj1 := &TestObject{ObjectMeta: store.ObjectMeta{ID: "test1", Name: "test1"}, Spec: TestObjectSpec{Replicas: ptr.To(int32(1))}}
+	testobj2 := &TestObject{ObjectMeta: store.ObjectMeta{ID: "test2", Name: "test2"}, Spec: TestObjectSpec{Replicas: ptr.To(int32(1))}}
+	testobj3 := &TestObject{ObjectMeta: store.ObjectMeta{ID: "test3", Name: "test3"}, Spec: TestObjectSpec{Replicas: ptr.To(int32(1))}}
 
 	objlist := []store.Object{testobj1, testobj2, testobj3}
 	for _, obj := range objlist {
@@ -55,11 +59,11 @@ func TestCacheStore_Create(t *testing.T) {
 	}
 
 	cacheStore := NewCacheStore(etcdStore)
-	testobj1 = &TestObject{ObjectMeta: store.ObjectMeta{Resource: "test"}}
+	testobj1 = &TestObject{}
 	if err := cacheStore.Get(ctx, "test1", testobj1); err != nil {
 		t.Fatalf("failed to get object: %v", err)
 	}
-	list := &store.List[*TestObject]{Resource: "test"}
+	list := &store.List[TestObject]{}
 	if err := cacheStore.List(ctx, list); err != nil {
 		t.Fatalf("failed to list objects: %v", err)
 	}

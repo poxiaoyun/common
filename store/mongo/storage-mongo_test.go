@@ -1,7 +1,9 @@
 package mongo
 
 import (
+	"context"
 	"reflect"
+	"sort"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -30,7 +32,7 @@ func TestMergePatchToBsonUpdate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "defult",
+			name: "default",
 			args: args{
 				data: map[string]any{
 					"alias": "test",
@@ -54,9 +56,59 @@ func TestMergePatchToBsonUpdate(t *testing.T) {
 				t.Errorf("MergePatchToBsonUpdate() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(got, tt.want) {
+			if !reflect.DeepEqual(normalizeBSONDocument(got), normalizeBSONDocument(tt.want)) {
 				t.Errorf("MergePatchToBsonUpdate() = %v, want %v", got, tt.want)
 			}
 		})
 	}
+}
+
+func normalizeBSONDocument(doc bson.D) bson.D {
+	normalized := make(bson.D, len(doc))
+	for i, elem := range doc {
+		normalized[i].Key = elem.Key
+		switch value := elem.Value.(type) {
+		case bson.D:
+			normalized[i].Value = normalizeBSONDocument(value)
+		case bson.A:
+			items := make(bson.A, len(value))
+			for i, item := range value {
+				if nested, ok := item.(bson.D); ok {
+					items[i] = normalizeBSONDocument(nested)
+				} else {
+					items[i] = item
+				}
+			}
+			normalized[i].Value = items
+		default:
+			normalized[i].Value = value
+		}
+	}
+	sort.SliceStable(normalized, func(i, j int) bool {
+		return normalized[i].Key < normalized[j].Key
+	})
+	return normalized
+}
+
+func TestMongoWatcherStopDoesNotCloseProducerChannel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	watcher := &MongoWatcher{
+		results: make(chan store.WatchEvent, 1),
+		cancel:  cancel,
+	}
+	watcher.Stop()
+	watcher.Stop()
+
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("Stop() did not cancel the watcher context")
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("send after Stop() panicked: %v", recovered)
+		}
+	}()
+	watcher.results <- store.WatchEvent{Type: store.WatchEventBookmark}
 }

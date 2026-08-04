@@ -72,16 +72,18 @@ func NewMongoWatcher(ctx context.Context,
 	opts store.WatchOptions,
 	filter bson.D,
 ) (*MongoWatcher, error) {
+	watchCtx, cancel := context.WithCancel(ctx)
 	var cur *mongo.Cursor
 	if opts.SendInitialEvents {
-		log.FromContext(ctx).Info("send initial events", "filter", filter)
-		newcur, err := col.Find(ctx, filter)
+		log.FromContext(watchCtx).Info("send initial events", "filter", filter)
+		newcur, err := col.Find(watchCtx, filter)
 		if err != nil {
+			cancel()
 			return nil, err
 		}
 		cur = newcur
 	}
-	stream, err := col.Watch(ctx,
+	stream, err := col.Watch(watchCtx,
 		mongo.Pipeline{
 			bson.D{{Key: "$match", Value: toWatchFilter(filter)}},
 		},
@@ -92,6 +94,10 @@ func NewMongoWatcher(ctx context.Context,
 			SetFullDocumentBeforeChange(mongooptions.WhenAvailable),
 	)
 	if err != nil {
+		if cur != nil {
+			_ = cur.Close(watchCtx)
+		}
+		cancel()
 		return nil, errors.NewInternalError(err)
 	}
 	w := &MongoWatcher{
@@ -99,10 +105,10 @@ func NewMongoWatcher(ctx context.Context,
 		bsonRegistry:  bsonRegistry,
 		bsonOptions:   bsonOptions,
 		newObjectFunc: newobj,
-		closed:        false,
 		results:       make(chan store.WatchEvent, 64),
+		cancel:        cancel,
 	}
-	go w.run(ctx, cur, stream)
+	go w.run(watchCtx, cur, stream)
 	return w, nil
 }
 
@@ -110,10 +116,10 @@ type MongoWatcher struct {
 	col           *mongo.Collection
 	bsonRegistry  *bsoncodec.Registry
 	bsonOptions   *mongooptions.BSONOptions
-	closed        bool
 	newObjectFunc func() store.Object
 	results       chan store.WatchEvent
 	dropOnFull    bool
+	cancel        context.CancelFunc
 }
 
 // Event implements Watcher.
@@ -129,19 +135,27 @@ func (w *MongoWatcher) runlist(ctx context.Context, cur *mongo.Cursor) error {
 			return errors.NewInternalError(err)
 		}
 		item.SetResource(w.col.Name())
-		w.send(store.WatchEvent{Type: store.WatchEventCreate, Object: item})
+		if !w.send(ctx, store.WatchEvent{Type: store.WatchEventCreate, Object: item}) {
+			return ctx.Err()
+		}
 	}
 	if err := cur.Err(); err != nil {
 		return errors.NewInternalError(err)
 	}
-	w.send(store.WatchEvent{Type: store.WatchEventBookmark})
+	if !w.send(ctx, store.WatchEvent{Type: store.WatchEventBookmark}) {
+		return ctx.Err()
+	}
 	return nil
 }
 
 func (w *MongoWatcher) run(ctx context.Context, cur *mongo.Cursor, stream *mongo.ChangeStream) {
+	defer close(w.results)
+	defer w.Stop()
 	if cur != nil {
 		if err := w.runlist(ctx, cur); err != nil {
-			w.results <- store.WatchEvent{Error: err}
+			if !stderrors.Is(err, context.Canceled) {
+				w.send(ctx, store.WatchEvent{Error: err})
+			}
 			return
 		}
 	}
@@ -160,7 +174,7 @@ func (w *MongoWatcher) run(ctx context.Context, cur *mongo.Cursor, stream *mongo
 		default:
 			raw := rawMongoEvent{}
 			if err := stream.Decode(&raw); err != nil {
-				w.results <- store.WatchEvent{Error: errors.NewInternalError(err)}
+				w.send(ctx, store.WatchEvent{Error: errors.NewInternalError(err)})
 				return
 			}
 			event := store.WatchEvent{}
@@ -169,7 +183,7 @@ func (w *MongoWatcher) run(ctx context.Context, cur *mongo.Cursor, stream *mongo
 			if olddoc := raw.FullDocumentBeforeChange; len(olddoc) > 0 {
 				old = w.newObjectFunc()
 				if err := bsonUnmarshal(w.bsonRegistry, olddoc, old); err != nil {
-					w.send(store.WatchEvent{Error: errors.NewInternalError(err)})
+					w.send(ctx, store.WatchEvent{Error: errors.NewInternalError(err)})
 					return
 				}
 				old.SetResource(w.col.Name())
@@ -177,7 +191,7 @@ func (w *MongoWatcher) run(ctx context.Context, cur *mongo.Cursor, stream *mongo
 			if newdoc := raw.FullDocument; len(newdoc) > 0 {
 				new = w.newObjectFunc()
 				if err := bsonUnmarshal(w.bsonRegistry, newdoc, new); err != nil {
-					w.send(store.WatchEvent{Error: errors.NewInternalError(err)})
+					w.send(ctx, store.WatchEvent{Error: errors.NewInternalError(err)})
 					return
 				}
 				new.SetResource(w.col.Name())
@@ -193,14 +207,16 @@ func (w *MongoWatcher) run(ctx context.Context, cur *mongo.Cursor, stream *mongo
 				event.Type = store.WatchEventDelete
 				event.Object = old
 			}
-			w.send(event)
+			if !w.send(ctx, event) {
+				return
+			}
 		}
 	}
 	if err := stream.Err(); err != nil {
 		if stderrors.Is(err, context.Canceled) {
 			return
 		}
-		w.send(store.WatchEvent{Error: errors.NewInternalError(err)})
+		w.send(ctx, store.WatchEvent{Error: errors.NewInternalError(err)})
 	}
 }
 
@@ -215,23 +231,27 @@ func bsonUnmarshal(bsoncodec *bsoncodec.Registry, data []byte, obj store.Object)
 	return dec.Decode(obj)
 }
 
-func (w *MongoWatcher) send(e store.WatchEvent) {
-	if w.closed {
-		return
-	}
+func (w *MongoWatcher) send(ctx context.Context, e store.WatchEvent) bool {
 	if w.dropOnFull {
 		select {
 		case w.results <- e:
+			return true
+		case <-ctx.Done():
+			return false
 		default:
+			return true
 		}
-	} else {
-		w.results <- e
+	}
+	select {
+	case w.results <- e:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 
 func (w *MongoWatcher) Stop() {
-	if w.closed {
-		return
+	if w.cancel != nil {
+		w.cancel()
 	}
-	close(w.results)
 }
