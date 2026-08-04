@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -25,11 +26,15 @@ func (o OpenTelemetryPlugin) Install(m *API) error {
 }
 
 func (o OpenTelemetryPlugin) OnRoute(route *Route) error {
-	route.Handler = otelhttp.WithRouteTag(route.Path, route.Handler)
 	// inject filter
 	midware := otelhttp.NewMiddleware(route.Path, otelhttp.WithTracerProvider(o.TraceProvider))
 	filter := FilterFunc(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		nn := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			routeAttribute := semconv.HTTPRoute(route.Path)
+			trace.SpanFromContext(r.Context()).SetAttributes(routeAttribute)
+			labeler, _ := otelhttp.LabelerFromContext(r.Context())
+			labeler.Add(routeAttribute)
+
 			next.ServeHTTP(w, r)
 
 			vars := PathVars(r)
@@ -63,7 +68,7 @@ type TelmetryOptions struct {
 
 func NewTraceProvider(ctx context.Context, options *TelmetryOptions) (*sdktrace.TracerProvider, func(), error) {
 	newopts := []sdktrace.TracerProviderOption{}
-	if options.MetricAddr != "" {
+	if options.TraceAddr != "" {
 		exp, err := otlptracegrpc.New(ctx)
 		if err != nil {
 			return nil, nil, err
