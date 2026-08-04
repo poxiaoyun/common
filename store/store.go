@@ -148,6 +148,14 @@ func WithWatchID(id string) WatchOption {
 	}
 }
 
+// WithWatchResourceVersion starts a watch after the supplied resource version.
+// A value of zero requests events from any version available in the cache.
+func WithWatchResourceVersion(resourceVersion int64) WatchOption {
+	return func(o *WatchOptions) {
+		o.ResourceVersion = ptr.To(resourceVersion)
+	}
+}
+
 func WithWatchFieldRequirements(reqs ...Requirement) WatchOption {
 	return func(o *WatchOptions) {
 		o.FieldRequirements = append(o.FieldRequirements, reqs...)

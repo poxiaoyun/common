@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,17 +21,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/apiserver/pkg/storage"
-	cacherstorage "k8s.io/apiserver/pkg/storage/cacher"
 	storeerr "k8s.io/apiserver/pkg/storage/errors"
-	"k8s.io/apiserver/pkg/storage/etcd3"
-	etcdfeature "k8s.io/apiserver/pkg/storage/feature"
-	"k8s.io/apiserver/pkg/storage/storagebackend"
-	"k8s.io/apiserver/pkg/storage/value/encrypt/identity"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
 	libmeta "xiaoshiai.cn/common/meta"
@@ -109,10 +100,30 @@ func NewEtcdCacher(ctx context.Context, scheme *store.Schema, options *Options) 
 		Client: cli,
 	}
 	kubernetescli.Kubernetes = &kubernetescli
-	return NewEtcdCacherFromClient(ctx, &kubernetescli, scheme, options.KeyPrefix)
+	result, err := newEtcdCacherFromClient(ctx, &kubernetescli, scheme, options.KeyPrefix, func() {
+		_ = cli.Close()
+	})
+	if err != nil {
+		_ = cli.Close()
+		return nil, err
+	}
+	return result, nil
 }
 
 func NewEtcdCacherFromClient(ctx context.Context, cli *kubernetes.Client, scheme *store.Schema, storagePrefix string) (*generic, error) {
+	return newEtcdCacherFromClient(ctx, cli, scheme, storagePrefix, nil)
+}
+
+func newEtcdCacherFromClient(
+	ctx context.Context,
+	cli *kubernetes.Client,
+	scheme *store.Schema,
+	storagePrefix string,
+	onClose func(),
+) (*generic, error) {
+	if cli == nil || cli.Client == nil {
+		return nil, fmt.Errorf("etcd client is nil")
+	}
 	scheme, err := scheme.Clone()
 	if err != nil {
 		return nil, err
@@ -145,13 +156,18 @@ func NewEtcdCacherFromClient(ctx context.Context, cli *kubernetes.Client, scheme
 		slices.Sort(fields)
 		resourceFields[resource] = fields
 	}
+	resources := newResourceRegistry(
+		ctx,
+		resourceFields,
+		func(ctx context.Context, resource schema.GroupResource, indexFields []string) (*resourceDB, error) {
+			return newResourceStorage(ctx, cli, storagePrefix, resource, indexFields)
+		},
+		onClose,
+	)
 	core := &core{
-		ctx:            ctx,
-		storagePrefix:  storagePrefix,
-		cli:            cli,
-		resources:      make(map[string]*db),
-		resourceFields: resourceFields,
-		schema:         scheme,
+		storagePrefix: storagePrefix,
+		cli:           cli,
+		resources:     resources,
 	}
 	return &generic{core: core}, nil
 }
@@ -161,6 +177,12 @@ var _ store.PingableStore = &generic{}
 type generic struct {
 	core   *core
 	scopes []store.Scope
+}
+
+// Close stops all resource reflectors and caches. It does not close a client
+// supplied to NewEtcdCacherFromClient; NewEtcdCacher closes the client it owns.
+func (c *generic) Close() {
+	c.core.resources.Close()
 }
 
 func (c *generic) Ping(ctx context.Context) error {
@@ -190,7 +212,7 @@ func (c *generic) Count(ctx context.Context, obj store.Object, opts ...store.Cou
 		return 0, err
 	}
 	count := 0
-	if err := c.core.on(ctx, obj, func(ctx context.Context, db *db) error {
+	if err := c.core.on(ctx, obj, func(ctx context.Context, db *resourceDB) error {
 		key := getlistkey(c.scopes, db.resource.String())
 		listopts := storage.ListOptions{Recursive: true, Predicate: predicate}
 		list := &StorageObjectList{}
@@ -216,7 +238,7 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return c.core.on(ctx, obj, func(ctx context.Context, db *db) error {
+	return c.core.on(ctx, obj, func(ctx context.Context, db *resourceDB) error {
 		if obj.GetID() == "" {
 			return errors.NewBadRequest(fmt.Sprintf("id is required for %s", db.resource))
 		}
@@ -284,7 +306,7 @@ func (c *generic) Get(ctx context.Context, name string, obj store.Object, opts .
 	if err != nil {
 		return err
 	}
-	return c.core.on(ctx, obj, func(ctx context.Context, db *db) error {
+	return c.core.on(ctx, obj, func(ctx context.Context, db *resourceDB) error {
 		key := getObjectKey(c.scopes, db.resource.String(), name)
 		uns := &StorageObject{}
 		options := storage.GetOptions{
@@ -324,7 +346,7 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 		return err
 	}
 	v.SetZero()
-	return c.core.on(ctx, list, func(ctx context.Context, db *db) error {
+	return c.core.on(ctx, list, func(ctx context.Context, db *resourceDB) error {
 		keyprefix := getlistkey(c.scopes, db.resource.String())
 		getList := func(predicate storage.SelectionPredicate) (*StorageObjectList, error) {
 			listopts := storage.ListOptions{
@@ -578,16 +600,12 @@ func (s *status) Update(ctx context.Context, obj store.Object, opts ...store.Upd
 }
 
 type core struct {
-	ctx            context.Context
-	resources      map[string]*db
-	resourcesLock  sync.RWMutex
-	storagePrefix  string
-	cli            *kubernetes.Client
-	resourceFields map[string][]string
-	schema         *store.Schema
+	resources     *resourceRegistry
+	storagePrefix string
+	cli           *kubernetes.Client
 }
 
-func (c *core) on(ctx context.Context, example any, fn func(ctx context.Context, db *db) error) error {
+func (c *core) on(ctx context.Context, example any, fn func(ctx context.Context, db *resourceDB) error) error {
 	if err := c.validateObject(example); err != nil {
 		return err
 	}
@@ -595,7 +613,11 @@ func (c *core) on(ctx context.Context, example any, fn func(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	return convertError(fn(ctx, c.getResource(resource)))
+	db, err := c.getResource(resource)
+	if err != nil {
+		return err
+	}
+	return convertError(fn(ctx, db))
 }
 
 func convertError(err error) error {
@@ -619,7 +641,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 	if !predicate.Empty() {
 		return errors.NewBadRequest("predicate is not supported")
 	}
-	return c.on(ctx, obj, func(ctx context.Context, db *db) error {
+	return c.on(ctx, obj, func(ctx context.Context, db *resourceDB) error {
 		out := &StorageObject{}
 		key := getObjectKey(scopes, db.resource.String(), obj.GetID())
 		err := db.storage.GuaranteedUpdate(ctx, key, out, false, preconditions, func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
@@ -721,97 +743,8 @@ func (e *core) validateObject(obj any) error {
 	return nil
 }
 
-func (c *core) getResource(resource string) *db {
-	c.resourcesLock.RLock()
-	resourceStorage, ok := c.resources[resource]
-	c.resourcesLock.RUnlock()
-	if !ok {
-		c.resourcesLock.Lock()
-		defer c.resourcesLock.Unlock()
-
-		// check twice
-		resourceStorage, ok = c.resources[resource]
-		if ok {
-			return resourceStorage
-		}
-
-		fields := c.resourceFields[resource]
-		groupResource := schema.GroupResource{Resource: resource}
-		newresourceStorage := newResourceStorage(c.ctx, c.cli, c.storagePrefix, groupResource, fields)
-		c.resources[resource] = newresourceStorage
-		resourceStorage = newresourceStorage
-	}
-	return resourceStorage
-}
-
-type db struct {
-	storage  storage.Interface
-	resource schema.GroupResource
-}
-
-func newResourceStorage(ctx context.Context, cli *kubernetes.Client, prefix string, groupResource schema.GroupResource, indexfields []string) *db {
-	transformer := identity.NewEncryptCheckTransformer()
-	leaseConfig := etcd3.NewDefaultLeaseManagerConfig()
-	newFunc := func() runtime.Object { return &StorageObject{} }
-	newListFunc := func() runtime.Object { return &StorageObjectList{} }
-
-	codec := SimpleJsonCodec{}
-
-	versioner := APIObjectVersioner{}
-	resourcePrefix := "/" + groupResource.String()
-
-	dec := etcd3.NewDefaultDecoder(codec, versioner)
-	compact := etcd3.NewCompactor(cli.Client, time.Hour, clock.RealClock{}, nil)
-	etcd3storage, err := etcd3.New(cli, compact, codec, newFunc, newListFunc, prefix, resourcePrefix, groupResource, transformer, leaseConfig, dec, versioner)
-	if err != nil {
-		panic(err)
-	}
-	if utilfeature.DefaultFeatureGate.Enabled(features.ConsistentListFromCache) || utilfeature.DefaultFeatureGate.Enabled(features.WatchList) {
-		etcdfeature.DefaultFeatureSupportChecker.CheckClient(ctx, cli, storage.RequestWatchProgress)
-	}
-
-	// Wrap etcd3 storage to disable WatchList streaming mode.
-	// The reflector's WatchList sends individual watch events to populate cache,
-	// but the watch connection may close before all events are delivered,
-	// resulting in incomplete data. By opting out, the reflector uses
-	// traditional List+Watch which is more reliable for initial cache population.
-	wrappedStorage := &noWatchListStorage{Interface: etcd3storage}
-
-	cacherConfig := cacherstorage.Config{
-		Storage:             wrappedStorage,
-		Versioner:           versioner,
-		GroupResource:       groupResource,
-		ResourcePrefix:      resourcePrefix,
-		KeyFunc:             ScopesObjectKeyFunc,
-		NewFunc:             newFunc,
-		NewListFunc:         newListFunc,
-		GetAttrsFunc:        GetAttrsFunc(indexfields),
-		Codec:               codec,
-		Indexers:            ptr.To(IndexerFromFields(indexfields)),
-		EventsHistoryWindow: storagebackend.DefaultEventsHistoryWindow,
-	}
-	cacher, err := cacherstorage.NewCacherFromConfig(cacherConfig)
-	if err != nil {
-		panic(err)
-	}
-	cacheDelegator := cacherstorage.NewCacheDelegator(cacher, etcd3storage)
-	return &db{
-		storage:  cacheDelegator,
-		resource: groupResource,
-	}
-}
-
-// noWatchListStorage wraps a storage.Interface to opt out of WatchList semantics.
-// This forces the reflector to use traditional List+Watch for initial cache population,
-// which is more reliable than streaming WatchList events from etcd.
-type noWatchListStorage struct {
-	storage.Interface
-}
-
-// IsWatchListSemanticsUnSupported tells the reflector that this storage backend
-// does not support WatchList streaming mode.
-func (s *noWatchListStorage) IsWatchListSemanticsUnSupported() bool {
-	return true
+func (c *core) getResource(resource string) (*resourceDB, error) {
+	return c.resources.get(resource)
 }
 
 func ScopesObjectKeyFunc(obj runtime.Object) (string, error) {

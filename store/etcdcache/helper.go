@@ -132,6 +132,9 @@ type APIObjectVersioner struct{}
 
 // ObjectResourceVersion implements storage.Versioner.
 func (a APIObjectVersioner) ObjectResourceVersion(obj runtime.Object) (uint64, error) {
+	if cacheable, ok := obj.(runtime.CacheableObject); ok {
+		obj = cacheable.GetObject()
+	}
 	object, ok := obj.(*StorageObject)
 	if !ok {
 		return 0, fmt.Errorf("object is not a StorageObject")

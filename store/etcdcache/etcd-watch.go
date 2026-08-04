@@ -43,6 +43,10 @@ func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store
 	if err != nil {
 		return nil, err
 	}
+	db, err := c.core.getResource(resource)
+	if err != nil {
+		return nil, err
+	}
 
 	storageOptions := storage.ListOptions{
 		Predicate:       preficate,
@@ -68,7 +72,6 @@ func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store
 		storageOptions.Recursive = true
 	}
 
-	db := c.core.getResource(resource)
 	watcher, err := db.storage.Watch(ctx, watchkey, storageOptions)
 	if err != nil {
 		err = storeerr.InterpretWatchError(err, db.resource, "")
@@ -101,6 +104,7 @@ type warpWatcher struct {
 
 func (w *warpWatcher) run(ctx context.Context) {
 	defer close(w.result)
+	defer w.cancel()
 	defer log.V(5).Info("watcher stopped", "resource", w.resource, "scopes", w.scopes)
 	go func() {
 		<-ctx.Done()
