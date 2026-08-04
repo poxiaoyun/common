@@ -189,7 +189,7 @@ const (
 	ParamKindPath   ParamKind = "path"
 	ParamKindQuery  ParamKind = "query"
 	ParamKindHeader ParamKind = "header"
-	ParamKindForm   ParamKind = "formData"
+	ParamKindForm   ParamKind = "form"
 	ParamKindBody   ParamKind = "body"
 )
 

@@ -7,8 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/go-openapi/spec"
-	"github.com/go-openapi/swag"
+	"github.com/getkin/kin-openapi/openapi3"
 	"xiaoshiai.cn/common/collections"
 )
 
@@ -19,7 +18,6 @@ const (
 	SchemaTypeNumber  = "number"
 	SchemaTypeInteger = "integer"
 	SchemaTypeBoolean = "boolean"
-	SchemaTypeFile    = "file"
 	SchemaTypeNull    = "null"
 )
 
@@ -113,13 +111,11 @@ type Schema struct {
 	UnevaluatedItems      *SchemaOrBool `json:"unevaluatedItems,omitempty"`
 	UnevaluatedProperties *SchemaOrBool `json:"unevaluatedProperties,omitempty"`
 
-	// fileds below are not specified in JSON Schema but widely used.
-	Example       any                         `json:"example,omitempty"`
-	Definitions   map[string]Schema           `json:"definitions,omitempty"`
-	Nullable      bool                        `json:"nullable,omitempty"`
-	Discriminator string                      `json:"discriminator,omitempty"`
-	XML           *spec.XMLObject             `json:"xml,omitempty"`
-	ExternalDocs  *spec.ExternalDocumentation `json:"externalDocs,omitempty"`
+	// Fields below are OpenAPI schema extensions to JSON Schema.
+	Example       any                     `json:"example,omitempty"`
+	Discriminator *openapi3.Discriminator `json:"discriminator,omitempty"`
+	XML           *openapi3.XML           `json:"xml,omitempty"`
+	ExternalDocs  *openapi3.ExternalDocs  `json:"externalDocs,omitempty"`
 
 	ExtraProps map[string]any `json:"-"`
 }
@@ -146,7 +142,7 @@ func (s Schema) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return swag.ConcatJSON(props, extprops), nil
+	return concatJSONObjects(props, extprops), nil
 }
 
 func (s *Schema) UnmarshalJSON(data []byte) error {
@@ -325,4 +321,39 @@ func (s *SchemaOrStringArray) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type StringOrArray = spec.StringOrArray
+type StringOrArray []string
+
+func (s StringOrArray) MarshalJSON() ([]byte, error) {
+	if len(s) == 1 {
+		return json.Marshal(s[0])
+	}
+	return json.Marshal([]string(s))
+}
+
+func (s *StringOrArray) UnmarshalJSON(data []byte) error {
+	var values []string
+	if err := json.Unmarshal(data, &values); err == nil {
+		*s = values
+		return nil
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*s = StringOrArray{value}
+	return nil
+}
+
+func concatJSONObjects(left, right []byte) []byte {
+	if len(right) == 0 || bytes.Equal(right, []byte("{}")) || bytes.Equal(right, []byte("null")) {
+		return left
+	}
+	if len(left) == 0 || bytes.Equal(left, []byte("{}")) || bytes.Equal(left, []byte("null")) {
+		return right
+	}
+	merged := make([]byte, 0, len(left)+len(right)-1)
+	merged = append(merged, left[:len(left)-1]...)
+	merged = append(merged, ',')
+	merged = append(merged, right[1:]...)
+	return merged
+}

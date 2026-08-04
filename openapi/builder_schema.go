@@ -21,84 +21,80 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-openapi/spec"
+	"github.com/getkin/kin-openapi/openapi3"
 )
+
+const ComponentsSchemasRoot = "#/components/schemas/"
 
 var (
-	DefaultDefinitions = map[string]spec.Schema{}
-	DefaultBuilder     = NewBuilder(InterfaceBuildOptionOverride, DefaultDefinitions)
+	DefaultSchemas = openapi3.Schemas{}
+	DefaultBuilder = NewBuilder(InterfaceBuildOptionOverride, DefaultSchemas)
 )
-
-const DefinitionsRoot = "#/definitions/"
 
 type Builder struct {
 	InterfaceBuildOption InterfaceBuildOption
-	Definitions          map[string]spec.Schema
+	Schemas              openapi3.Schemas
 }
 
 type InterfaceBuildOption string
 
 const (
-	InterfaceBuildOptionDefault  InterfaceBuildOption = ""         // default as an 'object{}'
-	InterfaceBuildOptionOverride InterfaceBuildOption = "override" // override using interface's value if exist
-	InterfaceBuildOptionIgnore   InterfaceBuildOption = "ignore"   // ignore interface field
-	InterfaceBuildOptionMerge    InterfaceBuildOption = "merge"    // anyOf 'object{}' type and interface's value type
+	InterfaceBuildOptionDefault  InterfaceBuildOption = ""         // use a concrete sample when available, otherwise object
+	InterfaceBuildOptionOverride InterfaceBuildOption = "override" // use the concrete sample value when available
+	InterfaceBuildOptionIgnore   InterfaceBuildOption = "ignore"   // omit interface fields
+	InterfaceBuildOptionMerge    InterfaceBuildOption = "merge"    // accept both object and concrete sample value
 )
 
-type SchemaBuildFunc func(v reflect.Value) *spec.Schema
+type SchemaBuildFunc func(v reflect.Value) *openapi3.SchemaRef
 
-func NewBuilder(interfaceOption InterfaceBuildOption, definations map[string]spec.Schema) *Builder {
+func NewBuilder(interfaceOption InterfaceBuildOption, schemas openapi3.Schemas) *Builder {
+	if schemas == nil {
+		schemas = openapi3.Schemas{}
+	}
 	return &Builder{
-		Definitions:          definations,
+		Schemas:              schemas,
 		InterfaceBuildOption: interfaceOption,
 	}
 }
 
-func (b *Builder) Build(data any) *spec.Schema {
+func (b *Builder) Build(data any) *openapi3.SchemaRef {
 	return b.BuildSchema(reflect.ValueOf(data))
 }
 
-var WellKnowGoTypeAsSchema = map[reflect.Type]spec.Schema{
-	reflect.TypeOf(json.Number("")): *spec.Float64Property(), // json.Number is double
-
-	// https://json-schema.org/draft/2020-12/json-schema-validation.html#rfc.section.7.3.1
-	reflect.TypeOf(time.Time{}):      *spec.DateTimeProperty(),         // time.Time is date-time
-	reflect.TypeOf(time.Duration(0)): *spec.StrFmtProperty("duration"), // time.Duration is duration format
-
-	// reflect.TypeOf((*any)(nil)).Elem(): *ObjectProperty(), // any as object
+var WellKnownGoTypeAsSchema = map[reflect.Type]*openapi3.SchemaRef{
+	reflect.TypeOf(json.Number("")):      schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeNumber), Format: "double"}),
+	reflect.TypeOf(json.RawMessage(nil)): AnyProperty(),
+	reflect.TypeOf([]byte(nil)):          schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeString), Format: "byte", ContentEncoding: "base64"}),
+	reflect.TypeOf(time.Time{}):          schemaValue(openapi3.NewDateTimeSchema()),
+	reflect.TypeOf(time.Duration(0)):     schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeInteger), Format: "int64", Description: "Duration in nanoseconds."}),
 }
 
-func (b *Builder) BuildSchema(v reflect.Value) *spec.Schema {
+func (b *Builder) BuildSchema(v reflect.Value) *openapi3.SchemaRef {
 	if !v.IsValid() {
 		return nil
 	}
 
-	if schema, ok := WellKnowGoTypeAsSchema[v.Type()]; ok {
-		return &schema
+	if schema, ok := WellKnownGoTypeAsSchema[v.Type()]; ok {
+		return cloneSchemaRef(schema)
 	}
 
-	// https://json-schema.org/draft/2020-12/json-schema-validation.html#rfc.section.6.1.1
 	switch v.Kind() {
 	case reflect.Bool:
-		return spec.BooleanProperty()
+		return schemaValue(openapi3.NewBoolSchema())
 	case reflect.Float32:
-		return spec.Float32Property()
+		return schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeNumber), Format: "float"})
 	case reflect.Float64:
-		return spec.Float64Property()
+		return schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeNumber), Format: "double"})
 	case reflect.Complex64, reflect.Complex128:
-		return (&spec.Schema{}).Typed("number", v.Kind().String())
+		return schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeNumber), Format: v.Kind().String()})
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return IntFmtProperty(v.Kind().String())
-	case reflect.Int8:
-		return spec.Int8Property()
-	case reflect.Int16:
-		return spec.Int16Property()
-	case reflect.Int32:
-		return spec.Int32Property()
+		return integerProperty(v.Kind().String())
+	case reflect.Int8, reflect.Int16, reflect.Int32:
+		return integerProperty("int32")
 	case reflect.Int64, reflect.Int:
-		return spec.Int64Property()
+		return integerProperty("int64")
 	case reflect.String:
-		return spec.StringProperty()
+		return schemaValue(openapi3.NewStringSchema())
 	case reflect.Struct:
 		return b.buildStruct(v)
 	case reflect.Slice, reflect.Array:
@@ -110,11 +106,11 @@ func (b *Builder) BuildSchema(v reflect.Value) *spec.Schema {
 	case reflect.Ptr:
 		return b.buildPtr(v)
 	default:
-		return ObjectProperty() // return object if not recognize
+		return ObjectProperty()
 	}
 }
 
-// TypeName returns the type name and generic type parameters
+// TypeName returns the type name and generic type parameters.
 func TypeName(t reflect.Type) (string, string) {
 	fullname := t.String()
 	if index := strings.IndexRune(fullname, '['); index != -1 {
@@ -128,192 +124,199 @@ func TypeName(t reflect.Type) (string, string) {
 	return fullname, ""
 }
 
-func (b *Builder) buildPtr(v reflect.Value) *spec.Schema {
-	if v.IsNil() {
-		return b.BuildSchema(reflect.New(v.Type().Elem()).Elem())
-	}
-	return b.BuildSchema(v.Elem())
+func componentName(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, name)
 }
 
-func (b *Builder) buildSlice(v reflect.Value) *spec.Schema {
-	schema := spec.Schema{
-		SchemaProps: spec.SchemaProps{
-			Type: []string{"array"},
-		},
+func (b *Builder) buildPtr(v reflect.Value) *openapi3.SchemaRef {
+	var ref *openapi3.SchemaRef
+	if v.IsNil() {
+		ref = b.BuildSchema(reflect.New(v.Type().Elem()).Elem())
+	} else {
+		ref = b.BuildSchema(v.Elem())
 	}
-	items := []spec.Schema{}
+	return nullableSchemaRef(ref)
+}
+
+func (b *Builder) buildSlice(v reflect.Value) *openapi3.SchemaRef {
+	schema := openapi3.NewArraySchema()
+	items := make(openapi3.SchemaRefs, 0, v.Len())
 	for i := 0; i < v.Len(); i++ {
 		if itemSchema := b.BuildSchema(v.Index(i)); itemSchema != nil {
-			items = append(items, *itemSchema)
+			items = append(items, itemSchema)
 		}
 	}
+
 	switch len(items) {
 	case 0:
-		if itemSchema := b.BuildSchema(reflect.New(v.Type().Elem())); itemSchema != nil {
-			schema.Items = &spec.SchemaOrArray{Schema: itemSchema}
-		}
+		schema.Items = b.BuildSchema(reflect.New(v.Type().Elem()).Elem())
 	case 1:
-		schema.Items = &spec.SchemaOrArray{Schema: &items[0]}
+		schema.Items = items[0]
 	default:
-		schema.Items = &spec.SchemaOrArray{Schemas: items}
+		schema.Items = schemaValue(&openapi3.Schema{AnyOf: items})
 	}
-	return &schema
+	return schemaValue(schema)
 }
 
-func (b *Builder) buildInterface(v reflect.Value) *spec.Schema {
+func (b *Builder) buildInterface(v reflect.Value) *openapi3.SchemaRef {
 	switch b.InterfaceBuildOption {
 	case InterfaceBuildOptionMerge:
-		if innerSchema := b.BuildSchema(v.Elem()); innerSchema != nil {
-			return &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					AnyOf: []spec.Schema{
-						*ObjectProperty(),
-						*innerSchema,
-					},
-				},
+		if !v.IsNil() {
+			if innerSchema := b.BuildSchema(v.Elem()); innerSchema != nil {
+				return schemaValue(&openapi3.Schema{AnyOf: openapi3.SchemaRefs{ObjectProperty(), innerSchema}})
 			}
 		}
 	case InterfaceBuildOptionOverride, InterfaceBuildOptionDefault:
-		if v.IsNil() {
-			return ObjectProperty()
+		if !v.IsNil() {
+			return b.BuildSchema(v.Elem())
 		}
-		return b.BuildSchema(v.Elem())
 	case InterfaceBuildOptionIgnore:
 		return nil
 	}
 	return ObjectProperty()
 }
 
-func (b *Builder) buildMap(v reflect.Value) *spec.Schema {
-	itemSchema := b.BuildSchema(reflect.New(v.Type().Elem()))
-	schema := &spec.Schema{
-		SchemaProps: spec.SchemaProps{
-			Type: []string{"object"},
-			AdditionalProperties: &spec.SchemaOrBool{
-				Allows: true,
-				Schema: itemSchema,
-			},
-		},
-	}
+func (b *Builder) buildMap(v reflect.Value) *openapi3.SchemaRef {
+	itemSchema := b.BuildSchema(reflect.New(v.Type().Elem()).Elem())
+	schema := openapi3.NewObjectSchema()
+	schema.AdditionalProperties = openapi3.AdditionalProperties{Schema: itemSchema}
 
-	// fixed properties
-	properties := spec.SchemaProperties{}
-	for _, k := range v.MapKeys() {
-		if keySchema := b.BuildSchema(v.MapIndex(k)); keySchema != nil {
-			properties[k.String()] = *keySchema
+	if v.Type().Key().Kind() == reflect.String {
+		for _, key := range v.MapKeys() {
+			if keySchema := b.BuildSchema(v.MapIndex(key)); keySchema != nil {
+				schema.Properties[key.String()] = keySchema
+			}
 		}
 	}
-	if len(properties) > 0 {
-		schema.Properties = properties
-	}
-
-	return schema
+	return schemaValue(schema)
 }
 
-type empty struct{}
-
-// buildStruct build struct schema of a struct instance
-// it will add a  definition into builder
-// return the ref of definition
-// if fields container interface value, the return ref will allof them
-func (b *Builder) buildStruct(v reflect.Value) *spec.Schema {
-	if b.Definitions == nil {
-		b.Definitions = map[string]spec.Schema{}
+// buildStruct adds a reusable component schema and returns a reference to it.
+// Concrete values in dynamic interface fields are overlaid with allOf without
+// changing the reusable base component.
+func (b *Builder) buildStruct(v reflect.Value) *openapi3.SchemaRef {
+	if b.Schemas == nil {
+		b.Schemas = openapi3.Schemas{}
 	}
 
-	findOverridesOnly := false // avoid recursive find
+	findOverridesOnly := false
 	typeName, suffix := TypeName(v.Type())
 	structTypeName := typeName
-
-	// if not a dynamic field struct,eg generic[T] not have openapi tag marked
-	// treat it as a different type.
 	if !HasDynamicField(v.Type()) {
 		structTypeName += suffix
 	}
+	structTypeName = componentName(structTypeName)
 
-	orignalSchama := ObjectPropertyProperties(map[string]spec.Schema{})
-	if exists, ok := b.Definitions[structTypeName]; ok {
-		findOverridesOnly = true // only find overrides fields
-		orignalSchama = &exists
+	originalSchema := openapi3.NewObjectSchema()
+	if existing, ok := b.Schemas[structTypeName]; ok {
+		findOverridesOnly = true
+		if existing.Value != nil {
+			originalSchema = existing.Value
+		}
 	} else {
-		b.Definitions[structTypeName] = *orignalSchama
+		b.Schemas[structTypeName] = schemaValue(originalSchema)
 	}
 
-	overrideProperties, embeddedProperties := map[string]spec.Schema{}, []spec.Schema{}
+	overrideProperties := openapi3.Schemas{}
+	embeddedSchemas := openapi3.SchemaRefs{}
 	for i := 0; i < v.NumField(); i++ {
-		fieldv, structField := v.Field(i), v.Type().Field(i)
-		isEmbedded, isIgnored, fieldName := structFieldInfo(structField)
+		fieldValue, structField := v.Field(i), v.Type().Field(i)
+		isEmbedded, isIgnored, fieldName, isRequired := structFieldInfo(structField)
 		if isIgnored {
 			continue
 		}
-		// dynamic type will be treated as override properties
 		if !isEmbedded && IsDynamicInterface(structField) {
-			if fieldSchema := b.BuildSchema(fieldv); fieldSchema != nil {
-				overrideProperties[fieldName] = *fieldSchema
+			if fieldSchema := b.BuildSchema(fieldValue); fieldSchema != nil {
+				overrideProperties[fieldName] = fieldSchema
+			} else if b.InterfaceBuildOption == InterfaceBuildOptionIgnore {
+				continue
 			}
-			if orignalSchama.Properties == nil {
-				orignalSchama.Properties = map[string]spec.Schema{}
+			if originalSchema.Properties == nil {
+				originalSchema.Properties = openapi3.Schemas{}
 			}
-			orignalSchama.Properties[fieldName] = *NullableProperty() // placeholder
+			originalSchema.Properties[fieldName] = AnyProperty()
+			if isRequired {
+				originalSchema.Required = appendUnique(originalSchema.Required, fieldName)
+			}
 			continue
 		}
 		if findOverridesOnly {
 			continue
 		}
-		fieldSchema := b.BuildSchema(fieldv)
+		fieldSchema := b.BuildSchema(fieldValue)
 		if fieldSchema == nil {
 			continue
 		}
 		if isEmbedded {
-			embeddedProperties = append(embeddedProperties, *fieldSchema)
-		} else {
-			orignalSchama.Properties[fieldName] = *fieldSchema
+			embeddedSchemas = append(embeddedSchemas, fieldSchema)
+			continue
+		}
+		originalSchema.Properties[fieldName] = fieldSchema
+		if isRequired {
+			originalSchema.Required = appendUnique(originalSchema.Required, fieldName)
 		}
 	}
-	if len(embeddedProperties) > 0 {
-		allofSchema := &spec.Schema{}
-		// check if empty object
-		if len(orignalSchama.Properties) != 0 || orignalSchama.AdditionalProperties != nil {
-			allofSchema.AllOf = append(allofSchema.AllOf, *orignalSchama)
+
+	if len(embeddedSchemas) > 0 {
+		allOf := openapi3.SchemaRefs{}
+		if len(originalSchema.Properties) != 0 || originalSchema.AdditionalProperties.Schema != nil || originalSchema.AdditionalProperties.Has != nil {
+			allOf = append(allOf, schemaValue(originalSchema))
 		}
-		allofSchema.AllOf = append(allofSchema.AllOf, embeddedProperties...)
-		orignalSchama = allofSchema
+		allOf = append(allOf, embeddedSchemas...)
+		originalSchema = &openapi3.Schema{AllOf: allOf}
 	}
 	if !findOverridesOnly {
-		b.Definitions[structTypeName] = *orignalSchama // add self definition
+		b.Schemas[structTypeName] = schemaValue(originalSchema)
 	}
-	ret := spec.RefSchema(DefinitionsRoot + structTypeName)
-	if len(overrideProperties) > 0 {
-		overrideSchema := &spec.Schema{}
-		overrideSchema.AllOf = []spec.Schema{*ret, *ObjectPropertyProperties(overrideProperties)}
-		ret = overrideSchema
+
+	ref := &openapi3.SchemaRef{
+		Ref:   ComponentsSchemasRoot + structTypeName,
+		Value: b.Schemas[structTypeName].Value,
 	}
-	return ret
+	if len(overrideProperties) == 0 {
+		return ref
+	}
+	return schemaValue(&openapi3.Schema{
+		AllOf: openapi3.SchemaRefs{
+			ref,
+			ObjectPropertyProperties(overrideProperties),
+		},
+	})
 }
 
-func structFieldInfo(structField reflect.StructField) (bool, bool, string) {
+func structFieldInfo(structField reflect.StructField) (embedded, ignored bool, name string, required bool) {
 	if !structField.IsExported() {
-		return false, true, ""
+		return false, true, "", false
 	}
-	isEmbedded, isIgnored, fieldName := structField.Anonymous, false, structField.Name
-	// json
+	embedded, name, required = structField.Anonymous, structField.Name, true
 	if jsonTag := structField.Tag.Get("json"); jsonTag != "" {
 		opts := strings.Split(jsonTag, ",")
-		switch val := opts[0]; val {
+		switch opts[0] {
 		case "-":
-			isIgnored = true
+			return false, true, "", false
 		case "":
 		default:
-			fieldName = val
-			isEmbedded = false // if field is embedded,but json tag has name,then it is not embedded
+			name = opts[0]
+			embedded = false
 		}
 		for _, opt := range opts[1:] {
-			if opt == "inline" {
-				isEmbedded = true
+			switch opt {
+			case "inline":
+				embedded = true
+			case "omitempty", "omitzero":
+				required = false
 			}
 		}
 	}
-	return isEmbedded, isIgnored, fieldName
+	if embedded {
+		required = false
+	}
+	return embedded, false, name, required
 }
 
 func HasDynamicField(t reflect.Type) bool {
@@ -331,10 +334,9 @@ func HasDynamicField(t reflect.Type) bool {
 	return false
 }
 
-func IsDynamicInterface(field reflect.StructField) bool { // json
-	if openapitag := field.Tag.Get("openapi"); openapitag != "" {
-		opts := strings.Split(openapitag, ",")
-		if slices.Contains(opts, "dynamic") {
+func IsDynamicInterface(field reflect.StructField) bool {
+	if tag := field.Tag.Get("openapi"); tag != "" {
+		if slices.Contains(strings.Split(tag, ","), "dynamic") {
 			return true
 		}
 	}
@@ -345,19 +347,65 @@ func IsDynamicInterface(field reflect.StructField) bool { // json
 	return t.Kind() == reflect.Interface
 }
 
-// StrFmtProperty creates a property for the named string format
-func IntFmtProperty(format string) *spec.Schema {
-	return &spec.Schema{SchemaProps: spec.SchemaProps{Type: []string{"integer"}, Format: format}}
+func integerProperty(format string) *openapi3.SchemaRef {
+	return schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeInteger), Format: format})
 }
 
-func ObjectProperty() *spec.Schema {
-	return ObjectPropertyProperties(nil)
+func ObjectProperty() *openapi3.SchemaRef {
+	return schemaValue(openapi3.NewObjectSchema())
 }
 
-func ObjectPropertyProperties(properties spec.SchemaProperties) *spec.Schema {
-	return &spec.Schema{SchemaProps: spec.SchemaProps{Type: []string{"object"}, Properties: properties}}
+func AnyProperty() *openapi3.SchemaRef {
+	return schemaValue(openapi3.NewSchema())
 }
 
-func NullableProperty() *spec.Schema {
-	return &spec.Schema{SchemaProps: spec.SchemaProps{Nullable: true}}
+func ObjectPropertyProperties(properties openapi3.Schemas) *openapi3.SchemaRef {
+	return schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeObject), Properties: properties})
+}
+
+func schemaValue(schema *openapi3.Schema) *openapi3.SchemaRef {
+	return &openapi3.SchemaRef{Value: schema}
+}
+
+func schemaTypes(types ...string) *openapi3.Types {
+	t := openapi3.Types(types)
+	return &t
+}
+
+func cloneSchemaRef(ref *openapi3.SchemaRef) *openapi3.SchemaRef {
+	if ref == nil {
+		return nil
+	}
+	cloned := &openapi3.SchemaRef{Ref: ref.Ref}
+	if ref.Value != nil {
+		value := *ref.Value
+		cloned.Value = &value
+	}
+	return cloned
+}
+
+func nullableSchemaRef(ref *openapi3.SchemaRef) *openapi3.SchemaRef {
+	if ref == nil {
+		return schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeNull)})
+	}
+	if ref.Ref == "" && ref.Value != nil && ref.Value.Type != nil {
+		value := *ref.Value
+		types := slices.Clone(value.Type.Slice())
+		if !slices.Contains(types, openapi3.TypeNull) {
+			types = append(types, openapi3.TypeNull)
+		}
+		value.Type = schemaTypes(types...)
+		return schemaValue(&value)
+	}
+	return schemaValue(&openapi3.Schema{AnyOf: openapi3.SchemaRefs{
+		ref,
+		schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeNull)}),
+	}})
+}
+
+func appendUnique(values []string, value string) []string {
+	if slices.Contains(values, value) {
+		return values
+	}
+	return append(values, value)
 }

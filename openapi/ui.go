@@ -29,8 +29,7 @@ func (o OpenAPIUI) Redirect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (o OpenAPIUI) Index(w http.ResponseWriter, r *http.Request) {
-	filename := api.Query(r, "provider", "swagger") + ".html"
-	http.ServeFileFS(w, r, UIFS, "ui/"+filename)
+	http.ServeFileFS(w, r, UIFS, "ui/index.html")
 }
 
 func (o OpenAPIUI) Resources(w http.ResponseWriter, r *http.Request) {
@@ -41,17 +40,13 @@ func (o OpenAPIUI) Resources(w http.ResponseWriter, r *http.Request) {
 func (o OpenAPIUI) Group(prefix string) api.Group {
 	return api.NewGroup(prefix).
 		Route(
-			api.GET("/openapi.json").To(o.OpenAPIHandler),
+			api.GET("/openapi.json").To(o.OpenAPIHandler).NotDocumented(),
 			api.GET("/").
 				To(o.Index).
 				Produce("text/html").
-				Param(
-					api.QueryParam("provider", "API documentation render").
-						Optional().
-						In("swagger", "redoc", "stoplight"),
-				),
+				NotDocumented(),
 			api.GET("").To(o.Redirect).NotDocumented(),
-			api.GET("/static/{path}*").To(o.Resources),
+			api.GET("/static/{path}*").To(o.Resources).NotDocumented(),
 		)
 }
 

@@ -1,594 +1,283 @@
-// Copyright 2022 The kubegems.io Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package openapi
 
 import (
+	"context"
 	"encoding/json"
-	"io"
 	"reflect"
 	"testing"
 	"time"
 
-	"github.com/go-openapi/spec"
+	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"xiaoshiai.cn/common/rest/api"
 )
 
-func JsonStr(v interface{}) string {
-	data, _ := json.MarshalIndent(v, " ", " ")
-	return string(data)
-}
-
-func TestDefinitionBuilder_Build(t *testing.T) {
-	type SimpleStruct struct {
-		Name  string      `json:"name,omitempty"`
-		Value interface{} `json:"value,omitempty"`
-	}
-	type Bar struct {
-		Kind string
-	}
-
-	type Baz struct {
-		Age int64 `json:"age,omitempty"`
-	}
-
-	type Foo struct {
-		Bar        `json:",inline"`
-		Duration   time.Duration
-		Time       time.Time   `json:"time,omitempty"`
-		Number     json.Number `json:"number,omitempty"`
-		Ignored    string      `json:"-,omitempty"`
-		unExported string
-	}
-
-	type MultiEmbedded struct {
-		Bar
-		Baz
-		string    // should be ignored
-		io.Reader // embedded interface
-	}
-
-	type AllSample struct {
-		List []AllSample
-	}
-
-	tests := []struct {
-		name           string
-		data           interface{}
-		wantDeinations map[string]spec.Schema
-		wantSchema     *spec.Schema
-	}{
-		{
-			name:       "string value",
-			data:       "",
-			wantSchema: spec.StringProperty(),
-		},
-		{
-			name:       "ineterface{} nil value",
-			data:       interface{}(nil),
-			wantSchema: nil,
-		},
-		{
-			name: "simple struct",
-			data: SimpleStruct{},
-			wantSchema: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					AllOf: []spec.Schema{
-						*spec.RefSchema(DefinitionsRoot + "openapi.SimpleStruct"),
-						*ObjectPropertyProperties(map[string]spec.Schema{
-							"value": *ObjectProperty(),
-						}),
-					},
-				},
-			},
-			wantDeinations: map[string]spec.Schema{
-				"openapi.SimpleStruct": {
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"name":  *spec.StringProperty(),
-							"value": *NullableProperty(),
-						},
-					},
-				},
-			},
-		},
-		{
-			name:       "all mixed",
-			data:       AllSample{},
-			wantSchema: spec.RefSchema(DefinitionsRoot + "openapi.AllSample"),
-			wantDeinations: map[string]spec.Schema{
-				"openapi.AllSample": {
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"List": *spec.ArrayProperty(spec.RefSchema(DefinitionsRoot + "openapi.AllSample")),
-						},
-					},
-				},
-			},
-		},
-	}
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Builder{}
-			gotSchema := b.Build(tt.data)
-			if !reflect.DeepEqual(gotSchema, tt.wantSchema) {
-				t.Errorf("DefinitionBuilder.Build() = %v, want %v", JsonStr(gotSchema), JsonStr(tt.wantSchema))
-			}
-			if !reflect.DeepEqual(b.Definitions, tt.wantDeinations) {
-				t.Errorf("DefinitionBuilder.Definations = %v, want %v", JsonStr(b.Definitions), JsonStr(tt.wantDeinations))
-			}
-		})
-	}
-}
-
-func TestDefinitionBuilder_buildMap(t *testing.T) {
-	type Foo struct {
-		Value string
-	}
-
-	type fields struct {
-		Definitions map[string]spec.Schema
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		data   interface{}
-		want   *spec.Schema
-	}{
-		{
-			name: "empty interface{} map",
-			data: map[string]interface{}{},
-			want: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					Type: []string{"object"},
-					AdditionalProperties: &spec.SchemaOrBool{
-						Allows: true,
-						Schema: ObjectProperty(),
-					},
-				},
-			},
-		},
-		{
-			name: "empty struct map",
-			data: map[string]Foo{},
-			want: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					Type: []string{"object"},
-					AdditionalProperties: &spec.SchemaOrBool{
-						Allows: true,
-						Schema: spec.RefSchema(DefinitionsRoot + "openapi.Foo"),
-					},
-				},
-			},
-		},
-
-		{
-			name: "fixed keys struct map",
-			data: map[string]Foo{
-				"must": {},
-			},
-			want: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					Type: []string{"object"},
-					Properties: map[string]spec.Schema{
-						"must": *spec.RefSchema(DefinitionsRoot + "openapi.Foo"),
-					},
-					AdditionalProperties: &spec.SchemaOrBool{
-						Allows: true,
-						Schema: spec.RefSchema(DefinitionsRoot + "openapi.Foo"),
-					},
-				},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Builder{
-				Definitions: tt.fields.Definitions,
-			}
-			v := reflect.ValueOf(tt.data)
-			if got := b.buildMap(v); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("DefinitionBuilder.buildMap() = %v, want %v", JsonStr(got), JsonStr(tt.want))
-			}
-		})
-	}
-}
-
-func TestDefinitionBuilder_buildInterface(t *testing.T) {
-	type fields struct {
-		Definitions map[string]spec.Schema
-		Options     InterfaceBuildOption
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		v      reflect.Value
-		want   *spec.Schema
-	}{
-		{
-			name: "no sample value interface{}",
-			v: func() reflect.Value {
-				type InnerInterface struct {
-					Data interface{}
-				}
-				return reflect.ValueOf(InnerInterface{}).FieldByName("Data")
-			}(),
-			want: ObjectProperty(),
-		},
-		{
-			name:   "valued interface{}",
-			fields: fields{Options: InterfaceBuildOptionMerge},
-			v: func() reflect.Value {
-				type InnerInterface struct {
-					Data interface{}
-				}
-				return reflect.ValueOf(InnerInterface{Data: ""}).FieldByName("Data")
-			}(),
-			want: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					AnyOf: []spec.Schema{
-						*ObjectProperty(),
-						*spec.StringProperty(),
-					},
-				},
-			},
-		},
-		{
-			name:   "replaced valued interface{}",
-			fields: fields{Options: InterfaceBuildOptionOverride},
-			v: func() reflect.Value {
-				type InnerInterface struct {
-					Data interface{}
-				}
-				return reflect.ValueOf(InnerInterface{Data: ""}).FieldByName("Data")
-			}(),
-			want: spec.StringProperty(),
-		},
-	}
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Builder{
-				Definitions:          tt.fields.Definitions,
-				InterfaceBuildOption: tt.fields.Options,
-			}
-			if got := b.buildInterface(tt.v); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("DefinitionBuilder.buildInterface() = %v, want %v", JsonStr(got), JsonStr(tt.want))
-			}
-			if !reflect.DeepEqual(b.Definitions, tt.fields.Definitions) {
-				t.Errorf("DefinitionBuilder.Definitions = %v, want %v", JsonStr(b.Definitions), JsonStr(tt.fields.Definitions))
-			}
-		})
-	}
-}
-
-func TestDefinitionBuilder_buildStruct(t *testing.T) {
-	type Bar struct {
-		Kind string `json:"kind,omitempty"`
-	}
-
-	type Value struct {
-		Value string `json:"value,omitempty"`
-	}
-
-	type Ignored struct {
-		Ignored string `json:"-"`
-		ignored string // unExported
-		Value   string `json:"value,omitempty"`
-	}
-
-	type Embedded struct {
-		Bar
-		Value Value `json:",inline"` // json inlined
-	}
-
-	type InterfacedStruct struct {
-		Name  string      `json:"name,omitempty"`
-		Data  interface{} `json:"data,omitempty"`
-		Items []any       `json:"items,omitempty"`
-	}
-
-	type RecursiveStruct struct {
-		Data *RecursiveStruct
-	}
-
-	type GenericStruct[T any] struct {
-		Items []T `json:"items,omitempty" openapi:"dynamic"`
-	}
-
-	type fields struct {
-		Definitions map[string]spec.Schema
-	}
-
+func TestBuilderBuildPrimitiveSchemas(t *testing.T) {
 	tests := []struct {
 		name            string
-		fields          fields
-		data            interface{}
-		want            *spec.Schema
-		wantDefinitions map[string]spec.Schema
+		value           any
+		types           []string
+		format          string
+		contentEncoding string
 	}{
-		{
-			name: "simple struct",
-			data: Bar{},
-			want: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					Ref: spec.MustCreateRef(DefinitionsRoot + "openapi.Bar"),
-				},
-			},
-			wantDefinitions: map[string]spec.Schema{
-				"openapi.Bar": {
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"kind": *spec.StringProperty(),
-						},
-					},
-				},
-			},
-		},
-		{
-			name: "struct with json ignored fields",
-			data: Ignored{},
-			want: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					Ref: spec.MustCreateRef(DefinitionsRoot + "openapi.Ignored"),
-				},
-			},
-			wantDefinitions: map[string]spec.Schema{
-				"openapi.Ignored": {
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"value": *spec.StringProperty(),
-						},
-					},
-				},
-			},
-		},
-		{
-			name: "embedded struct only",
-			data: Embedded{},
-			want: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					Ref: spec.MustCreateRef(DefinitionsRoot + "openapi.Embedded"),
-				},
-			},
-			wantDefinitions: map[string]spec.Schema{
-				"openapi.Bar": {
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"kind": *spec.StringProperty(),
-						},
-					},
-				},
-				"openapi.Value": {
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"value": *spec.StringProperty(),
-						},
-					},
-				},
-				"openapi.Embedded": {
-					SchemaProps: spec.SchemaProps{
-						AllOf: []spec.Schema{
-							*spec.RefSchema(DefinitionsRoot + "openapi.Bar"),
-							*spec.RefSchema(DefinitionsRoot + "openapi.Value"),
-						},
-					},
-				},
-			},
-		},
-		{
-			name: "interfaced struct",
-			data: InterfacedStruct{},
-			want: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					AllOf: []spec.Schema{
-						*spec.RefSchema(DefinitionsRoot + "openapi.InterfacedStruct"),
-						*ObjectPropertyProperties(map[string]spec.Schema{
-							"data": *ObjectProperty(),
-							"items": {
-								SchemaProps: spec.SchemaProps{
-									Type: []string{"array"},
-									Items: &spec.SchemaOrArray{
-										Schema: ObjectProperty(),
-									},
-								},
-							},
-						}),
-					},
-				},
-			},
-			wantDefinitions: map[string]spec.Schema{
-				"openapi.InterfacedStruct": {
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"name":  *spec.StringProperty(),
-							"data":  *NullableProperty(),
-							"items": *NullableProperty(),
-						},
-					},
-				},
-			},
-		},
-		{
-			name: "valued interface struct",
-			data: InterfacedStruct{
-				Data: Value{},
-			},
-			want: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					AllOf: []spec.Schema{
-						*spec.RefSchema(DefinitionsRoot + "openapi.InterfacedStruct"),
-						{
-							SchemaProps: spec.SchemaProps{
-								Type: []string{"object"},
-								Properties: map[string]spec.Schema{
-									"data": *spec.RefSchema(DefinitionsRoot + "openapi.Value"),
-									"items": {
-										SchemaProps: spec.SchemaProps{
-											Type: []string{"array"},
-											Items: &spec.SchemaOrArray{
-												Schema: ObjectProperty(),
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			wantDefinitions: map[string]spec.Schema{
-				"openapi.Value": {
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"value": *spec.StringProperty(),
-						},
-					},
-				},
-				"openapi.InterfacedStruct": {
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"name":  *spec.StringProperty(),
-							"data":  *NullableProperty(),
-							"items": *NullableProperty(),
-						},
-					},
-				},
-			},
-		},
-		{
-			name: "recursive struct",
-			data: RecursiveStruct{},
-			want: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					Ref: spec.MustCreateRef(DefinitionsRoot + "openapi.RecursiveStruct"),
-				},
-			},
-			wantDefinitions: map[string]spec.Schema{
-				"openapi.RecursiveStruct": {
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"Data": *spec.RefSchema(DefinitionsRoot + "openapi.RecursiveStruct"),
-						},
-					},
-				},
-			},
-		},
-		{
-			name: "generic struct string",
-			data: GenericStruct[string]{},
-			want: &spec.Schema{
-				SchemaProps: spec.SchemaProps{
-					AllOf: []spec.Schema{
-						{
-							SchemaProps: spec.SchemaProps{
-								Ref: spec.MustCreateRef(DefinitionsRoot + "openapi.GenericStruct"),
-							},
-						},
-						{
-							SchemaProps: spec.SchemaProps{
-								Type: []string{"object"},
-								Properties: map[string]spec.Schema{
-									"items": {
-										SchemaProps: spec.SchemaProps{
-											Type: []string{"array"},
-											Items: &spec.SchemaOrArray{
-												Schema: spec.StringProperty(),
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			wantDefinitions: map[string]spec.Schema{
-				"openapi.GenericStruct": *ObjectPropertyProperties(spec.SchemaProperties{
-					"items": *NullableProperty(),
-				}),
-			},
-		},
+		{name: "string", value: "", types: []string{openapi3.TypeString}},
+		{name: "boolean", value: false, types: []string{openapi3.TypeBoolean}},
+		{name: "integer", value: int64(0), types: []string{openapi3.TypeInteger}, format: "int64"},
+		{name: "number", value: float64(0), types: []string{openapi3.TypeNumber}, format: "double"},
+		{name: "json number", value: json.Number("0"), types: []string{openapi3.TypeNumber}, format: "double"},
+		{name: "bytes", value: []byte(nil), types: []string{openapi3.TypeString}, format: "byte", contentEncoding: "base64"},
+		{name: "time", value: time.Time{}, types: []string{openapi3.TypeString}, format: "date-time"},
+		{name: "duration", value: time.Duration(0), types: []string{openapi3.TypeInteger}, format: "int64"},
 	}
+
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			b := &Builder{
-				Definitions:          tt.fields.Definitions,
-				InterfaceBuildOption: InterfaceBuildOptionOverride,
-			}
-			v := reflect.ValueOf(tt.data)
-			got := b.buildStruct(v)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("DefinitionBuilder.buildStruct() = %v, want %v", JsonStr(got), JsonStr(tt.want))
-			}
+			ref := NewBuilder(InterfaceBuildOptionDefault, nil).Build(tt.value)
+			require.NotNil(t, ref)
+			require.NotNil(t, ref.Value)
+			assert.Equal(t, tt.types, ref.Value.Type.Slice())
+			assert.Equal(t, tt.format, ref.Value.Format)
+			assert.Equal(t, tt.contentEncoding, ref.Value.ContentEncoding)
 		})
 	}
 }
 
-func TestBuilder_buildSlice(t *testing.T) {
-	type SliceItem struct {
-		Value string `json:"value,omitempty"`
+func TestBuilderBuildStructComponents(t *testing.T) {
+	type Embedded struct {
+		Kind string `json:"kind"`
+	}
+	type Model struct {
+		Embedded
+		Name    string `json:"name"`
+		Comment string `json:"comment,omitempty"`
+		Ignored string `json:"-"`
 	}
 
-	type fields struct {
-		InterfaceBuildOption InterfaceBuildOption
-		Definitions          map[string]spec.Schema
+	builder := NewBuilder(InterfaceBuildOptionDefault, nil)
+	ref := builder.Build(Model{})
+
+	require.Equal(t, ComponentsSchemasRoot+"openapi.Model", ref.Ref)
+	model := builder.Schemas["openapi.Model"]
+	require.NotNil(t, model)
+	require.NotNil(t, model.Value)
+	require.Len(t, model.Value.AllOf, 2)
+
+	inline := model.Value.AllOf[0].Value
+	require.NotNil(t, inline)
+	assert.Contains(t, inline.Properties, "name")
+	assert.Contains(t, inline.Properties, "comment")
+	assert.NotContains(t, inline.Properties, "Ignored")
+	assert.Equal(t, []string{"name"}, inline.Required)
+	assert.Equal(t, ComponentsSchemasRoot+"openapi.Embedded", model.Value.AllOf[1].Ref)
+}
+
+func TestBuilderBuildRecursiveSchema(t *testing.T) {
+	type Node struct {
+		Name     string  `json:"name"`
+		Children []*Node `json:"children,omitempty"`
 	}
-	type args struct {
-		v reflect.Value
+
+	document := newTestDocument()
+	builder := NewBuilder(InterfaceBuildOptionDefault, document.Components.Schemas)
+	ref := builder.Build(Node{})
+	require.Equal(t, ComponentsSchemasRoot+"openapi.Node", ref.Ref)
+
+	node := builder.Schemas["openapi.Node"].Value
+	require.NotNil(t, node)
+	children := node.Properties["children"]
+	require.NotNil(t, children)
+	require.NotNil(t, children.Value)
+	require.NotNil(t, children.Value.Items)
+	require.Len(t, children.Value.Items.Value.AnyOf, 2)
+	assert.Equal(t, ComponentsSchemasRoot+"openapi.Node", children.Value.Items.Value.AnyOf[0].Ref)
+	assert.True(t, children.Value.Items.Value.AnyOf[1].Value.Type.Is(openapi3.TypeNull))
+
+	require.NoError(t, AddOpenAPIOperation(document, api.GET("/nodes").Response(Node{}), builder))
+	require.NoError(t, document.Validate(context.Background(), openapi3.IsOpenAPI31OrLater()))
+}
+
+func TestBuilderBuildNullablePointers(t *testing.T) {
+	type Child struct {
+		Name string `json:"name"`
 	}
+	type Model struct {
+		Count *int64 `json:"count"`
+		Child *Child `json:"child,omitempty"`
+	}
+
+	builder := NewBuilder(InterfaceBuildOptionDefault, nil)
+	builder.Build(Model{})
+	model := builder.Schemas["openapi.Model"].Value
+
+	assert.Equal(t, []string{openapi3.TypeInteger, openapi3.TypeNull}, model.Properties["count"].Value.Type.Slice())
+	require.Len(t, model.Properties["child"].Value.AnyOf, 2)
+	assert.Equal(t, ComponentsSchemasRoot+"openapi.Child", model.Properties["child"].Value.AnyOf[0].Ref)
+	assert.True(t, model.Properties["child"].Value.AnyOf[1].Value.Type.Is(openapi3.TypeNull))
+}
+
+func TestBuilderBuildDynamicInterfaceOverlay(t *testing.T) {
+	type Value struct {
+		Value string `json:"value"`
+	}
+	type Envelope struct {
+		Data any `json:"data" openapi:"dynamic"`
+	}
+
+	builder := NewBuilder(InterfaceBuildOptionOverride, nil)
+	ref := builder.Build(Envelope{Data: Value{}})
+	require.NotNil(t, ref.Value)
+	require.Len(t, ref.Value.AllOf, 2)
+	assert.Equal(t, ComponentsSchemasRoot+"openapi.Envelope", ref.Value.AllOf[0].Ref)
+	overlay := ref.Value.AllOf[1].Value
+	require.NotNil(t, overlay)
+	assert.Equal(t, ComponentsSchemasRoot+"openapi.Value", overlay.Properties["data"].Ref)
+
+	base := builder.Schemas["openapi.Envelope"].Value
+	require.NotNil(t, base)
+	assert.NotNil(t, base.Properties["data"].Value)
+	assert.Nil(t, base.Properties["data"].Value.Type)
+}
+
+func TestBuilderSanitizesGenericComponentNames(t *testing.T) {
+	type Page[T any] struct {
+		Items []T `json:"items"`
+	}
+
+	builder := NewBuilder(InterfaceBuildOptionDefault, nil)
+	ref := builder.Build(Page[string]{})
+	assert.Equal(t, ComponentsSchemasRoot+"openapi.Page_string_", ref.Ref)
+	assert.Contains(t, builder.Schemas, "openapi.Page_string_")
+
+	type 模型 struct {
+		Name string `json:"name"`
+	}
+	unicodeRef := builder.Build(模型{})
+	assert.Equal(t, ComponentsSchemasRoot+"openapi.__", unicodeRef.Ref)
+	assert.Contains(t, builder.Schemas, "openapi.__")
+}
+
+func TestBuilderBuildMapAndHeterogeneousSlice(t *testing.T) {
+	builder := NewBuilder(InterfaceBuildOptionOverride, nil)
+
+	mapRef := builder.Build(map[string]int{"one": 1})
+	require.NotNil(t, mapRef.Value)
+	assert.True(t, mapRef.Value.Type.Is(openapi3.TypeObject))
+	assert.NotNil(t, mapRef.Value.AdditionalProperties.Schema)
+	assert.Contains(t, mapRef.Value.Properties, "one")
+
+	sliceRef := builder.Build([]any{"value", int64(1)})
+	require.NotNil(t, sliceRef.Value)
+	require.NotNil(t, sliceRef.Value.Items)
+	require.NotNil(t, sliceRef.Value.Items.Value)
+	assert.Len(t, sliceRef.Value.Items.Value.AnyOf, 2)
+}
+
+func TestBuilderInterfaceModes(t *testing.T) {
+	type Value struct {
+		Data any
+	}
+	value := reflect.ValueOf(Value{Data: "sample"}).FieldByName("Data")
+	emptyValue := reflect.ValueOf(Value{}).FieldByName("Data")
+
 	tests := []struct {
 		name   string
-		fields fields
-		data   interface{}
-		want   *spec.Schema
+		option InterfaceBuildOption
+		value  reflect.Value
+		check  func(*testing.T, *openapi3.SchemaRef)
 	}{
 		{
-			name: "string slice",
-			data: []string{},
-			want: spec.ArrayProperty(spec.StringProperty()),
+			name:   "default concrete value",
+			option: InterfaceBuildOptionDefault,
+			check: func(t *testing.T, ref *openapi3.SchemaRef) {
+				assert.True(t, ref.Value.Type.Is(openapi3.TypeString))
+			},
 		},
 		{
-			name: "simple slice",
-			data: []SliceItem{},
-			want: spec.ArrayProperty(
-				spec.RefSchema(DefinitionsRoot + "openapi.SliceItem"),
-			),
+			name:   "default object without sample",
+			option: InterfaceBuildOptionDefault,
+			value:  emptyValue,
+			check: func(t *testing.T, ref *openapi3.SchemaRef) {
+				assert.True(t, ref.Value.Type.Is(openapi3.TypeObject))
+			},
+		},
+		{
+			name:   "override concrete value",
+			option: InterfaceBuildOptionOverride,
+			check: func(t *testing.T, ref *openapi3.SchemaRef) {
+				assert.True(t, ref.Value.Type.Is(openapi3.TypeString))
+			},
+		},
+		{
+			name:   "merge object and concrete value",
+			option: InterfaceBuildOptionMerge,
+			check: func(t *testing.T, ref *openapi3.SchemaRef) {
+				require.Len(t, ref.Value.AnyOf, 2)
+				assert.True(t, ref.Value.AnyOf[0].Value.Type.Is(openapi3.TypeObject))
+				assert.True(t, ref.Value.AnyOf[1].Value.Type.Is(openapi3.TypeString))
+			},
+		},
+		{
+			name:   "ignore",
+			option: InterfaceBuildOptionIgnore,
+			check: func(t *testing.T, ref *openapi3.SchemaRef) {
+				assert.Nil(t, ref)
+			},
 		},
 	}
+
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			b := &Builder{
-				InterfaceBuildOption: tt.fields.InterfaceBuildOption,
-				Definitions:          tt.fields.Definitions,
+			fieldValue := tt.value
+			if !fieldValue.IsValid() {
+				fieldValue = value
 			}
-			v := reflect.ValueOf(tt.data)
-			if got := b.buildSlice(v); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Builder.buildSlice() = %v, want %v", JsonStr(got), JsonStr(tt.want))
-			}
+			tt.check(t, NewBuilder(tt.option, nil).BuildSchema(fieldValue))
 		})
 	}
+}
+
+func TestBuilderIgnoreDynamicInterfaceField(t *testing.T) {
+	type Envelope struct {
+		Name string `json:"name"`
+		Data any    `json:"data"`
+	}
+
+	builder := NewBuilder(InterfaceBuildOptionIgnore, nil)
+	ref := builder.Build(Envelope{Data: "ignored"})
+	require.NotNil(t, ref)
+	schema := builder.Schemas["openapi.Envelope"].Value
+	assert.Contains(t, schema.Properties, "name")
+	assert.NotContains(t, schema.Properties, "data")
+}
+
+func TestBuilderBuildEmptyCollectionsFromElementType(t *testing.T) {
+	type Item struct {
+		ID string `json:"id"`
+	}
+
+	builder := NewBuilder(InterfaceBuildOptionDefault, nil)
+	slice := builder.Build([]Item{})
+	require.NotNil(t, slice.Value.Items)
+	assert.Equal(t, ComponentsSchemasRoot+"openapi.Item", slice.Value.Items.Ref)
+
+	mapping := builder.Build(map[string]Item{})
+	require.NotNil(t, mapping.Value.AdditionalProperties.Schema)
+	assert.Equal(t, ComponentsSchemasRoot+"openapi.Item", mapping.Value.AdditionalProperties.Schema.Ref)
+}
+
+func TestBuilderBuildDynamicGenericOverlays(t *testing.T) {
+	type Envelope[T any] struct {
+		Items []T `json:"items" openapi:"dynamic"`
+	}
+
+	builder := NewBuilder(InterfaceBuildOptionOverride, nil)
+	stringEnvelope := builder.Build(Envelope[string]{})
+	integerEnvelope := builder.Build(Envelope[int64]{})
+
+	assert.Contains(t, builder.Schemas, "openapi.Envelope")
+	assert.Equal(t, ComponentsSchemasRoot+"openapi.Envelope", stringEnvelope.Value.AllOf[0].Ref)
+	assert.True(t, stringEnvelope.Value.AllOf[1].Value.Properties["items"].Value.Items.Value.Type.Is(openapi3.TypeString))
+	assert.Equal(t, ComponentsSchemasRoot+"openapi.Envelope", integerEnvelope.Value.AllOf[0].Ref)
+	assert.True(t, integerEnvelope.Value.AllOf[1].Value.Properties["items"].Value.Items.Value.Type.Is(openapi3.TypeInteger))
 }
