@@ -30,6 +30,8 @@ const (
 type DownloadOptions struct {
 	Cachedir string
 	Auth     AuthOptions
+	// PlainHTTP allows OCI registries served without TLS.
+	PlainHTTP bool
 }
 
 type AuthOptions struct {
@@ -151,16 +153,20 @@ func DownloadChart(ctx context.Context, repourl, name, version string, into stri
 		RepositoryCache:  settings.RepositoryCache,
 		Options: []getter.Option{
 			getter.WithInsecureSkipVerifyTLS(true),
-			getter.WithPlainHTTP(true),
+			getter.WithPlainHTTP(options.PlainHTTP),
 			getter.WithBasicAuth(options.Auth.Username, options.Auth.Password),
 		},
 	}
 	if registry.IsOCI(repourl) {
-		registryClient, err := registry.NewClient(
+		registryOptions := []registry.ClientOption{
 			registry.ClientOptDebug(settings.Debug),
 			registry.ClientOptWriter(logwriter),
 			registry.ClientOptCredentialsFile(settings.RegistryConfig),
-		)
+		}
+		if options.PlainHTTP {
+			registryOptions = append(registryOptions, registry.ClientOptPlainHTTP())
+		}
+		registryClient, err := registry.NewClient(registryOptions...)
 		if err != nil {
 			return "", err
 		}
