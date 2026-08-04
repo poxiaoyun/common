@@ -119,3 +119,23 @@ func TestConcurrentUniqueIndex(t *testing.T) {
 		t.Fatalf("successful creates = %d, want 1", got)
 	}
 }
+
+func TestGetUsesNameArgument(t *testing.T) {
+	ctx := context.Background()
+	storage := newUserStore(t)
+	created := &user{
+		ObjectMeta: store.ObjectMeta{ID: "one"},
+		Email:      "one@example.com",
+	}
+	if err := storage.Create(ctx, created); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	got := &user{}
+	if err := storage.Get(ctx, created.ID, got); err != nil {
+		t.Fatalf("Get(%q) error = %v", created.ID, err)
+	}
+	if got.ID != created.ID || got.Email != created.Email {
+		t.Fatalf("Get(%q) = %#v, want %#v", created.ID, got, created)
+	}
+}

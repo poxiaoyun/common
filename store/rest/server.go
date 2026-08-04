@@ -51,6 +51,7 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 				Sort:             api.Query(r, "sort", ""),
 				IncludeSubScopes: api.Query(r, "includeSubscopes", false),
 				ResourceVersion:  parseResourceVersion(api.Query(r, "resourceVersion", "")),
+				Continue:         api.Query(r, "continue", ""),
 			}
 			labelsel, fildsel, err := decodeSelector(r)
 			if err != nil {

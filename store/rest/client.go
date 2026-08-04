@@ -68,6 +68,7 @@ func (c *Client) PatchBatch(ctx context.Context, obj store.ObjectList, patch sto
 	return c.cli.Patch(c.getPath(resource, "")).
 		Query("batch", "true").
 		Query("status", strconv.FormatBool(false)).
+		Queries(queries).
 		Body(bytes.NewReader(patchdata), string(patchtype)).
 		Return(obj).Send(ctx)
 }

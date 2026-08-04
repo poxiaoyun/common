@@ -78,8 +78,8 @@ type SortField struct {
 	Direction SortDirection `json:"direction,omitempty"`
 }
 
-// ParseSort parse a sort query string into a list of SortBy
-// example: "name-,time+" => []SortBy{{Field: "name", ASC: false}, {Field: "time", ASC: true}}
+// ParseSort parses a sort query string. Prefix directions ("-name,+time")
+// are preferred; the historical suffix form ("name-,time+") is also accepted.
 func ParseSort(sort string) []SortField {
 	if sort == "" {
 		return nil
@@ -91,13 +91,28 @@ func ParseSort(sort string) []SortField {
 			continue
 		}
 		var direction SortDirection
-		switch s[len(s)-1] {
+		switch s[0] {
 		case '-':
 			direction = SortDirectionDesc
-			s = s[:len(s)-1]
+			s = s[1:]
 		case '+':
 			direction = SortDirectionAsc
-			s = s[:len(s)-1]
+			s = s[1:]
+		}
+		// Keep accepting the historical suffix form ("name-") while the
+		// documented and preferred form is the prefix form ("-name").
+		if direction == SortDirectionUnknown && s != "" {
+			switch s[len(s)-1] {
+			case '-':
+				direction = SortDirectionDesc
+				s = s[:len(s)-1]
+			case '+':
+				direction = SortDirectionAsc
+				s = s[:len(s)-1]
+			}
+		}
+		if s == "" {
+			continue
 		}
 		sortbys = append(sortbys, SortField{Field: s, Direction: direction})
 	}

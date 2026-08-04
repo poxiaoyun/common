@@ -72,8 +72,16 @@ func TestParseSort(t *testing.T) {
 			},
 		},
 		{
-			name: "multiple sorts",
+			name: "legacy suffix sorts",
 			sort: "name-,time+",
+			want: []meta.SortField{
+				{Field: "name", Direction: meta.SortDirectionDesc},
+				{Field: "time", Direction: meta.SortDirectionAsc},
+			},
+		},
+		{
+			name: "documented prefix sorts",
+			sort: "-name,+time",
 			want: []meta.SortField{
 				{Field: "name", Direction: meta.SortDirectionDesc},
 				{Field: "time", Direction: meta.SortDirectionAsc},

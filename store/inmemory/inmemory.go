@@ -66,7 +66,7 @@ func (i *InMemory) DeleteBatch(ctx context.Context, obj store.ObjectList, opts .
 
 func (i *InMemory) Get(ctx context.Context, name string, obj store.Object, opts ...store.GetOption) error {
 	return i.core.on(ctx, obj, func(ctx context.Context, resources string) error {
-		return i.core.get(resources, i.scopes, obj.GetID(), obj)
+		return i.core.get(resources, i.scopes, name, obj)
 	})
 }
 
