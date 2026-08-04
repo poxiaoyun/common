@@ -22,10 +22,10 @@ func main() {
 	// Set fallback language
 	manager.SetFallbackLanguage("en")
 
-	fmt.Println("=== Basic Usage Examples ===\n")
+	fmt.Print("=== Basic Usage Examples ===\n\n")
 	basicUsageExamples(manager)
 
-	fmt.Println("\n=== Plural Examples ===\n")
+	fmt.Print("\n=== Plural Examples ===\n\n")
 	pluralExamples(manager)
 
 	fmt.Println("\n=== HTTP Server Example ===")
