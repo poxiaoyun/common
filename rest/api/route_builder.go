@@ -21,8 +21,7 @@ import (
 )
 
 type Route struct {
-	Summary        string
-	OperationName  string
+	SummaryText    string
 	Description    string
 	Path           string
 	Method         string
@@ -104,22 +103,28 @@ func (n Route) Tag(tags ...string) Route {
 	return n
 }
 
-// Doc sets the summary of the route, which is used in OpenAPI documentation.
-func (n Route) Doc(summary string) Route {
-	n.Summary = summary
-	return n
-}
-
-// Desc sets the description of the route, which is used in OpenAPI documentation.
+// Desc sets the human-readable description of the route.
 func (n Route) Desc(desc string) Route {
 	n.Description = desc
 	return n
 }
 
-// Operation sets the operation name of the route, which is used in OpenAPI documentation.
-func (n Route) Operation(operation string) Route {
-	n.OperationName = operation
+// Summary sets the human-readable summary of the route.
+func (n Route) Summary(summary string) Route {
+	n.SummaryText = summary
 	return n
+}
+
+// Doc is kept as a compatibility alias for Summary.
+// Deprecated: use Summary.
+func (n Route) Doc(summary string) Route {
+	return n.Summary(summary)
+}
+
+// Operation is kept as a compatibility alias for Summary.
+// Deprecated: use Summary.
+func (n Route) Operation(summary string) Route {
+	return n.Summary(summary)
 }
 
 func (n Route) Deprecated() Route {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,11 +31,6 @@ func AddOpenAPIOperation(document *openapi3.T, route api.Route, builder *Builder
 	if document.Paths == nil {
 		document.Paths = openapi3.NewPaths()
 	}
-
-	operation, err := buildRouteOperation(route, builder)
-	if err != nil {
-		return fmt.Errorf("build %s %s: %w", route.Method, route.Path, err)
-	}
 	method := route.Method
 	if method == "" {
 		method = http.MethodGet
@@ -49,6 +45,14 @@ func AddOpenAPIOperation(document *openapi3.T, route api.Route, builder *Builder
 	pathItem := document.Paths.Value(route.Path)
 	if pathItem == nil {
 		pathItem = &openapi3.PathItem{}
+	}
+	if pathItem.GetOperation(method) != nil {
+		return fmt.Errorf("%s %s is already documented", method, route.Path)
+	}
+
+	operation, err := buildRouteOperation(route, builder)
+	if err != nil {
+		return fmt.Errorf("build %s %s: %w", method, route.Path, err)
 	}
 	pathItem.SetOperation(method, operation)
 	document.Paths.Set(route.Path, pathItem)
@@ -67,23 +71,14 @@ func buildRouteOperation(route api.Route, builder *Builder) (*openapi3.Operation
 	if err != nil {
 		return nil, fmt.Errorf("response example is not valid JSON: %w", err)
 	}
-	summary := route.Summary
-	if summary == "" {
-		summary = route.OperationName
-	}
-	description := route.Description
-	if description == "" {
-		description = summary
-	}
 	tags := slices.Clone(route.Tags)
 	if len(tags) == 0 {
 		tags = []string{"Default"}
 	}
-
 	operation := &openapi3.Operation{
 		Tags:        tags,
-		Summary:     summary,
-		Description: description,
+		Summary:     route.SummaryText,
+		Description: route.Description,
 		OperationID: operationID(route),
 		Deprecated:  route.IsDeprecated,
 		Responses:   openapi3.NewResponses(),
@@ -296,15 +291,58 @@ func responseDescription(status int, description string) string {
 }
 
 func operationID(route api.Route) string {
-	if route.OperationName != "" {
-		return strings.ReplaceAll(route.OperationName, " ", "_")
-	}
-	if route.Summary != "" {
-		return strings.ReplaceAll(route.Summary, " ", "_")
-	}
 	method := route.Method
 	if method == "" {
 		method = http.MethodGet
 	}
-	return strings.ToLower(method) + "_" + route.Path
+	method = canonicalIdentifier(method)
+	pathID := canonicalPathIdentifier(route.Path)
+	if pathID == "" {
+		return method
+	}
+	return method + "_" + pathID
+}
+
+var pathParameterPattern = regexp.MustCompile(`\{([^{}]+)\}(\*)?`)
+
+// canonicalPathIdentifier preserves the useful parts of an HTTP path while
+// producing an identifier-safe value. Path parameters become "by_<name>" and
+// Google API custom-method suffixes (":ACTION") become a final action segment;
+// for example, PUT /instances/{instance}:start becomes
+// put_instances_by_instance_start.
+func canonicalPathIdentifier(routePath string) string {
+	rewritten := pathParameterPattern.ReplaceAllStringFunc(routePath, func(match string) string {
+		parts := pathParameterPattern.FindStringSubmatch(match)
+		identifier := "_by_" + parts[1]
+		if parts[2] == "*" {
+			identifier += "_wildcard"
+		}
+		return identifier + "_"
+	})
+	rewritten = strings.ReplaceAll(rewritten, "*", "_wildcard_")
+	return canonicalIdentifier(rewritten)
+}
+
+func canonicalIdentifier(value string) string {
+	var identifier strings.Builder
+	separator := false
+	for _, char := range value {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			if separator && identifier.Len() > 0 {
+				identifier.WriteByte('_')
+			}
+			identifier.WriteRune(char + ('a' - 'A'))
+			separator = false
+		case char >= 'a' && char <= 'z' || char >= '0' && char <= '9':
+			if separator && identifier.Len() > 0 {
+				identifier.WriteByte('_')
+			}
+			identifier.WriteRune(char)
+			separator = false
+		default:
+			separator = true
+		}
+	}
+	return identifier.String()
 }

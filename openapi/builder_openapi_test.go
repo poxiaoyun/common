@@ -22,8 +22,7 @@ func TestAddOpenAPIOperationBuildsNativeOAS31(t *testing.T) {
 	document := newTestDocument()
 	builder := NewBuilder(InterfaceBuildOptionDefault, document.Components.Schemas)
 	route := api.POST("/widgets/{id}").
-		Operation("create widget").
-		Doc("Create widget").
+		Summary("Create widget").
 		Desc("Creates one widget").
 		Tag("Widgets", "Write").
 		Consume(mediaTypeJSON).
@@ -41,7 +40,7 @@ func TestAddOpenAPIOperationBuildsNativeOAS31(t *testing.T) {
 	require.NoError(t, AddOpenAPIOperation(document, route, builder))
 	operation := document.Paths.Value("/widgets/{id}").Post
 	require.NotNil(t, operation)
-	assert.Equal(t, "create_widget", operation.OperationID)
+	assert.Equal(t, "post_widgets_by_id", operation.OperationID)
 	assert.Equal(t, []string{"Widgets", "Write"}, operation.Tags)
 	assert.Equal(t, true, operation.Extensions["x-internal"])
 
@@ -69,6 +68,69 @@ func TestAddOpenAPIOperationBuildsNativeOAS31(t *testing.T) {
 		context.Background(),
 		openapi3.IsOpenAPI31OrLater(),
 	))
+}
+
+func TestOperationIDDefaultsToCanonicalMethodAndMountedPath(t *testing.T) {
+	tests := []struct {
+		name  string
+		route api.Route
+		want  string
+	}{
+		{
+			name:  "path parameter",
+			route: api.GET("/v1/clusters/{cluster}/instances").Summary("List instances"),
+			want:  "get_v1_clusters_by_cluster_instances",
+		},
+		{
+			name:  "nested path parameters",
+			route: api.GET("/v1/clusters/{cluster}/namespaces/{namespace}/instances").Summary("List instances"),
+			want:  "get_v1_clusters_by_cluster_namespaces_by_namespace_instances",
+		},
+		{
+			name:  "Google API action suffix",
+			route: api.PUT("/v1/clusters/{cluster}/instances/{instance}:start"),
+			want:  "put_v1_clusters_by_cluster_instances_by_instance_start",
+		},
+		{
+			name:  "wildcard parameter",
+			route: api.GET("/v1/services/{name}/proxy/{subresource}*"),
+			want:  "get_v1_services_by_name_proxy_by_subresource_wildcard",
+		},
+		{
+			name:  "any route is documented as get",
+			route: api.Any("/fallback"),
+			want:  "get_fallback",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, operationID(tt.route))
+		})
+	}
+}
+
+func TestSummaryDoesNotOverrideGeneratedOperationID(t *testing.T) {
+	document := newTestDocument()
+	builder := NewBuilder(InterfaceBuildOptionDefault, document.Components.Schemas)
+	route := api.GET("/widgets").Summary("list widgets")
+
+	require.NoError(t, AddOpenAPIOperation(document, route, builder))
+	operation := document.Paths.Value("/widgets").Get
+	require.NotNil(t, operation)
+	assert.Equal(t, "list widgets", operation.Summary)
+	assert.Empty(t, operation.Description)
+	assert.Equal(t, "get_widgets", operation.OperationID)
+}
+
+func TestAddOpenAPIOperationRejectsDuplicateMethodAndPath(t *testing.T) {
+	document := newTestDocument()
+	builder := NewBuilder(InterfaceBuildOptionDefault, document.Components.Schemas)
+	require.NoError(t, AddOpenAPIOperation(document, api.GET("/widgets"), builder))
+
+	err := AddOpenAPIOperation(document, api.GET("/widgets"), builder)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "GET /widgets is already documented")
 }
 
 func TestAddOpenAPIOperationBuildsFormRequestBody(t *testing.T) {
@@ -179,7 +241,7 @@ func TestAddOpenAPIOperationTreatsAnyRouteAsGet(t *testing.T) {
 	require.NoError(t, AddOpenAPIOperation(document, api.Any("/fallback"), builder))
 	operation := document.Paths.Value("/fallback").Get
 	require.NotNil(t, operation)
-	assert.Equal(t, "get_/fallback", operation.OperationID)
+	assert.Equal(t, "get_fallback", operation.OperationID)
 }
 
 func newTestDocument() *openapi3.T {
