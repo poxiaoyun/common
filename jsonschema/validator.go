@@ -1,4 +1,4 @@
-package openapi
+package jsonschema
 
 import (
 	"context"
@@ -15,27 +15,6 @@ import (
 	"unicode/utf8"
 )
 
-func ValidateSchema(schema *Schema, data any) error {
-	validator := NewDefaultValidator()
-	output := validator.ValidateJson(*schema, data)
-	if output.Valid {
-		return nil
-	}
-	return fmt.Errorf("validation failed: %s", output.Message)
-}
-
-func ConvertToJSONCompatible(data any) (any, error) {
-	jsonBytes, err := json.Marshal(data)
-	if err != nil {
-		return nil, err
-	}
-	var jsonCompatible any
-	if err := json.Unmarshal(jsonBytes, &jsonCompatible); err != nil {
-		return nil, err
-	}
-	return jsonCompatible, nil
-}
-
 type StringFormatValidator interface {
 	Validate(ctx context.Context, schema Schema, value string) error
 }
@@ -47,7 +26,7 @@ func (f StringFormatValidatorFunc) Validate(ctx context.Context, schema Schema, 
 }
 
 type ExtensionValidator interface {
-	Validate(ctx context.Context, schema Schema, data any) OutPutError
+	Validate(ctx context.Context, schema Schema, data any) OutputError
 }
 
 func NewDefaultValidator() *Validator {
@@ -62,9 +41,7 @@ type Validator struct {
 	Extensions    map[string]ExtensionValidator
 }
 
-type OutPut = OutPutError
-
-type OutPutError struct {
+type OutputError struct {
 	Valid                   bool           `json:"valid,omitempty"`
 	Annotations             map[string]any `json:"annotations,omitempty"`
 	KeywordLocation         string         `json:"keywordLocation,omitempty"`
@@ -72,22 +49,22 @@ type OutPutError struct {
 	InstanceLocation        string         `json:"instanceLocation,omitempty"`
 	Message                 string         `json:"message,omitempty"`
 	Error                   string         `json:"error,omitempty"`
-	Errors                  []OutPutError  `json:"errors,omitempty"`
+	Errors                  []OutputError  `json:"errors,omitempty"`
 }
 
-// ValidateJson validates data against the provided schema
+// ValidateJSON validates data against the provided schema.
 // data must be JSON compatible: map[string]any, []any, string, float64, bool, nil
 // other types not supported
-func (v *Validator) ValidateJson(schema Schema, data any) OutPut {
+func (v *Validator) ValidateJSON(schema Schema, data any) OutputError {
 	return v.validate(context.Background(), schema, "", data, "")
 }
 
-func (v *Validator) ValidateJsonContext(ctx context.Context, schema Schema, data any) OutPut {
+func (v *Validator) ValidateJSONContext(ctx context.Context, schema Schema, data any) OutputError {
 	return v.validate(ctx, schema, "", data, "")
 }
 
-func (v *Validator) validate(ctx context.Context, schema Schema, keywordLocation string, data any, instanceLocation string) OutPutError {
-	var outputs []OutPutError
+func (v *Validator) validate(ctx context.Context, schema Schema, keywordLocation string, data any, instanceLocation string) OutputError {
+	var outputs []OutputError
 	// if
 	if schema.If != nil {
 		ifOutput := v.validate(ctx, *schema.If, keywordLocation+"/if", data, instanceLocation)
@@ -107,7 +84,7 @@ func (v *Validator) validate(ctx context.Context, schema Schema, keywordLocation
 	}
 	// allof
 	if len(schema.AllOf) > 0 {
-		var allofOutputs []OutPutError
+		var allofOutputs []OutputError
 		for idx, subschema := range schema.AllOf {
 			subOutput := v.validate(ctx, subschema, keywordLocation+"/allOf/"+fmt.Sprint(idx), data, instanceLocation)
 			allofOutputs = append(allofOutputs, subOutput)
@@ -116,7 +93,7 @@ func (v *Validator) validate(ctx context.Context, schema Schema, keywordLocation
 	}
 	// anyof
 	if len(schema.AnyOf) > 0 {
-		var anyofOutputs []OutPutError
+		var anyofOutputs []OutputError
 		for idx, subschema := range schema.AnyOf {
 			subOutput := v.validate(ctx, subschema, keywordLocation+"/anyOf/"+fmt.Sprint(idx), data, instanceLocation)
 			anyofOutputs = append(anyofOutputs, subOutput)
@@ -125,7 +102,7 @@ func (v *Validator) validate(ctx context.Context, schema Schema, keywordLocation
 	}
 	// oneof
 	if len(schema.OneOf) > 0 {
-		var oneofOutputs []OutPutError
+		var oneofOutputs []OutputError
 		for idx, subschema := range schema.OneOf {
 			subOutput := v.validate(ctx, subschema, keywordLocation+"/oneOf/"+fmt.Sprint(idx), data, instanceLocation)
 			oneofOutputs = append(oneofOutputs, subOutput)
@@ -135,7 +112,7 @@ func (v *Validator) validate(ctx context.Context, schema Schema, keywordLocation
 	// not
 	if schema.Not != nil {
 		if notOutput := v.validate(ctx, *schema.Not, keywordLocation+"/not", data, instanceLocation); notOutput.Valid {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/not",
 				Message:          "data must not validate against the schema in 'not'",
@@ -145,7 +122,7 @@ func (v *Validator) validate(ctx context.Context, schema Schema, keywordLocation
 	// const
 	if constValue := schema.Const; constValue != nil {
 		if !valueEquals(data, constValue) {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/const",
 				Message:          fmt.Sprintf("object does not match const value %v", constValue),
@@ -155,7 +132,7 @@ func (v *Validator) validate(ctx context.Context, schema Schema, keywordLocation
 	// enum
 	if len(schema.Enum) > 0 {
 		if !slices.ContainsFunc(schema.Enum, func(enumVal any) bool { return valueEquals(data, enumVal) }) {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/enum",
 				Message:          fmt.Sprintf("value %v is not in enum %v", data, schema.Enum),
@@ -164,10 +141,10 @@ func (v *Validator) validate(ctx context.Context, schema Schema, keywordLocation
 	}
 	// type
 	if len(schema.Type) == 0 {
-		schema.Type = StringOrArray{v.detectType(data)}
+		schema.Type = Types{v.detectType(data)}
 	}
 	if len(schema.Type) > 0 {
-		var typeOutputs []OutPutError
+		var typeOutputs []OutputError
 		for _, typ := range schema.Type {
 			typeOutput := v.validateType(ctx, schema, keywordLocation, data, instanceLocation, typ)
 			typeOutputs = append(typeOutputs, typeOutput)
@@ -187,19 +164,19 @@ func (v *Validator) validate(ctx context.Context, schema Schema, keywordLocation
 func (v *Validator) detectType(data any) string {
 	switch data.(type) {
 	case nil:
-		return SchemaTypeNull
+		return TypeNull
 	case bool:
-		return SchemaTypeBoolean
+		return TypeBoolean
 	case float64, json.Number:
-		return SchemaTypeNumber
+		return TypeNumber
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return SchemaTypeInteger
+		return TypeInteger
 	case string:
-		return SchemaTypeString
+		return TypeString
 	case []any:
-		return SchemaTypeArray
+		return TypeArray
 	case map[string]any:
-		return SchemaTypeObject
+		return TypeObject
 	default:
 		return ""
 	}
@@ -237,16 +214,16 @@ func valueEquals(a, b any) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-func (v *Validator) validateType(ctx context.Context, schema Schema, keywordLocation string, data any, instanceLocation string, typ string) OutPutError {
+func (v *Validator) validateType(ctx context.Context, schema Schema, keywordLocation string, data any, instanceLocation string, typ string) OutputError {
 	switch typ {
-	case SchemaTypeNumber:
+	case TypeNumber:
 		if floatval, ok := asFloat64(data); ok {
 			return v.validateNumberic(ctx, schema, keywordLocation, floatval, instanceLocation)
 		}
 		if number, ok := data.(json.Number); ok {
 			floatval, err := number.Float64()
 			if err != nil {
-				return OutPutError{
+				return OutputError{
 					InstanceLocation: instanceLocation,
 					KeywordLocation:  keywordLocation + "/type",
 					Message:          fmt.Sprintf("invalid number value: %v", err),
@@ -254,12 +231,12 @@ func (v *Validator) validateType(ctx context.Context, schema Schema, keywordLoca
 			}
 			return v.validateNumberic(ctx, schema, keywordLocation, floatval, instanceLocation)
 		}
-	case SchemaTypeInteger:
+	case TypeInteger:
 		if val, ok := asFloat64(data); ok {
 			if val == float64(int64(val)) {
 				return v.validateNumberic(ctx, schema, keywordLocation, val, instanceLocation)
 			}
-			return OutPutError{
+			return OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/type",
 				Message:          fmt.Sprintf("expected integer value, got number %v", val),
@@ -268,7 +245,7 @@ func (v *Validator) validateType(ctx context.Context, schema Schema, keywordLoca
 		if number, ok := data.(json.Number); ok {
 			floatval, err := number.Float64()
 			if err != nil {
-				return OutPutError{
+				return OutputError{
 					InstanceLocation: instanceLocation,
 					KeywordLocation:  keywordLocation + "/type",
 					Message:          fmt.Sprintf("invalid number value: %v", err),
@@ -277,57 +254,57 @@ func (v *Validator) validateType(ctx context.Context, schema Schema, keywordLoca
 			if floatval == float64(int64(floatval)) {
 				return v.validateNumberic(ctx, schema, keywordLocation, floatval, instanceLocation)
 			}
-			return OutPutError{
+			return OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/type",
 				Message:          fmt.Sprintf("expected integer value, got number %v", floatval),
 			}
 		}
-	case SchemaTypeBoolean:
+	case TypeBoolean:
 		if _, ok := data.(bool); ok {
-			return OutPutError{Valid: true}
+			return OutputError{Valid: true}
 		}
-	case SchemaTypeNull:
+	case TypeNull:
 		if data == nil {
-			return OutPutError{Valid: true}
+			return OutputError{Valid: true}
 		}
-	case SchemaTypeArray:
+	case TypeArray:
 		if val, ok := data.([]any); ok {
 			return v.validateArray(ctx, schema, keywordLocation, val, instanceLocation)
 		}
-	case SchemaTypeObject:
+	case TypeObject:
 		if val, ok := data.(map[string]any); ok {
 			return v.validateObject(ctx, schema, keywordLocation, val, instanceLocation)
 		}
-	case SchemaTypeString:
+	case TypeString:
 		if strval, ok := data.(string); ok {
 			return v.validateString(ctx, schema, keywordLocation, strval, instanceLocation)
 		}
 	case "":
-		return OutPutError{
+		return OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/type",
 			Message:          "no type specified in schema",
 		}
 	default:
-		return OutPutError{
+		return OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/type",
 			Message:          fmt.Sprintf("unknown type %s", typ),
 		}
 	}
-	return OutPutError{
+	return OutputError{
 		InstanceLocation: instanceLocation,
 		KeywordLocation:  keywordLocation + "/type",
 		Message:          fmt.Sprintf("expected %s value", typ),
 	}
 }
 
-func (v *Validator) validateNumberic(_ context.Context, schema Schema, keywordLocation string, data float64, instanceLocation string) OutPutError {
-	var outputs []OutPutError
+func (v *Validator) validateNumberic(_ context.Context, schema Schema, keywordLocation string, data float64, instanceLocation string) OutputError {
+	var outputs []OutputError
 	// maximum
 	if schema.Maximum != nil && data > *schema.Maximum {
-		outputs = append(outputs, OutPutError{
+		outputs = append(outputs, OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/maximum",
 			Message:          fmt.Sprintf("number %v exceeds maximum %v", data, *schema.Maximum),
@@ -335,7 +312,7 @@ func (v *Validator) validateNumberic(_ context.Context, schema Schema, keywordLo
 	}
 	// exclusiveMaximum
 	if schema.ExclusiveMaximum != nil && data >= *schema.ExclusiveMaximum {
-		outputs = append(outputs, OutPutError{
+		outputs = append(outputs, OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/exclusiveMaximum",
 			Message:          fmt.Sprintf("number %v exceeds or equals exclusiveMaximum %v", data, *schema.ExclusiveMaximum),
@@ -343,7 +320,7 @@ func (v *Validator) validateNumberic(_ context.Context, schema Schema, keywordLo
 	}
 	// minimum
 	if schema.Minimum != nil && (data < *schema.Minimum) {
-		outputs = append(outputs, OutPutError{
+		outputs = append(outputs, OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/minimum",
 			Message:          fmt.Sprintf("number %v is less than minimum %v", data, *schema.Minimum),
@@ -351,7 +328,7 @@ func (v *Validator) validateNumberic(_ context.Context, schema Schema, keywordLo
 	}
 	// exclusiveMinimum
 	if schema.ExclusiveMinimum != nil && data <= *schema.ExclusiveMinimum {
-		outputs = append(outputs, OutPutError{
+		outputs = append(outputs, OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/exclusiveMinimum",
 			Message:          fmt.Sprintf("number %v is less than or equals exclusiveMinimum %v", data, *schema.ExclusiveMinimum),
@@ -360,13 +337,13 @@ func (v *Validator) validateNumberic(_ context.Context, schema Schema, keywordLo
 	// multipleOf
 	if schema.MultipleOf != nil {
 		if *schema.MultipleOf == 0 {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/multipleOf",
 				Message:          "multipleOf cannot be zero",
 			})
 		} else if remainder := data / *schema.MultipleOf; remainder != float64(int64(remainder)) {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/multipleOf",
 				Message:          fmt.Sprintf("number %v is not a multiple of %v", data, *schema.MultipleOf),
@@ -376,11 +353,11 @@ func (v *Validator) validateNumberic(_ context.Context, schema Schema, keywordLo
 	return aggregateAllof(outputs)
 }
 
-func (v *Validator) validateString(ctx context.Context, schema Schema, keywordLocation string, data string, instanceLocation string) OutPutError {
-	var outputs []OutPutError
+func (v *Validator) validateString(ctx context.Context, schema Schema, keywordLocation string, data string, instanceLocation string) OutputError {
+	var outputs []OutputError
 	// maxLength
 	if schema.MaxLength != nil && int64(utf8.RuneCountInString(data)) > *schema.MaxLength {
-		outputs = append(outputs, OutPutError{
+		outputs = append(outputs, OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/maxLength",
 			Message:          fmt.Sprintf("string length %d exceeds maxLength %d", utf8.RuneCountInString(data), *schema.MaxLength),
@@ -388,7 +365,7 @@ func (v *Validator) validateString(ctx context.Context, schema Schema, keywordLo
 	}
 	// minLength
 	if schema.MinLength != nil && int64(utf8.RuneCountInString(data)) < *schema.MinLength {
-		outputs = append(outputs, OutPutError{
+		outputs = append(outputs, OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/minLength",
 			Message:          fmt.Sprintf("string length %d is less than minLength %d", utf8.RuneCountInString(data), *schema.MinLength),
@@ -398,13 +375,13 @@ func (v *Validator) validateString(ctx context.Context, schema Schema, keywordLo
 	if schema.Pattern != "" {
 		regexp, err := regexp.Compile(schema.Pattern)
 		if err != nil {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/pattern",
 				Message:          fmt.Sprintf("invalid pattern %s: %v", schema.Pattern, err),
 			})
 		} else if !regexp.MatchString(data) {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/pattern",
 				Message:          fmt.Sprintf("string %s does not match pattern %s", data, schema.Pattern),
@@ -415,7 +392,7 @@ func (v *Validator) validateString(ctx context.Context, schema Schema, keywordLo
 	if schema.Format != "" {
 		if formatValidator, ok := v.StringFormats[schema.Format]; ok {
 			if err := formatValidator.Validate(ctx, schema, data); err != nil {
-				outputs = append(outputs, OutPutError{
+				outputs = append(outputs, OutputError{
 					InstanceLocation: instanceLocation,
 					KeywordLocation:  keywordLocation + "/format",
 					Message:          fmt.Sprintf("string %s does not match format %s: %v", data, schema.Format, err),
@@ -426,11 +403,11 @@ func (v *Validator) validateString(ctx context.Context, schema Schema, keywordLo
 	return aggregateAllof(outputs)
 }
 
-func (v *Validator) validateArray(ctx context.Context, schema Schema, keywordLocation string, data []any, instanceLocation string) OutPutError {
-	var outputs []OutPutError
+func (v *Validator) validateArray(ctx context.Context, schema Schema, keywordLocation string, data []any, instanceLocation string) OutputError {
+	var outputs []OutputError
 	// maxItems
 	if schema.MaxItems != nil && int64(len(data)) > *schema.MaxItems {
-		outputs = append(outputs, OutPutError{
+		outputs = append(outputs, OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/maxItems",
 			Message:          fmt.Sprintf("array has %d items, exceeds maxItems %d", len(data), *schema.MaxItems),
@@ -438,7 +415,7 @@ func (v *Validator) validateArray(ctx context.Context, schema Schema, keywordLoc
 	}
 	// minItems
 	if schema.MinItems != nil && int64(len(data)) < *schema.MinItems {
-		outputs = append(outputs, OutPutError{
+		outputs = append(outputs, OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/minItems",
 			Message:          fmt.Sprintf("array has %d items, less than minItems %d", len(data), *schema.MinItems),
@@ -449,7 +426,7 @@ func (v *Validator) validateArray(ctx context.Context, schema Schema, keywordLoc
 		for idx, item := range data {
 			firstidx := slices.IndexFunc(data, func(other any) bool { return valueEquals(item, other) })
 			if firstidx != idx {
-				outputs = append(outputs, OutPutError{
+				outputs = append(outputs, OutputError{
 					InstanceLocation: instanceLocation,
 					KeywordLocation:  keywordLocation + "/uniqueItems",
 					Message:          fmt.Sprintf("array items are not unique, item at index %d is a duplicate of item at index %d", idx, firstidx),
@@ -494,7 +471,7 @@ func (v *Validator) validateArray(ctx context.Context, schema Schema, keywordLoc
 		}
 		// maxContains
 		if schema.MaxContains != nil && containsCount > *schema.MaxContains {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/maxContains",
 				Message:          fmt.Sprintf("array contains too many items matching 'contains' schema, maximum allowed is %d", *schema.MaxContains),
@@ -502,14 +479,14 @@ func (v *Validator) validateArray(ctx context.Context, schema Schema, keywordLoc
 		}
 		// minContains
 		if schema.MinContains != nil && containsCount < *schema.MinContains {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/minContains",
 				Message:          fmt.Sprintf("array does not contain enough items matching 'contains' schema, need %d but got %d", *schema.MinContains, containsCount),
 			})
 		}
 		if schema.MinContains == nil && containsCount == 0 {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/contains",
 				Message:          "array does not contain any items matching 'contains' schema",
@@ -519,11 +496,11 @@ func (v *Validator) validateArray(ctx context.Context, schema Schema, keywordLoc
 	return aggregateAllof(outputs)
 }
 
-func (v *Validator) validateObject(ctx context.Context, schema Schema, keywordLocation string, data map[string]any, instanceLocation string) OutPutError {
-	var outputs []OutPutError
+func (v *Validator) validateObject(ctx context.Context, schema Schema, keywordLocation string, data map[string]any, instanceLocation string) OutputError {
+	var outputs []OutputError
 	// maxProperties
 	if schema.MaxProperties != nil && int64(len(data)) > *schema.MaxProperties {
-		outputs = append(outputs, OutPutError{
+		outputs = append(outputs, OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/maxProperties",
 			Message:          fmt.Sprintf("object has %d properties, exceeds maxProperties %d", len(data), *schema.MaxProperties),
@@ -531,7 +508,7 @@ func (v *Validator) validateObject(ctx context.Context, schema Schema, keywordLo
 	}
 	// minProperties
 	if schema.MinProperties != nil && int64(len(data)) < *schema.MinProperties {
-		outputs = append(outputs, OutPutError{
+		outputs = append(outputs, OutputError{
 			InstanceLocation: instanceLocation,
 			KeywordLocation:  keywordLocation + "/minProperties",
 			Message:          fmt.Sprintf("object has %d properties, less than minProperties %d", len(data), *schema.MinProperties),
@@ -540,7 +517,7 @@ func (v *Validator) validateObject(ctx context.Context, schema Schema, keywordLo
 	// required
 	for _, reqProp := range schema.Required {
 		if _, ok := data[reqProp]; !ok {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/required",
 				Message:          fmt.Sprintf("missing required property %s", reqProp),
@@ -552,7 +529,7 @@ func (v *Validator) validateObject(ctx context.Context, schema Schema, keywordLo
 		if _, ok := data[depKey]; ok {
 			for _, depProp := range depProps {
 				if _, ok := data[depProp]; !ok {
-					outputs = append(outputs, OutPutError{
+					outputs = append(outputs, OutputError{
 						InstanceLocation: instanceLocation,
 						KeywordLocation:  keywordLocation + "/dependentRequired" + "/" + jsonPointerEscape(depKey),
 						Message:          fmt.Sprintf("property %s is required when %s is present", depProp, depKey),
@@ -579,7 +556,7 @@ func (v *Validator) validateObject(ctx context.Context, schema Schema, keywordLo
 		pattern, propSchema := prop.Name, prop.Schema
 		regexp, err := regexp.Compile(pattern)
 		if err != nil {
-			outputs = append(outputs, OutPutError{
+			outputs = append(outputs, OutputError{
 				InstanceLocation: instanceLocation,
 				KeywordLocation:  keywordLocation + "/patternProperties/" + jsonPointerEscape(pattern),
 				Message:          fmt.Sprintf("invalid pattern: %s", err.Error()),
@@ -605,7 +582,7 @@ func (v *Validator) validateObject(ctx context.Context, schema Schema, keywordLo
 				continue
 			}
 			if !schema.AdditionalProperties.Allows {
-				outputs = append(outputs, OutPutError{
+				outputs = append(outputs, OutputError{
 					InstanceLocation: instanceLocation,
 					KeywordLocation:  keywordLocation + "/additionalProperties",
 					Message:          fmt.Sprintf("additional property %s is not allowed", dataKey),
@@ -794,10 +771,10 @@ func validateRelativeJSONPointer(ctx context.Context, schema Schema, value strin
 	return fmt.Errorf("invalid relative-json-pointer format")
 }
 
-// aggregateAllof aggregates multiple OutPutError
-// it returns a valid OutPutError only if all of the outputs are valid
-func aggregateAllof(outputs []OutPutError) OutPutError {
-	aggregated := OutPutError{Valid: true}
+// aggregateAllof aggregates multiple OutputError
+// it returns a valid OutputError only if all of the outputs are valid
+func aggregateAllof(outputs []OutputError) OutputError {
+	aggregated := OutputError{Valid: true}
 	for _, output := range outputs {
 		if !output.Valid {
 			aggregated.Valid = false
@@ -807,22 +784,22 @@ func aggregateAllof(outputs []OutPutError) OutPutError {
 	return aggregated
 }
 
-// aggregateAnyof aggregates multiple OutPutError
-// it returns a valid OutPutError if any of the outputs is valid
-func aggregateAnyof(outputs []OutPutError) OutPutError {
-	aggregated := OutPutError{Valid: false}
+// aggregateAnyof aggregates multiple OutputError
+// it returns a valid OutputError if any of the outputs is valid
+func aggregateAnyof(outputs []OutputError) OutputError {
+	aggregated := OutputError{Valid: false}
 	for _, output := range outputs {
 		if output.Valid {
-			return OutPutError{Valid: true}
+			return OutputError{Valid: true}
 		}
 		aggregated.Errors = append(aggregated.Errors, output)
 	}
 	return aggregated
 }
 
-func aggregateOneof(outputs []OutPutError) OutPutError {
+func aggregateOneof(outputs []OutputError) OutputError {
 	validCount := 0
-	var aggregated OutPutError
+	var aggregated OutputError
 	for _, output := range outputs {
 		if output.Valid {
 			validCount++
@@ -831,7 +808,7 @@ func aggregateOneof(outputs []OutPutError) OutPutError {
 		}
 	}
 	if validCount == 1 {
-		return OutPutError{Valid: true}
+		return OutputError{Valid: true}
 	}
 	aggregated.Valid = false
 	if validCount == 0 {

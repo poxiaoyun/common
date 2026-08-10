@@ -62,11 +62,11 @@ func (b *Builder) Build(data any) *openapi3.SchemaRef {
 }
 
 var WellKnownGoTypeAsSchema = map[reflect.Type]*openapi3.SchemaRef{
-	reflect.TypeOf(json.Number("")):      schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeNumber), Format: "double"}),
-	reflect.TypeOf(json.RawMessage(nil)): AnyProperty(),
-	reflect.TypeOf([]byte(nil)):          schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeString), Format: "byte", ContentEncoding: "base64"}),
-	reflect.TypeOf(time.Time{}):          schemaValue(openapi3.NewDateTimeSchema()),
-	reflect.TypeOf(time.Duration(0)):     schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeInteger), Format: "int64", Description: "Duration in nanoseconds."}),
+	reflect.TypeFor[json.Number]():     schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeNumber), Format: "double"}),
+	reflect.TypeFor[json.RawMessage](): AnyProperty(),
+	reflect.TypeFor[[]byte]():          schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeString), Format: "byte", ContentEncoding: "base64"}),
+	reflect.TypeFor[time.Time]():       schemaValue(openapi3.NewDateTimeSchema()),
+	reflect.TypeFor[time.Duration]():   schemaValue(&openapi3.Schema{Type: schemaTypes(openapi3.TypeInteger), Format: "int64", Description: "Duration in nanoseconds."}),
 }
 
 func (b *Builder) BuildSchema(v reflect.Value) *openapi3.SchemaRef {
