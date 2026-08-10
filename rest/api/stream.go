@@ -95,13 +95,20 @@ func (w *ServerSendEventWriter[T]) Close() error {
 
 func (w *ServerSendEventWriter[T]) EncodeEvent(event string, data any) error {
 	w.buf.Reset()
-	w.buf.WriteString("event: ")
-	w.buf.WriteString(event)
-	w.buf.WriteString("\n")
+	if event != "" {
+		w.buf.WriteString("event: ")
+		w.buf.WriteString(event)
+		w.buf.WriteString("\n")
+	}
 	w.buf.WriteString("data: ")
-	// json encoder writes a newline at the end
-	if err := json.NewEncoder(&w.buf).Encode(data); err != nil {
-		return err
+	if raw, ok := data.(json.RawMessage); ok {
+		w.buf.Write(raw)
+		w.buf.WriteByte('\n')
+	} else {
+		// json encoder writes a newline at the end
+		if err := json.NewEncoder(&w.buf).Encode(data); err != nil {
+			return err
+		}
 	}
 	w.buf.WriteString("\n")
 
