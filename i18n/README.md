@@ -1,27 +1,47 @@
-# I18n - Internationalization Library
+# i18n
 
-A comprehensive, production-ready internationalization (i18n) library for Go applications.
-
-## Features
-
-- ✅ **Multiple Languages Support** - Easy support for any language
-- ✅ **Nested Translation Keys** - Organize translations with dot notation (`user.profile.title`)
-- ✅ **Template-based Translations** - Named parameters using Go templates
-- ✅ **Plural Forms** - Automatic plural handling for 15+ languages
-- ✅ **HTTP Integration** - Built-in middleware for automatic language detection
-- ✅ **Context Awareness** - Pass language preferences through context
-- ✅ **Fallback Mechanism** - Graceful degradation to default language
-- ✅ **Multiple Formats** - JSON and YAML translation files
-- ✅ **Thread-Safe** - Safe for concurrent use
-- ✅ **Zero Dependencies** - Uses only Go standard library and sigs.k8s.io/yaml
+Context-based internationalization for Go applications, with JSON/YAML
+translations, templates, plural forms, fallbacks, and HTTP language detection.
 
 ## Quick Start
 
-### 1. Create Translation Files
+Use the package-level helpers in handlers and service code. Assuming `ctx`
+contains the English localizer loaded later in this guide:
 
-Create translation files in `locales/` directory:
+```go
+message := i18n.T(ctx, "common.hello") // "Hello"
 
-**locales/en.json:**
+welcome := i18n.Tf(ctx, "common.welcome", map[string]any{
+    "name": "Alice",
+}) // "Welcome, Alice!"
+
+err := i18n.E(ctx, "errors.not_found") // error: "Resource not found"
+items := i18n.P(ctx, "items", 3)       // "3 items"
+```
+
+Pass the same `context.Context` through the application. The HTTP middleware
+puts the detected language and localizer into the request context.
+
+## Usage
+
+### 1. Initialize i18n
+
+```go
+manager := i18n.NewManager()
+
+if err := manager.LoadTranslations("./locales", i18n.FormatJSON); err != nil {
+    log.Fatal(err)
+}
+
+manager.SetFallbackLanguage("en")
+```
+
+Use `i18n.FormatYAML` for YAML files.
+
+### 2. Create translation files
+
+`locales/en.json`:
+
 ```json
 {
   "common": {
@@ -30,120 +50,106 @@ Create translation files in `locales/` directory:
   },
   "errors": {
     "not_found": "Resource not found"
+  },
+  "items": {
+    "one": "{{.count}} item",
+    "other": "{{.count}} items"
   }
 }
 ```
 
-**locales/zh-CN.json:**
+File names are used as language codes, for example `en.json` and
+`zh-CN.json`.
+
+### 3. Add the HTTP middleware
+
+```go
+mux := http.NewServeMux()
+
+mux.HandleFunc("/hello", func(w http.ResponseWriter, r *http.Request) {
+    message := i18n.T(r.Context(), "common.hello")
+    _, _ = w.Write([]byte(message))
+})
+
+handler := i18n.Middleware(manager)(mux)
+log.Fatal(http.ListenAndServe(":8080", handler))
+```
+
+The default detector checks, in order:
+
+1. Query parameter: `?lang=zh-CN`
+2. Cookie: `language=zh-CN`
+3. `Accept-Language` header
+4. Fallback language
+
+### 4. Pass context into service code
+
+```go
+func (s *UserService) Find(ctx context.Context, id string) error {
+    _, err := s.repo.Find(ctx, id)
+    if errors.Is(err, ErrNotFound) {
+        return i18n.E(ctx, "errors.not_found")
+    }
+    return err
+}
+```
+
+### 5. Use a fixed language when needed
+
+For work without a request context, such as a background job, get a localizer
+explicitly:
+
+```go
+loc := manager.GetLocalizer("zh-CN")
+message := loc.T("common.hello")
+```
+
+## Translation Patterns
+
+### Nested keys
+
 ```json
 {
-  "common": {
-    "hello": "你好",
-    "welcome": "欢迎, {{.name}}!"
-  },
-  "errors": {
-    "not_found": "未找到资源"
+  "user": {
+    "profile": {
+      "title": "User Profile"
+    }
   }
 }
 ```
 
-### 2. Initialize the Manager
-
 ```go
-package main
+i18n.T(ctx, "user.profile.title")
+```
 
-import (
-    "xiaoshiai.cn/common/i18n"
-)
+### Templates
 
-func main() {
-    // Create manager
-    manager := i18n.NewManager()
+Templates use Go template syntax:
 
-    // Load translations
-    err := manager.LoadTranslations("./locales", i18n.FormatJSON)
-    if err != nil {
-        panic(err)
-    }
-
-    // Set fallback language
-    manager.SetFallbackLanguage("en")
+```json
+{
+  "welcome": "Welcome, {{.name}}!"
 }
 ```
 
-### 3. Basic Usage
-
 ```go
-// Get a localizer for a specific language
-loc := manager.GetLocalizer("zh-CN")
-
-// Simple translation
-greeting := loc.T("common.hello") // "你好"
-
-// Template-based translation
-welcome := loc.Tf("common.welcome", map[string]any{
-    "name": "张三",
-}) // "欢迎, 张三!"
-
-// Error translation
-err := loc.E("errors.not_found") // error: "未找到资源"
+i18n.Tf(ctx, "welcome", map[string]any{"name": "Alice"})
 ```
 
-### 4. HTTP Integration
+For `fmt.Sprintf`-style translations, pass positional arguments to `T`:
 
-```go
-func main() {
-    manager := i18n.NewManager()
-    manager.LoadTranslations("./locales", i18n.FormatJSON)
-
-    mux := http.NewServeMux()
-
-    mux.HandleFunc("/hello", func(w http.ResponseWriter, r *http.Request) {
-        // Get localizer from context (automatically detected)
-        loc := manager.GetLocalizerFromContext(r.Context())
-
-        greeting := loc.T("common.hello")
-        w.Write([]byte(greeting))
-    })
-
-    // Apply i18n middleware
-    handler := i18n.Middleware(manager)(mux)
-
-    http.ListenAndServe(":8080", handler)
+```json
+{
+  "welcome": "Welcome, %s!"
 }
 ```
 
-The middleware automatically detects language from:
-1. Query parameter (`?lang=zh-CN`)
-2. Cookie (`language=zh-CN`)
-3. Accept-Language header
-4. Fallback to default language
-
-### 5. Context-based Usage
-
 ```go
-// In your service layer
-func (s *UserService) CreateUser(ctx context.Context, name string) error {
-    // Use context-aware translation functions
-    message := i18n.T(ctx, "user.created")
-    fmt.Println(message)
-
-    // Return localized errors
-    if err != nil {
-        return i18n.E(ctx, "errors.validation_failed", err.Error())
-    }
-
-    return nil
-}
+i18n.T(ctx, "welcome", "Alice")
 ```
 
-## Advanced Features
+### Plurals
 
-### Plural Forms
-
-Different languages have different plural rules. This library handles them automatically.
-
-**Translation file:**
 ```json
 {
   "items": {
@@ -153,209 +159,61 @@ Different languages have different plural rules. This library handles them autom
 }
 ```
 
-**Usage:**
 ```go
-loc := manager.GetLocalizer("en")
-
-// English has "one" and "other" forms
-loc.P("items", 1, 1)  // "1 item"
-loc.P("items", 5, 5)  // "5 items"
-
-// Chinese has only "other" form
-zhLoc := manager.GetLocalizer("zh-CN")
-zhLoc.P("items", 1, 1)  // "1 个项目"
-zhLoc.P("items", 5, 5)  // "5 个项目"
+i18n.P(ctx, "items", 1) // "1 item"
+i18n.P(ctx, "items", 5) // "5 items"
 ```
 
-Supported plural forms:
-- **zero** - for count = 0 (Arabic)
-- **one** - for count = 1 (English, Spanish, etc.)
-- **two** - for count = 2 (Arabic)
-- **few** - for small counts (Russian, Polish, Czech)
-- **many** - for large counts (Russian, Polish, Arabic)
-- **other** - default/fallback form
+Plural rules are included for common languages. Each rule may select `zero`,
+`one`, `two`, `few`, `many`, or `other`.
 
-Built-in rules for 15+ languages: English, Chinese, Japanese, Korean, Spanish, French, German, Russian, Polish, Arabic, Czech, Slovak, Italian, Portuguese, and more.
+## Other APIs
 
-### Nested Keys
-
-Organize translations hierarchically:
-
-```json
-{
-  "user": {
-    "profile": {
-      "title": "User Profile",
-      "settings": {
-        "privacy": "Privacy Settings"
-      }
-    }
-  }
-}
-```
+### Custom language detection
 
 ```go
-loc.T("user.profile.title")              // "User Profile"
-loc.T("user.profile.settings.privacy")   // "Privacy Settings"
-```
+type UserLanguageDetector struct{}
 
-### Template Variables
-
-Use Go template syntax for complex translations:
-
-```json
-{
-  "user": {
-    "info": "User {{.name}} (ID: {{.id}}) has {{.count}} items"
-  }
-}
-```
-
-```go
-loc.Tf("user.info", map[string]any{
-    "name": "John",
-    "id": 123,
-    "count": 5,
-})
-// "User John (ID: 123) has 5 items"
-```
-
-### Custom Language Detector
-
-```go
-type CustomDetector struct{}
-
-func (d *CustomDetector) Detect(r *http.Request) string {
-    // Custom logic to detect language
-    // e.g., from user preferences in database
+func (d *UserLanguageDetector) Detect(r *http.Request) string {
     return "zh-CN"
 }
 
-handler := i18n.MiddlewareWithDetector(manager, &CustomDetector{})(mux)
+handler := i18n.MiddlewareWithDetector(
+    manager,
+    &UserLanguageDetector{},
+)(mux)
 ```
 
-### Adding Translations Programmatically
+### Add or load translations
 
 ```go
-// Add single translation
 manager.AddTranslation("en", "custom.key", "Custom value")
-manager.AddTranslation("zh-CN", "custom.key", "自定义值")
-
-// Load from byte data
-jsonData := []byte(`{"key": "value"}`)
-manager.LoadTranslationsFromBytes("en", jsonData, i18n.FormatJSON)
+manager.LoadTranslationsFromBytes("en", data, i18n.FormatJSON)
 ```
 
-### Format Helpers
+### Localizer helpers
+
+Formatting helpers are available from an explicit localizer:
 
 ```go
-// Number formatting
-loc.N(1234.56)  // "1234.56"
+loc := manager.GetLocalizer("en")
 
-// Date formatting
-loc.D(time.Now(), i18n.DateFormatShort)   // "1/21/26"
-loc.D(time.Now(), i18n.DateFormatMedium)  // "Jan 21, 2026"
-loc.D(time.Now(), i18n.DateFormatLong)    // "January 21, 2026"
-loc.D(time.Now(), i18n.DateFormatFull)    // "Tuesday, January 21, 2026"
-
-// Currency formatting
-loc.M(99.99, "USD")  // "99.99 USD"
+loc.N(1234.56)
+loc.D(time.Now(), i18n.DateFormatLong)
+loc.M(99.99, "USD")
+loc.Exists("common.hello")
+loc.MustT("common.hello")
 ```
 
-## API Reference
-
-### Manager Interface
+## Context Helpers
 
 ```go
-type Manager interface {
-    GetLocalizer(lang string) Localizer
-    GetLocalizerFromContext(ctx context.Context) Localizer
-    LoadTranslations(dir string, format Format) error
-    LoadTranslationsFromBytes(lang string, data []byte, format Format) error
-    AddTranslation(lang, key, value string) error
-    SetFallbackLanguage(lang string)
-    SupportedLanguages() []string
-    DefaultLanguage() string
-}
+i18n.T(ctx, "key", args...)
+i18n.Tf(ctx, "key", params)
+i18n.E(ctx, "key", args...)
+i18n.P(ctx, "key", count, args...)
+i18n.FromContext(ctx)
+i18n.LanguageFromContext(ctx)
 ```
 
-### Localizer Interface
-
-```go
-type Localizer interface {
-    T(key string, args ...any) string              // Simple translation
-    Tf(key string, params map[string]any) string   // Template-based
-    E(key string, args ...any) error                // Error translation
-    P(key string, count int, args ...any) string   // Plural translation
-    N(number float64) string                        // Number formatting
-    D(time time.Time, format DateFormat) string    // Date formatting
-    M(amount float64, currency string) string       // Money formatting
-    Language() string                               // Current language
-    Exists(key string) bool                         // Check key exists
-    MustT(key string, args ...any) string          // Panics if missing
-}
-```
-
-### Convenience Functions
-
-```go
-// Use from context
-i18n.T(ctx, "key", args...)           // Translate
-i18n.Tf(ctx, "key", params)           // Template translate
-i18n.E(ctx, "key", args...)           // Error
-i18n.P(ctx, "key", count, args...)    // Plural
-i18n.FromContext(ctx)                 // Get localizer
-i18n.LanguageFromContext(ctx)         // Get language code
-```
-
-## Translation File Formats
-
-### JSON Format
-```json
-{
-  "key": "value",
-  "nested": {
-    "key": "nested value"
-  }
-}
-```
-
-### YAML Format
-```yaml
-key: value
-nested:
-  key: nested value
-```
-
-## Best Practices
-
-1. **Use Nested Keys** - Organize translations by feature/module
-2. **Consistent Naming** - Use `entity.action` pattern (e.g., `user.created`, `order.deleted`)
-3. **Complete Translations** - Provide all keys in fallback language
-4. **Context-Aware** - Pass language through context, not function parameters
-5. **Error Messages** - Always translate user-facing errors
-6. **Testing** - Test with different languages to ensure proper rendering
-
-## Examples
-
-See the [examples](./examples) directory for complete working examples:
-- Basic usage
-- HTTP server integration
-- Service layer integration
-- Custom detectors
-- Plural forms
-
-Run the example:
-```bash
-cd examples
-go run main.go
-```
-
-Then visit:
-- http://localhost:8080/hello
-- http://localhost:8080/hello?lang=zh-CN
-- http://localhost:8080/hello?lang=ja
-
-## License
-
-This library is part of the xiaoshiai.cn/common package.
+See [`examples`](./examples) for a complete runnable HTTP server.
