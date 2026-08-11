@@ -166,7 +166,7 @@ func completePathParam(route *Route, sections []matcher.Section) {
 			if elem.VarName != "" {
 				// check already exists
 				exists := slices.ContainsFunc(route.Params, func(i Param) bool {
-					return i.Name == elem.VarName
+					return i.Kind == ParamKindPath && i.Name == elem.VarName
 				})
 				if exists {
 					continue

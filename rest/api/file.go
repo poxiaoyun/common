@@ -11,6 +11,52 @@ import (
 	"time"
 )
 
+// ContentResponse describes either content served by this process or a link to
+// content served by another system. Content and Location are mutually
+// exclusive. ServeContentResponse closes Content after the response completes.
+type ContentResponse struct {
+	StatusCode    int
+	Headers       http.Header
+	Location      string
+	Content       io.ReadCloser
+	ContentLength int64
+}
+
+// ServeContentResponse writes a resolved content response. Linked content is
+// redirected with 307 by default so temporary or presigned locations are not
+// cached as permanent and the request method is preserved. Local content is
+// delegated to ServeContent so conditional and range requests remain supported.
+func ServeContentResponse(w http.ResponseWriter, r *http.Request, response ContentResponse) {
+	for key, values := range response.Headers {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	if response.Location != "" {
+		if response.Content != nil {
+			response.Content.Close()
+			http.Error(w, "content response cannot contain both content and location", http.StatusInternalServerError)
+			return
+		}
+		status := response.StatusCode
+		if status == 0 {
+			status = http.StatusTemporaryRedirect
+		}
+		http.Redirect(w, r, response.Location, status)
+		return
+	}
+	if response.Content == nil {
+		status := response.StatusCode
+		if status == 0 {
+			status = http.StatusNoContent
+		}
+		w.WriteHeader(status)
+		return
+	}
+	defer response.Content.Close()
+	ServeContent(w, r, response.Content, response.ContentLength)
+}
+
 // HttpRange specifies the byte range to be sent to the client.
 type HttpRange struct {
 	start, length int64
