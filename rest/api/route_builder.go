@@ -355,6 +355,9 @@ func buildRoutes(merged Group, group Group) []Route {
 		route.Tags = append(merged.Tags, route.Tags...)
 		route.Params = append(merged.Params, route.Params...)
 		route.Path = merged.Path + route.Path
+		if !strings.HasPrefix(route.Path, "/") {
+			route.Path = "/" + route.Path
+		}
 		route.Consumes = append(group.Consumes, route.Consumes...)
 		route.Produces = append(group.Produces, route.Produces...)
 		route.Filters = append(merged.Filters, route.Filters...)

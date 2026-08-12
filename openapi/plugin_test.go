@@ -17,3 +17,17 @@ func TestOpenAPIBuildAllowsBodyAndPathParametersWithSameName(t *testing.T) {
 		m.Build()
 	})
 }
+
+func TestOpenAPIBuildNormalizesRelativeGroupPath(t *testing.T) {
+	plugin := NewAPIDocPlugin("/docs", nil)
+	m := api.New().Plugin(plugin)
+	m.Group(api.NewGroup("internal").Route(
+		api.POST("/authorize"),
+	))
+
+	require.NotPanics(t, func() {
+		m.Build()
+	})
+	require.NotNil(t, plugin.OpenAPI.Paths.Find("/internal/authorize"))
+	require.Nil(t, plugin.OpenAPI.Paths.Find("internal/authorize"))
+}
