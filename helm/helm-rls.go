@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"time"
 
 	"golang.org/x/exp/slices"
 	"helm.sh/helm/v3/pkg/action"
@@ -21,6 +22,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 )
+
+const defaultActionTimeout = 10 * time.Minute
 
 type ReleaseManager struct {
 	Config *rest.Config
@@ -141,6 +144,7 @@ func ApplyChart(ctx context.Context,
 		install.CreateNamespace = true
 		install.PostRenderer = options.PostRenderFunc
 		install.EnableDNS = true
+		install.Timeout = defaultActionTimeout
 		rls, err := install.RunWithContext(ctx, chart, values)
 		if err != nil {
 			return nil, false, err
@@ -161,6 +165,7 @@ func ApplyChart(ctx context.Context,
 	client.PostRenderer = options.PostRenderFunc
 	client.EnableDNS = true
 	client.MaxHistory = 5
+	client.Timeout = defaultActionTimeout
 	rls, err := client.RunWithContext(ctx, rlsname, chart, values)
 	if err != nil {
 		return nil, false, err
@@ -246,6 +251,7 @@ func RemoveChart(ctx context.Context, cfg *rest.Config, rlsname, namespace strin
 	}
 	log.Info("uninstalling")
 	uninstall := action.NewUninstall(helmcfg)
+	uninstall.Timeout = defaultActionTimeout
 	uninstalledRelease, err := uninstall.Run(exist.Name)
 	if err != nil {
 		return nil, err
