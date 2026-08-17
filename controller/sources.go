@@ -5,10 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/log"
-	"xiaoshiai.cn/common/retry"
 	"xiaoshiai.cn/common/store"
+	storecache "xiaoshiai.cn/common/store/cache"
 )
 
 type Source[K comparable] interface {
@@ -55,16 +54,19 @@ func (s StoreSource[T]) Run(ctx context.Context, queue TypedQueue[T]) error {
 	logger := log.FromContext(ctx).WithValues("resource", s.Resource)
 	logger.Info("source start")
 	ctx = log.NewContext(ctx, logger)
-	return RunListWatchContext(ctx, s.Store, s.Resource, EventHandlerFunc[*store.Unstructured](func(ctx context.Context, kind store.WatchEventType, obj *store.Unstructured) error {
-		logger.Info("event", "kind", kind, "id", obj.GetID())
+	return RunListWatchContext(ctx, s.Store, s.Resource, EventHandlerFunc[*store.Unstructured](func(ctx context.Context, event TypedWatchEvent[*store.Unstructured]) error {
+		if event.Type == store.WatchEventBookmark {
+			return nil
+		}
+		logger.Info("event", "kind", event.Type, "id", event.Object.GetID())
 
 		for _, predicate := range s.Predicate {
-			if !predicate(kind, obj) {
+			if !predicate(event.Type, event.Object) {
 				return nil
 			}
 		}
 
-		keys, err := s.KeyFunc(ctx, kind, obj)
+		keys, err := s.KeyFunc(ctx, event.Type, event.Object)
 		if err != nil {
 			logger.Error(err, "key error")
 			return nil
@@ -76,53 +78,46 @@ func (s StoreSource[T]) Run(ctx context.Context, queue TypedQueue[T]) error {
 	}))
 }
 
+// TypedWatchEvent is the ordered Store Watch event delivered to a typed handler.
+// Object is zero for Bookmark events; ResourceVersion is the optional global
+// checkpoint from the Store event.
+type TypedWatchEvent[T any] struct {
+	Type            store.WatchEventType
+	Object          T
+	ResourceVersion int64
+}
+
+// EventHandler consumes ordered Watch events.
 type EventHandler[T any] interface {
-	OnEvent(ctx context.Context, kind store.WatchEventType, obj T) error
+	OnEvent(ctx context.Context, event TypedWatchEvent[T]) error
 }
 
 var _ EventHandler[any] = EventHandlerFunc[any](nil)
 
-type EventHandlerFunc[T any] func(ctx context.Context, kind store.WatchEventType, obj T) error
+// EventHandlerFunc adapts a function to EventHandler.
+type EventHandlerFunc[T any] func(ctx context.Context, event TypedWatchEvent[T]) error
 
-func (f EventHandlerFunc[T]) OnEvent(ctx context.Context, kind store.WatchEventType, obj T) error {
-	return f(ctx, kind, obj)
+// OnEvent implements EventHandler.
+func (f EventHandlerFunc[T]) OnEvent(ctx context.Context, event TypedWatchEvent[T]) error {
+	return f(ctx, event)
 }
 
 func RunListWatchContext(ctx context.Context, storage store.Store, resource string, handler EventHandler[*store.Unstructured]) error {
-	return retry.OnError(ctx, func(ctx context.Context) error {
-		return RunListWatch(ctx, storage, resource, true, handler)
-	})
+	return RunListWatch(ctx, storage, resource, true, handler)
 }
 
 func RunListWatch(ctx context.Context, storage store.Store, resource string, subScope bool, handler EventHandler[*store.Unstructured]) error {
-	list := &store.List[store.Unstructured]{}
-	list.SetResource(resource)
-
-	// list
-	if false {
-		// our watch returns list and later changes in a single watch
-		// so we do not need list once anymore
-		if err := storage.List(ctx, list, store.WithSubScopes()); err != nil {
-			return err
-		}
-		for _, obj := range list.Items {
-			if err := handler.OnEvent(ctx, store.WatchEventCreate, &obj); err != nil {
-				return fmt.Errorf("handler error: %w", err)
-			}
-		}
+	list := &store.List[store.Unstructured]{Resource: resource}
+	options := []store.WatchOption{}
+	if subScope {
+		options = append(options, store.WithWatchSubscopes())
 	}
-	// watch
-	inlcudesubscope := func(wo *store.WatchOptions) {
-		wo.IncludeSubScopes = subScope
-		wo.ResourceVersion = ptr.To(list.ResourceVersion)
-		wo.SendInitialEvents = true
-	}
-	return RunWatch(ctx, storage, resource, handler, inlcudesubscope)
+	reflector := storecache.NewReflector(storage, list, options...)
+	return reflector.Run(ctx, NewReflectorEventHandler(handler))
 }
 
 func RunWatch(ctx context.Context, storage store.Store, resource string, handler EventHandler[*store.Unstructured], options ...store.WatchOption) error {
 	log := log.FromContext(ctx)
-
 	list := &store.List[store.Unstructured]{}
 	list.SetResource(resource)
 
@@ -146,6 +141,10 @@ func RunWatch(ctx context.Context, storage store.Store, resource string, handler
 				log.Error(event.Error, "watch error")
 				return event.Error
 			}
+			typed := TypedWatchEvent[*store.Unstructured]{
+				Type:            event.Type,
+				ResourceVersion: event.ResourceVersion,
+			}
 			switch event.Type {
 			case store.WatchEventCreate, store.WatchEventUpdate, store.WatchEventDelete:
 				obj, ok := event.Object.(*store.Unstructured)
@@ -154,14 +153,16 @@ func RunWatch(ctx context.Context, storage store.Store, resource string, handler
 					return errors.New("watch event value is not T")
 				}
 				log.V(5).Info("watch event", "type", event.Type, "id", obj.GetID(), "resource", obj.GetResource())
-				if err := handler.OnEvent(ctx, event.Type, obj); err != nil {
-					log.Error(err, "handle error")
-					return err
-				}
+				typed.Object = obj
 			case store.WatchEventBookmark:
-				// ignore
+				log.V(5).Info("watch bookmark", "resourceVersion", event.ResourceVersion)
 			default:
 				log.Info("unknown event type", "type", event.Type)
+				continue
+			}
+			if err := handler.OnEvent(ctx, typed); err != nil {
+				log.Error(err, "handle error")
+				return err
 			}
 		}
 	}
@@ -175,8 +176,11 @@ type WatchFuncSource[S any, T comparable] struct {
 
 func (s WatchFuncSource[S, T]) Run(ctx context.Context, queue TypedQueue[T]) error {
 	log := log.FromContext(ctx)
-	fn := EventHandlerFunc[*S](func(ctx context.Context, kind store.WatchEventType, obj *S) error {
-		keys, err := s.KeyFunc(ctx, kind, obj)
+	fn := EventHandlerFunc[*S](func(ctx context.Context, event TypedWatchEvent[*S]) error {
+		if event.Type == store.WatchEventBookmark {
+			return nil
+		}
+		keys, err := s.KeyFunc(ctx, event.Type, event.Object)
 		if err != nil {
 			log.Error(err, "key error")
 			return nil
@@ -191,14 +195,13 @@ func (s WatchFuncSource[S, T]) Run(ctx context.Context, queue TypedQueue[T]) err
 }
 
 func RunTypedListWatchContext[T any](ctx context.Context, storage store.Store, handler EventHandler[*T], options ...store.WatchOption) error {
-	return retry.OnError(ctx, func(ctx context.Context) error {
-		return RunTypedWatch(ctx, storage, handler, options...)
-	})
+	list := &store.List[T]{}
+	reflector := storecache.NewReflector(storage, list, options...)
+	return reflector.Run(ctx, NewReflectorEventHandler(handler))
 }
 
 func RunTypedWatch[T any](ctx context.Context, storage store.Store, handler EventHandler[*T], options ...store.WatchOption) error {
 	log := log.FromContext(ctx)
-
 	list := &store.List[T]{}
 	watcher, err := storage.Watch(ctx, list, options...)
 	if err != nil {
@@ -221,6 +224,10 @@ func RunTypedWatch[T any](ctx context.Context, storage store.Store, handler Even
 				log.Error(event.Error, "watch error")
 				return event.Error
 			}
+			typed := TypedWatchEvent[*T]{
+				Type:            event.Type,
+				ResourceVersion: event.ResourceVersion,
+			}
 			switch event.Type {
 			case store.WatchEventCreate, store.WatchEventUpdate, store.WatchEventDelete:
 				obj, ok := any(event.Object).(*T)
@@ -229,15 +236,84 @@ func RunTypedWatch[T any](ctx context.Context, storage store.Store, handler Even
 					return errors.New("watch event value is not *T")
 				}
 				log.V(5).Info("watch event", "type", event.Type, "data", event.Object)
-				if err := handler.OnEvent(ctx, event.Type, obj); err != nil {
-					log.Error(err, "handle error")
-					return err
-				}
+				typed.Object = obj
 			case store.WatchEventBookmark:
-				// ignore
+				log.V(5).Info("watch bookmark", "resourceVersion", event.ResourceVersion)
 			default:
 				log.Info("unknown event type", "type", event.Type)
+				continue
+			}
+			if err := handler.OnEvent(ctx, typed); err != nil {
+				log.Error(err, "handle error")
+				return err
 			}
 		}
 	}
 }
+
+// ReflectorEventHandler turns authoritative Replace calls into object deltas
+// for controller handlers while retaining the last published snapshot.
+type ReflectorEventHandler[T any] struct {
+	Handler EventHandler[*T]
+	Objects map[string]*T
+}
+
+// NewReflectorEventHandler constructs a Reflector handler for ordered controller events.
+func NewReflectorEventHandler[T any](handler EventHandler[*T]) *ReflectorEventHandler[T] {
+	return &ReflectorEventHandler[T]{Handler: handler, Objects: map[string]*T{}}
+}
+
+// Replace implements cache.ReflectorHandler.
+func (h *ReflectorEventHandler[T]) Replace(ctx context.Context, objects []*T) error {
+	next := make(map[string]*T, len(objects))
+	for _, object := range objects {
+		stored := any(object).(store.Object)
+		next[storecache.ReflectorObjectKey(stored)] = object
+	}
+	for key, old := range h.Objects {
+		if _, exists := next[key]; exists {
+			continue
+		}
+		if err := h.Handler.OnEvent(ctx, TypedWatchEvent[*T]{Type: store.WatchEventDelete, Object: old}); err != nil {
+			return err
+		}
+	}
+	for key, current := range next {
+		old, exists := h.Objects[key]
+		if !exists {
+			if err := h.Handler.OnEvent(ctx, TypedWatchEvent[*T]{Type: store.WatchEventCreate, Object: current}); err != nil {
+				return err
+			}
+			continue
+		}
+		oldObject := any(old).(store.Object)
+		currentObject := any(current).(store.Object)
+		if oldObject.GetUID() == currentObject.GetUID() && oldObject.GetResourceVersion() == currentObject.GetResourceVersion() {
+			continue
+		}
+		if err := h.Handler.OnEvent(ctx, TypedWatchEvent[*T]{Type: store.WatchEventUpdate, Object: current}); err != nil {
+			return err
+		}
+	}
+	h.Objects = next
+	return nil
+}
+
+// Apply implements cache.ReflectorHandler.
+func (h *ReflectorEventHandler[T]) Apply(ctx context.Context, eventType store.WatchEventType, object *T) error {
+	stored := any(object).(store.Object)
+	if err := h.Handler.OnEvent(ctx, TypedWatchEvent[*T]{Type: eventType, Object: object}); err != nil {
+		return err
+	}
+	key := storecache.ReflectorObjectKey(stored)
+	if eventType == store.WatchEventDelete {
+		delete(h.Objects, key)
+	} else {
+		h.Objects[key] = object
+	}
+	return nil
+}
+
+// Invalidate implements cache.ReflectorHandler. The last authoritative state
+// remains active until the replacement snapshot is published.
+func (*ReflectorEventHandler[T]) Invalidate(context.Context, error) {}

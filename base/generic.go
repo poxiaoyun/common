@@ -64,8 +64,8 @@ func GenericWatchWithName[T store.ObjectList](w http.ResponseWriter, r *http.Req
 		return err
 	}
 	handler := controller.EventHandlerFunc[*store.Unstructured](
-		func(ctx context.Context, kind store.WatchEventType, obj *store.Unstructured) error {
-			return encoder.Encode(string(kind), obj)
+		func(ctx context.Context, event controller.TypedWatchEvent[*store.Unstructured]) error {
+			return encoder.Encode(string(event.Type), event.Object)
 		},
 	)
 	return controller.RunWatch(r.Context(), storage, resource, handler, watchoption)

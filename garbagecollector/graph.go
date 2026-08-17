@@ -37,6 +37,19 @@ func (g *graph) getNode(uid string) (*node, bool) {
 	return node, ok
 }
 
+// NodesForResource returns the graph nodes whose identity belongs to resource.
+func (g *graph) NodesForResource(resource string) []*node {
+	g.nodesmu.RLock()
+	defer g.nodesmu.RUnlock()
+	nodes := []*node{}
+	for _, node := range g.uidtonode {
+		if node.identity.Resource == resource {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes
+}
+
 func (g *graph) addNode(node *node) {
 	g.nodesmu.Lock()
 	defer g.nodesmu.Unlock()

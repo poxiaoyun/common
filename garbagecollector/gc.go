@@ -4,33 +4,41 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"time"
 
 	"golang.org/x/sync/errgroup"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/retry"
 	"xiaoshiai.cn/common/controller"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
+	storecache "xiaoshiai.cn/common/store/cache"
 )
 
 type GarbageCollector struct {
-	storage store.Store
-	options GarbageCollectorOptions
-	graph   *graph
+	storage   store.Store
+	options   GarbageCollectorOptions
+	resources []string
+	graph     *graph
 }
 
 type GarbageCollectorOptions struct {
-	MonitorResources []string
-
 	// SetParentAsOwner indicates whether the parent should be add to ownerReferences when object is created.
 	SetParentAsOwner bool
 }
 
 func NewGarbageCollector(storage store.Store, options GarbageCollectorOptions) (*GarbageCollector, error) {
-	return &GarbageCollector{storage: storage, options: options, graph: NewGraph()}, nil
+	if !storage.Capabilities().Watch {
+		return nil, errors.NewUnsupported("garbage collector requires Store Watch support")
+	}
+	return &GarbageCollector{
+		storage:   storage,
+		options:   options,
+		resources: storage.Schema().Resources(),
+		graph:     NewGraph(),
+	}, nil
 }
 
 func (c *GarbageCollector) Name() string {
@@ -38,45 +46,108 @@ func (c *GarbageCollector) Name() string {
 }
 
 func (c *GarbageCollector) Run(ctx context.Context) error {
+	reflectors := make([]*storecache.Reflector[store.Unstructured], 0, len(c.resources))
+	handlers := make([]*garbageCollectorReflectorHandler, 0, len(c.resources))
+	for _, resource := range c.resources {
+		list := &store.List[store.Unstructured]{Resource: resource}
+		reflectors = append(reflectors, storecache.NewReflector(c.storage, list, store.WithWatchSubscopes()))
+		handlers = append(handlers, &garbageCollectorReflectorHandler{Collector: c, Resource: resource})
+	}
+
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-		return c.monitorResources(ctx)
+		return controller.RunQueueConsumer(ctx, c.graph.changes, c.processGraphChangesResult, 1)
+	})
+	for index := range reflectors {
+		reflector := reflectors[index]
+		handler := handlers[index]
+		eg.Go(func() error {
+			logger := log.FromContext(ctx).WithValues("resource", handler.Resource)
+			logger.Info("start monitor")
+			watchContext := log.NewContext(ctx, logger)
+			return reflector.Run(watchContext, handler)
+		})
+	}
+	eg.Go(func() error {
+		if err := WaitForReflectors(ctx, reflectors); err != nil {
+			return err
+		}
+		return controller.RunQueueConsumer(ctx, c.graph.attemptToDelete, c.processAttemptToDeleteResult, 1)
 	})
 	eg.Go(func() error {
-		return c.startProcess(ctx)
+		if err := WaitForReflectors(ctx, reflectors); err != nil {
+			return err
+		}
+		return controller.RunQueueConsumer(ctx, c.graph.attemptToOrphan, c.processAttemptToOrphanResult, 1)
 	})
 	return eg.Wait()
 }
 
-func (c *GarbageCollector) monitorResources(ctx context.Context) error {
-	resources := c.options.MonitorResources
-	// deduplicate resources
-	resources = sets.NewString(resources...).List()
-	eg, ctx := errgroup.WithContext(ctx)
-	for _, resource := range resources {
-		resource := resource
-		eg.Go(func() error {
-			logger := log.FromContext(ctx).WithValues("resource", resource)
-			logger.Info("start monitor")
-			ctx = log.NewContext(ctx, logger)
-			return controller.RunListWatchContext(ctx, c.storage, resource, controller.EventHandlerFunc[*store.Unstructured](func(ctx context.Context, kind store.WatchEventType, obj *store.Unstructured) error {
-				if c.options.SetParentAsOwner && kind == store.WatchEventCreate {
-					if err := c.injectOwnerReference(ctx, obj); err != nil {
-						return err
-					}
-				}
-				c.graph.changes.Add(&event{
-					identity:   objectIdentityFrom(obj),
-					eventtype:  eventType(kind),
-					owners:     obj.GetOwnerReferences(),
-					deleting:   obj.GetDeletionTimestamp() != nil,
-					finalizers: obj.GetFinalizers(),
-				})
-				return nil
-			}))
-		})
+// WaitForReflectors waits until every reflector has published its first snapshot.
+func WaitForReflectors[T any](ctx context.Context, reflectors []*storecache.Reflector[T]) error {
+	for index := range reflectors {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-reflectors[index].Synced():
+		}
 	}
-	return eg.Wait()
+	return nil
+}
+
+type garbageCollectorReflectorHandler struct {
+	Collector *GarbageCollector
+	Resource  string
+}
+
+func (h *garbageCollectorReflectorHandler) Replace(ctx context.Context, objects []*store.Unstructured) error {
+	snapshot := make([]*event, 0, len(objects))
+	for _, object := range objects {
+		if h.Collector.options.SetParentAsOwner {
+			if err := h.Collector.injectOwnerReference(ctx, object); err != nil {
+				return err
+			}
+		}
+		snapshot = append(snapshot, graphEventFromObject(store.WatchEventCreate, object))
+	}
+	return h.Collector.EnqueueGraphEvent(ctx, &event{
+		eventtype: eventTypeSnapshot,
+		resource:  h.Resource,
+		snapshot:  snapshot,
+	})
+}
+
+func (h *garbageCollectorReflectorHandler) Apply(ctx context.Context, eventType store.WatchEventType, object *store.Unstructured) error {
+	if h.Collector.options.SetParentAsOwner && eventType == store.WatchEventCreate {
+		if err := h.Collector.injectOwnerReference(ctx, object); err != nil {
+			return err
+		}
+	}
+	return h.Collector.EnqueueGraphEvent(ctx, graphEventFromObject(eventType, object))
+}
+
+func (*garbageCollectorReflectorHandler) Invalidate(context.Context, error) {}
+
+// EnqueueGraphEvent waits until the graph worker has applied the event.
+func (c *GarbageCollector) EnqueueGraphEvent(ctx context.Context, change *event) error {
+	change.done = make(chan error, 1)
+	c.graph.changes.Add(change)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-change.done:
+		return err
+	}
+}
+
+func graphEventFromObject(kind store.WatchEventType, object store.Object) *event {
+	return &event{
+		identity:   objectIdentityFrom(object),
+		eventtype:  eventType(kind),
+		owners:     object.GetOwnerReferences(),
+		deleting:   object.GetDeletionTimestamp() != nil,
+		finalizers: object.GetFinalizers(),
+	}
 }
 
 func (c *GarbageCollector) injectOwnerReference(ctx context.Context, obj *store.Unstructured) error {
@@ -102,12 +173,14 @@ func (c *GarbageCollector) injectOwnerReference(ctx context.Context, obj *store.
 	// inject owner reference of current parent
 	log.FromContext(ctx).V(5).Info("inject owner reference", "owner", newown, "resource", obj.GetResource(), "id", obj.GetID())
 
+	storage := c.storage.Scope(ownerscopes...)
 	owner := &store.Unstructured{}
 	owner.SetResource(last.Resource)
-	if err := c.storage.Scope(ownerscopes...).Get(ctx, last.Name, owner); err != nil {
+	if err := storage.Get(ctx, last.Name, owner); err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
+		return err
 	}
 	newown.UID = owner.GetUID()
 
@@ -117,12 +190,16 @@ func (c *GarbageCollector) injectOwnerReference(ctx context.Context, obj *store.
 		}
 	}
 	ownerRefs = append(ownerRefs, newown)
-	patchdata, err := json.Marshal(map[string]any{"ownerReferences": ownerRefs})
+	patchdata, err := json.Marshal(map[string]any{
+		"resourceVersion": obj.GetResourceVersion(),
+		"ownerReferences": ownerRefs,
+	})
 	if err != nil {
 		return err
 	}
 	patch := store.RawPatch(store.PatchTypeMergePatch, patchdata)
-	return c.storage.Scope(obj.GetScopes()...).Patch(ctx, obj, patch)
+	storage = c.storage.Scope(obj.GetScopes()...)
+	return storage.Patch(ctx, obj, patch)
 }
 
 func eventType(kind store.WatchEventType) eventtype {
@@ -137,20 +214,6 @@ func eventType(kind store.WatchEventType) eventtype {
 	return eventTypeVirtual
 }
 
-func (c *GarbageCollector) startProcess(ctx context.Context) error {
-	eg, ctx := errgroup.WithContext(ctx)
-	eg.Go(func() error {
-		return controller.RunQueueConsumer(ctx, c.graph.changes, c.processGraphChangesResult, 1)
-	})
-	eg.Go(func() error {
-		return controller.RunQueueConsumer(ctx, c.graph.attemptToDelete, c.processAttemptToDeleteResult, 1)
-	})
-	eg.Go(func() error {
-		return controller.RunQueueConsumer(ctx, c.graph.attemptToOrphan, c.processAttemptToOrphanResult, 1)
-	})
-	return eg.Wait()
-}
-
 type eventtype int
 
 const (
@@ -158,6 +221,7 @@ const (
 	eventTypeUpdate
 	eventTypeDelete
 	eventTypeVirtual
+	eventTypeSnapshot
 )
 
 type event struct {
@@ -167,6 +231,10 @@ type event struct {
 	virtual    bool // Virtual means the change is not a real object change
 	deleting   bool // Deleting means the object has deletion timestamp set
 	finalizers []string
+
+	resource string
+	snapshot []*event
+	done     chan error
 }
 
 type objectIdentity struct {
@@ -467,7 +535,10 @@ func (gc *GarbageCollector) removeFinalizer(ctx context.Context, owner *node, ta
 			logger.V(5).Info("finalizer already removed from object", "finalizer", targetFinalizer, "object", owner.identity)
 			return nil
 		}
-		patch, err := json.Marshal(map[string]any{"finalizers": newfinalizers})
+		patch, err := json.Marshal(map[string]any{
+			"resourceVersion": ownerObject.GetResourceVersion(),
+			"finalizers":      newfinalizers,
+		})
 		if err != nil {
 			return fmt.Errorf("unable to finalize %s due to an error serializing patch: %v", owner.identity, err)
 		}
@@ -483,20 +554,22 @@ func (gc *GarbageCollector) removeFinalizer(ctx context.Context, owner *node, ta
 }
 
 func (gc *GarbageCollector) getObject(ctx context.Context, item objectIdentity) (store.Object, error) {
+	storage := gc.storage.Scope(item.Scopes...)
 	desc := &store.Unstructured{}
 	desc.SetResource(item.Resource)
-	if err := gc.storage.Scope(item.Scopes...).Get(ctx, item.ID, desc); err != nil {
+	if err := storage.Get(ctx, item.ID, desc); err != nil {
 		return nil, err
 	}
 	return desc, nil
 }
 
 func (gc *GarbageCollector) patchObject(ctx context.Context, item objectIdentity, patch store.Patch) error {
+	storage := gc.storage.Scope(item.Scopes...)
 	desc := &store.Unstructured{}
 	desc.SetResource(item.Resource)
 	desc.SetID(item.ID)
 
-	return gc.storage.Scope(item.Scopes...).Patch(ctx, desc, patch)
+	return storage.Patch(ctx, desc, patch)
 }
 
 func (gc *GarbageCollector) deleteObject(ctx context.Context, item objectIdentity, policy store.DeletionPropagation) error {
@@ -507,10 +580,12 @@ func (gc *GarbageCollector) deleteObject(ctx context.Context, item objectIdentit
 		// directly delete the object if no policy is specified
 		options = append(options, store.WithDeletePropagation(store.DeletePropagationBackground))
 	}
+	storage := gc.storage.Scope(item.Scopes...)
 	desc := &store.Unstructured{}
 	desc.SetResource(item.Resource)
 	desc.SetID(item.ID)
-	return gc.storage.Scope(item.Scopes...).Delete(ctx, desc, options...)
+	desc.SetUID(item.UID)
+	return storage.Delete(ctx, desc, options...)
 }
 
 type ObjectMetaForPatch struct {
@@ -551,10 +626,19 @@ func (gc *GarbageCollector) deleteOwnerReferences(ctx context.Context, item *nod
 }
 
 func (c *GarbageCollector) processGraphChangesResult(ctx context.Context, event *event) (controller.Result, error) {
-	return controller.Result{}, c.processGraphChanges(ctx, event)
+	if err := c.processGraphChanges(ctx, event); err != nil {
+		return controller.Result{}, err
+	}
+	if event.done != nil {
+		event.done <- nil
+	}
+	return controller.Result{}, nil
 }
 
-func (c *GarbageCollector) processGraphChanges(_ context.Context, event *event) error {
+func (c *GarbageCollector) processGraphChanges(ctx context.Context, event *event) error {
+	if event.eventtype == eventTypeSnapshot {
+		return c.processResourceSnapshot(ctx, event)
+	}
 	existingNode, found := c.graph.getNode(event.identity.UID)
 	// If the node exists in the graph and is not observed, mark it as observed.
 	if found && !event.virtual && !existingNode.isObserved() {
@@ -658,6 +742,30 @@ func (c *GarbageCollector) processGraphChanges(_ context.Context, event *event) 
 	return nil
 }
 
+func (c *GarbageCollector) processResourceSnapshot(ctx context.Context, snapshot *event) error {
+	existing := c.graph.NodesForResource(snapshot.resource)
+	seen := make(map[string]struct{}, len(snapshot.snapshot))
+	for _, change := range snapshot.snapshot {
+		seen[change.identity.UID] = struct{}{}
+		if err := c.processGraphChanges(ctx, change); err != nil {
+			return err
+		}
+	}
+	for _, node := range existing {
+		if _, ok := seen[node.identity.UID]; ok {
+			continue
+		}
+		if err := c.processGraphChanges(ctx, &event{
+			identity:  node.identity,
+			eventtype: eventTypeDelete,
+			virtual:   !node.isObserved(),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ownerRefPair struct {
 	oldRef store.OwnerReference
 	newRef store.OwnerReference
@@ -672,9 +780,8 @@ func referencesDiffs(olds []store.OwnerReference, news []store.OwnerReference) (
 		if old, ok := oldrefs[new.UID]; ok {
 			if !SameOwnerReferences(old, new) {
 				changed = append(changed, ownerRefPair{oldRef: old, newRef: new})
-			} else {
-				delete(oldrefs, new.UID)
 			}
+			delete(oldrefs, new.UID)
 		} else {
 			added = append(added, new)
 		}
@@ -686,7 +793,7 @@ func referencesDiffs(olds []store.OwnerReference, news []store.OwnerReference) (
 }
 
 func SameOwnerReferences(a, b store.OwnerReference) bool {
-	return a.UID == b.UID && a.ID == b.ID && a.Resource == b.Resource && IsSameScopes(a.Scopes, b.Scopes)
+	return reflect.DeepEqual(a, b)
 }
 
 func partitionDependents(children []*node, owner objectIdentity) (matches, nomatches []*node) {
