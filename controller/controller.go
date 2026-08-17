@@ -9,6 +9,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 	"k8s.io/client-go/util/workqueue"
+	"xiaoshiai.cn/common/lease"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
 )
@@ -39,7 +40,10 @@ type ResourceScopedKey struct {
 func EncodeScopes(scopes []store.Scope) string {
 	var ret strings.Builder
 	for _, scope := range scopes {
-		ret.WriteString("/" + scope.Resource + "/" + scope.Name)
+		ret.WriteString("/")
+		ret.WriteString(scope.Resource)
+		ret.WriteString("/")
+		ret.WriteString(scope.Name)
 	}
 	return ret.String()
 }
@@ -125,7 +129,7 @@ type Result struct {
 
 type ControllerOptions[T comparable] struct {
 	Concurrent     int
-	LeaderElection LeaderElection
+	LeaderElection lease.LeaderElection
 	RateLimiter    workqueue.TypedRateLimiter[T]
 }
 
@@ -137,7 +141,7 @@ func WithConcurrent[T comparable](concurrent int) ControllerOption[T] {
 	}
 }
 
-func WithLeaderElection[T comparable](leader LeaderElection) ControllerOption[T] {
+func WithLeaderElection[T comparable](leader lease.LeaderElection) ControllerOption[T] {
 	return func(o *ControllerOptions[T]) {
 		o.LeaderElection = leader
 	}

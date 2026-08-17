@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"xiaoshiai.cn/common/lease"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
 )
@@ -28,13 +29,14 @@ type ControllerManagerOptions struct {
 
 func (c *ControllerManager) WithStoreLeaderElection(storage store.Store, key string, ttl time.Duration) *ControllerManager {
 	storage = storage.Scope(store.Scope{Resource: "namespaces", Name: "leader-election"})
-	c.LedaerElection = NewStoreLeaderElection(storage, key, ttl)
+	locker := lease.NewStoreLocker(storage, lease.Options{LeaseDuration: ttl})
+	c.LeaderElection = lease.NewLeaderElection(locker, key)
 	return c
 }
 
 type ControllerManager struct {
 	Controllers         map[string]Runable
-	LedaerElection      LeaderElection
+	LeaderElection      lease.LeaderElection
 	DisabledControllers []string
 	EnableControllers   []string
 }
@@ -61,9 +63,9 @@ func (c *ControllerManager) AddController(controller Runable) error {
 
 func (c *ControllerManager) Run(ctx context.Context) error {
 	log := log.FromContext(ctx)
-	if c.LedaerElection != nil {
+	if c.LeaderElection != nil {
 		log.Info("controller manager run with leader election")
-		return c.LedaerElection.OnLeader(ctx, func(ctx context.Context) error {
+		return c.LeaderElection.OnLeader(ctx, func(ctx context.Context) error {
 			log.Info("controller manager run on leader elected")
 			return c.run(ctx)
 		})
