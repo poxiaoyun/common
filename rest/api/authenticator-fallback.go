@@ -17,7 +17,7 @@ func NewFallbackAuthenticator(primary, fallback Authenticator) *FallbackAuthenti
 }
 
 // Authenticate returns the primary result unless primary returns ErrNotProvided.
-func (a *FallbackAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+func (a *FallbackAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
 	info, err := a.primary.Authenticate(w, r)
 	if !errors.Is(err, ErrNotProvided) {
 		return info, err

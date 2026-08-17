@@ -63,6 +63,10 @@ func ServerError(w http.ResponseWriter, err error) {
 }
 
 func Error(w http.ResponseWriter, err error) {
+	var challengeErr *AuthenticationChallengeError
+	if errors.As(err, &challengeErr) {
+		w.Header().Set("WWW-Authenticate", challengeErr.Challenge)
+	}
 	statuse := &liberrors.Status{}
 	if !errors.As(err, &statuse) {
 		statuse = liberrors.NewBadRequest(err.Error())

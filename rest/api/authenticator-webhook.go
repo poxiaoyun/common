@@ -22,7 +22,8 @@ type WebhookOptions struct {
 	InsecureSkipTLSVerify bool   `json:"insecureSkipTLSVerify,omitempty"`
 }
 
-func NewHttpClientFromWebhookOptions(opts *WebhookOptions) (*httpclient.Client, error) {
+// NewHTTPClientFromWebhookOptions returns a client configured for a webhook.
+func NewHTTPClientFromWebhookOptions(opts *WebhookOptions) (*httpclient.Client, error) {
 	config := &httpclient.Config{
 		Server:                opts.Server,
 		ProxyURL:              opts.ProxyURL,
@@ -62,7 +63,7 @@ type WebhookAuthenticator struct {
 
 var _ Authenticator = &WebhookAuthenticator{}
 
-func (w *WebhookAuthenticator) Authenticate(wr http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+func (w *WebhookAuthenticator) Authenticate(wr http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
 	token, provided := extractBearerTokenFromRequest(r)
 	if provided {
 		if token == "" {
@@ -77,20 +78,20 @@ func (w *WebhookAuthenticator) Authenticate(wr http.ResponseWriter, r *http.Requ
 	return nil, ErrNotProvided
 }
 
-func (w *WebhookAuthenticator) AuthenticateToken(ctx context.Context, token string) (*AuthenticateInfo, error) {
+func (w *WebhookAuthenticator) AuthenticateToken(ctx context.Context, token string) (*AuthenticationInfo, error) {
 	return w.Process.Process(ctx, &WebhookAuthenticationRequest{Token: token})
 }
 
-func (w *WebhookAuthenticator) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
+func (w *WebhookAuthenticator) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticationInfo, error) {
 	return w.Process.Process(ctx, &WebhookAuthenticationRequest{Username: username, Password: password})
 }
 
-func (w *WebhookAuthenticator) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error) {
+func (w *WebhookAuthenticator) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticationInfo, error) {
 	return w.Process.Process(ctx, &WebhookAuthenticationRequest{SSHCert: string(ssh.MarshalAuthorizedKey(pubkey))})
 }
 
 func NewWebhookAuthenticatorProcessor(opts *WebhookOptions) (*WebhookAuthenticatorProcessor, error) {
-	cli, err := NewHttpClientFromWebhookOptions(opts)
+	cli, err := NewHTTPClientFromWebhookOptions(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -122,13 +123,12 @@ type WebhookAuthenticationRequest struct {
 }
 
 type WebhookAuthenticationResponse struct {
-	Authenticated bool     `json:"authenticated"`
-	UserInfo      UserInfo `json:"userInfo,omitempty"`
-	Audiences     []string `json:"audiences,omitempty"`
-	Error         string   `json:"error,omitempty"`
+	Authenticated  bool                `json:"authenticated"`
+	Authentication *AuthenticationInfo `json:"authentication,omitempty"`
+	Error          string              `json:"error,omitempty"`
 }
 
-func (w *WebhookAuthenticatorProcessor) Process(ctx context.Context, req *WebhookAuthenticationRequest) (*AuthenticateInfo, error) {
+func (w *WebhookAuthenticatorProcessor) Process(ctx context.Context, req *WebhookAuthenticationRequest) (*AuthenticationInfo, error) {
 	resp := &WebhookAuthenticationResponse{}
 	if err := w.httpclient.Post("").JSON(req).Return(resp).Send(ctx); err != nil {
 		return nil, err
@@ -136,9 +136,11 @@ func (w *WebhookAuthenticatorProcessor) Process(ctx context.Context, req *Webhoo
 	if !resp.Authenticated {
 		return nil, errors.NewUnauthorized(resp.Error)
 	}
-	info := &AuthenticateInfo{
-		User:      resp.UserInfo,
-		Audiences: resp.Audiences,
+	if resp.Authentication == nil {
+		return nil, errors.NewUnauthorized("authentication webhook returned no authentication")
 	}
-	return info, nil
+	if err := ValidateAuthenticationInfo(*resp.Authentication); err != nil {
+		return nil, errors.NewUnauthorized(err.Error())
+	}
+	return resp.Authentication, nil
 }

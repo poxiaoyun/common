@@ -116,17 +116,18 @@ type AuditLog struct {
 	Request  AuditRequest  `json:"request,omitempty"`
 	Response AuditResponse `json:"response,omitempty"`
 	// authz
-	Subject string `json:"subject,omitempty"` // username
+	Subject Subject  `json:"subject,omitempty"`
+	Actor   *Subject `json:"actor,omitempty"`
 	// Resource is the resource type, e.g. "pods", "namespaces/default/pods/nginx-xxx"
 	// we can detect the resource type and name from the request path.
 	// GET  /zoos/{zoo_id}/animals/{animal_id} 	-> get zoos,zoo_id,animals,animal_id
 	// GET  /zoos/{zoo_id}/animals 				-> list zoos,zoo_id,animals,animal_id
 	// POST /zoos/{zoo_id}/animals:set-free 	-> set-free zoos,zoo_id,animals
-	Action       string             `json:"action,omitempty"`       // create, update, delete, get, list, set-free, etc.
-	Domain       string             `json:"domain,omitempty"`       // for multi-tenant
-	Parents      []AttrbuteResource `json:"parents,omitempty"`      // parent resources, e.g. "zoos/{zoo_id}",
-	ResourceType string             `json:"resourceType,omitempty"` // resource type, e.g. "animals"
-	ResourceName string             `json:"resourceName,omitempty"` //  "{animal_id}", or "" if list
+	Action       string              `json:"action,omitempty"`       // create, update, delete, get, list, set-free, etc.
+	Domain       string              `json:"domain,omitempty"`       // for multi-tenant
+	Parents      []AttributeResource `json:"parents,omitempty"`      // parent resources, e.g. "zoos/{zoo_id}",
+	ResourceType string              `json:"resourceType,omitempty"` // resource type, e.g. "animals"
+	ResourceName string              `json:"resourceName,omitempty"` //  "{animal_id}", or "" if list
 	// metadata
 	StartTime time.Time          `json:"startTime,omitempty"` // request start time
 	EndTime   time.Time          `json:"endTime,omitempty"`   // request end time
@@ -275,8 +276,10 @@ func (a *SimpleAuditor) OnResponse(w http.ResponseWriter, r *http.Request, audit
 			auditlog.Parents, auditlog.ResourceType, auditlog.ResourceName = parents, last.Resource, last.Name
 		}
 	}
-	if username := AuthenticateFromContext(r.Context()).User.Name; username != "" {
-		auditlog.Subject = username
+	authentication := AuthenticationFromContext(r.Context())
+	if authentication.ID != "" {
+		auditlog.Subject = authentication.Subject
+		auditlog.Actor = authentication.Actor
 	}
 	auditlog.EndTime = time.Now()
 	auditlog.Response.Header = HttpHeaderToMap(w.Header())

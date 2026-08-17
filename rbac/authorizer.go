@@ -21,8 +21,8 @@ type RBACAuthorizer struct {
 }
 
 // Authorize implements api.Authorizer.
-func (r *RBACAuthorizer) Authorize(ctx context.Context, user api.UserInfo, attr api.Attributes) (authorized api.Decision, reason string, err error) {
-	ok, err := HasAutorityOnce(ctx, r.Storage, user.Name, attr)
+func (r *RBACAuthorizer) Authorize(ctx context.Context, authentication api.AuthenticationInfo, attr api.Attributes) (authorized api.Decision, reason string, err error) {
+	ok, err := HasAutorityOnce(ctx, r.Storage, authentication.ID, attr)
 	if err != nil || !ok {
 		return api.DecisionDeny, "", err
 	}
@@ -34,7 +34,7 @@ func (r *RBACAuthorizer) Authorize(ctx context.Context, user api.UserInfo, attr 
 // tenants/default , tenants/other -> false
 // tenants/default/organizations/default , tenants/default -> true
 // tenants/default/organizations/default , tenants/default/organizations/default -> true
-func IsResourceInOrIsScope(resources []api.AttrbuteResource, scopes []store.Scope) bool {
+func IsResourceInOrIsScope(resources []api.AttributeResource, scopes []store.Scope) bool {
 	for i, scope := range scopes {
 		if i >= len(resources) {
 			return false
@@ -46,7 +46,7 @@ func IsResourceInOrIsScope(resources []api.AttrbuteResource, scopes []store.Scop
 	return true
 }
 
-func IsSameScopes(a []api.AttrbuteResource, b []store.Scope) bool {
+func IsSameScopes(a []api.AttributeResource, b []store.Scope) bool {
 	if len(a) != len(b) {
 		return false
 	}

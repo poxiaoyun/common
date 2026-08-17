@@ -38,13 +38,13 @@ func On(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context) (an
 	}
 }
 
-func OnCurrentUser(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, user string) (any, error)) {
+func OnCurrentSubject(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, subjectID string) (any, error)) {
 	On(w, r, func(ctx context.Context) (any, error) {
-		userinfo := AuthenticateFromContext(ctx)
-		if userinfo.User.Name == "" {
+		authentication := AuthenticationFromContext(ctx)
+		if authentication.ID == "" {
 			return nil, errors.NewBadRequest("require login")
 		}
-		return fn(ctx, userinfo.User.Name)
+		return fn(ctx, authentication.ID)
 	})
 }
 

@@ -49,6 +49,10 @@ func TestClientVerifiesJWTAccessToken(t *testing.T) {
 			Expiry: NewUnixTime(now.Add(time.Hour)), IssuedAt: NewUnixTime(now), ID: "token-1",
 		},
 		ClientID: "client", Scope: "read write",
+		Actor: &ActorClaims{
+			Subject: "current-service",
+			Actor:   &ActorClaims{Subject: "prior-service"},
+		},
 	})
 	token, err := client.VerifyAccessToken(context.Background(), raw)
 	if err != nil {
@@ -56,6 +60,9 @@ func TestClientVerifiesJWTAccessToken(t *testing.T) {
 	}
 	if token.Subject != "service-account" || strings.Join(token.Scopes, " ") != "read write" {
 		t.Fatalf("token = %#v", token)
+	}
+	if token.Actor == nil || token.Actor.Subject != "current-service" || token.Actor.Actor.Subject != "prior-service" {
+		t.Fatalf("actor = %#v", token.Actor)
 	}
 	wrongType := SignJWT(t, key, "JWT", JWTAccessTokenClaims{
 		JWTClaims: JWTClaims{
@@ -202,6 +209,7 @@ func TestClientIntrospectsOpaqueAccessToken(t *testing.T) {
 				"exp":       time.Now().Add(time.Hour).Unix(),
 				"client_id": "client",
 				"scope":     "read",
+				"act":       map[string]any{"sub": "worker"},
 			})
 		default:
 			http.NotFound(response, request)
@@ -227,6 +235,9 @@ func TestClientIntrospectsOpaqueAccessToken(t *testing.T) {
 	}
 	if token.Subject != "user-1" || token.ClientID != "client" {
 		t.Fatalf("token = %#v", token)
+	}
+	if token.Actor == nil || token.Actor.Subject != "worker" {
+		t.Fatalf("actor = %#v", token.Actor)
 	}
 }
 

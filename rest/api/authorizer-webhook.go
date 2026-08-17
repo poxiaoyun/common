@@ -12,8 +12,8 @@ type WebhookAuthorizerOptions struct {
 }
 
 type WebhookAuthorizationRequest struct {
-	UserInfo   UserInfo   `json:"userInfo,omitempty"`
-	Attributes Attributes `json:"attributes,omitempty"`
+	Authentication AuthenticationInfo `json:"authentication"`
+	Attributes     Attributes         `json:"attributes"`
 
 	// optional, the resource object being accessed
 	// it can be used in conditional evaluation
@@ -52,10 +52,10 @@ type WebhookAuthorizer struct {
 	httpclient *httpclient.Client
 }
 
-func (t WebhookAuthorizer) Authorize(ctx context.Context, user UserInfo, attr Attributes) (authorized Decision, reason string, err error) {
+func (t WebhookAuthorizer) Authorize(ctx context.Context, authentication AuthenticationInfo, attr Attributes) (authorized Decision, reason string, err error) {
 	req := &WebhookAuthorizationRequest{
-		UserInfo:   user,
-		Attributes: attr,
+		Authentication: authentication,
+		Attributes:     attr,
 	}
 	resp := &WebhookAuthorizationResponse{}
 	if err := t.httpclient.Post("").JSON(req).Return(resp).Send(ctx); err != nil {

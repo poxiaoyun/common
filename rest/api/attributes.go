@@ -6,29 +6,33 @@ import (
 	"strings"
 )
 
-type AttrbuteResource struct {
+// AttributeResource identifies one resource in an authorization target path.
+type AttributeResource struct {
 	Resource string `json:"resource,omitempty"`
 	Name     string `json:"name,omitempty"`
 }
 
+// Attributes describes the operation and resources being authorized.
 type Attributes struct {
 	// Service is the name of the service that the request is targeting.
-	Service   string             `json:"service,omitempty"`
-	Method    string             `json:"method,omitempty"`
-	Action    string             `json:"action,omitempty"`
-	Resources []AttrbuteResource `json:"resources,omitempty"`
-	Path      string             `json:"path,omitempty"`
+	Service   string              `json:"service,omitempty"`
+	Method    string              `json:"method,omitempty"`
+	Action    string              `json:"action,omitempty"`
+	Resources []AttributeResource `json:"resources,omitempty"`
+	Path      string              `json:"path,omitempty"`
 }
 
+// AttributeExtractor derives authorization attributes from a request.
 type AttributeExtractor func(r *http.Request) (*Attributes, error)
 
+// PrefixedAttributesExtractor returns an extractor for paths below prefix.
 func PrefixedAttributesExtractor(prefix string) AttributeExtractor {
 	return func(r *http.Request) (*Attributes, error) {
 		if !strings.HasPrefix(r.URL.Path, prefix) {
 			return nil, nil
 		}
 		method, path := r.Method, strings.TrimPrefix(r.URL.Path, prefix)
-		action, resources := DefaultRestAttributeExtractor(method, path)
+		action, resources := DefaultRESTAttributeExtractor(method, path)
 		return &Attributes{Method: method, Action: action, Resources: resources, Path: path}, nil
 	}
 }
@@ -50,7 +54,9 @@ var MethodActionMapSingular = map[string]string{
 	"PATCH":  "patch",
 }
 
-func DefaultRestAttributeExtractor(method string, path string) (string, []AttrbuteResource) {
+// DefaultRESTAttributeExtractor derives an action and resource path using the
+// package's conventional REST method mapping.
+func DefaultRESTAttributeExtractor(method string, path string) (string, []AttributeResource) {
 	// example:
 	// /api/v1/namespaces/default/pods/nginx-xxx -> ["namespaces", "default", "pods", "nginx-xxx"]
 	// /api/v1/namespaces/default/pods -> ["namespaces", "default", "pods"]
@@ -73,9 +79,9 @@ func DefaultRestAttributeExtractor(method string, path string) (string, []Attrbu
 			action = string(MethodActionMapSingular[method])
 		}
 	}
-	resources := []AttrbuteResource{}
+	resources := []AttributeResource{}
 	for i := 0; i < len(parts); i += 2 {
-		resources = append(resources, AttrbuteResource{Resource: parts[i], Name: parts[i+1]})
+		resources = append(resources, AttributeResource{Resource: parts[i], Name: parts[i+1]})
 	}
 	return action, resources
 }
@@ -100,9 +106,11 @@ func splitResourceAction(path string) (string, string) {
 	}
 }
 
-func NewAttributeFilter(attributer AttributeExtractor) Filter {
+// NewAttributeExtractionFilter installs extracted authorization attributes in
+// the request context.
+func NewAttributeExtractionFilter(extractor AttributeExtractor) Filter {
 	return FilterFunc(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		attributes, err := attributer(r)
+		attributes, err := extractor(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -112,18 +120,19 @@ func NewAttributeFilter(attributer AttributeExtractor) Filter {
 	})
 }
 
+// WithAttributes returns a context carrying authorization attributes.
 func WithAttributes(ctx context.Context, attributes *Attributes) context.Context {
 	return SetContextValue(ctx, "attributes", attributes)
 }
 
+// AttributesFromContext returns the authorization attributes carried by ctx.
 func AttributesFromContext(ctx context.Context) *Attributes {
 	return GetContextValue[*Attributes](ctx, "attributes")
 }
 
-// InjectAttrName use to set name for current request attribute
-// it usually called when a creation operation is successful
-// it help audit to record what name this creation operation created
-func InjectAttrName(ctx context.Context, name string) {
+// SetAttributeResourceName sets the final target resource name. Creation
+// handlers use it after assigning a name so audit records contain that name.
+func SetAttributeResourceName(ctx context.Context, name string) {
 	attributes := AttributesFromContext(ctx)
 	if len(attributes.Resources) == 0 {
 		return

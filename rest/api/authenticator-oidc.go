@@ -70,7 +70,7 @@ func NewOIDCAuthenticator(ctx context.Context, opts *OIDCOptions) (*OIDCAuthenti
 	}, nil
 }
 
-func (o *OIDCAuthenticator) AuthenticateToken(ctx context.Context, token string) (*AuthenticateInfo, error) {
+func (o *OIDCAuthenticator) AuthenticateToken(ctx context.Context, token string) (*AuthenticationInfo, error) {
 	if token == "" {
 		return nil, fmt.Errorf("no token found")
 	}
@@ -133,13 +133,13 @@ func (o *OIDCAuthenticator) AuthenticateToken(ctx context.Context, token string)
 			break
 		}
 	}
-	info := UserInfo{
+	subject := Subject{
 		ID:     idToken.Subject,
 		Name:   username,
 		Email:  email,
 		Groups: groups,
 	}
-	return &AuthenticateInfo{Audiences: idToken.Audience, User: info}, nil
+	return &AuthenticationInfo{Subject: subject}, nil
 }
 
 type claims map[string]json.RawMessage

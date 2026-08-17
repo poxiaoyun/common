@@ -53,9 +53,9 @@ func MatchResourceWildcard(expression, value string) bool {
 }
 
 // return wildcards for action and expression
-// e.g. action: get, resources: [AttrbuteResource{Resource: "namespaces", Name: "default"}]
+// e.g. action: get, resources: [AttributeResource{Resource: "namespaces", Name: "default"}]
 // -> "get" "namespaces:default"
-func ResourcesToWildcard(resources []AttrbuteResource) string {
+func ResourcesToWildcard(resources []AttributeResource) string {
 	builder := strings.Builder{}
 	for i, resource := range resources {
 		if i > 0 {

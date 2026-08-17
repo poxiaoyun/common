@@ -93,3 +93,8 @@ func (agg aggregate) visit(f func(err error) bool) bool {
 func (agg aggregate) Errors() []error {
 	return []error(agg)
 }
+
+// Unwrap exposes every aggregated error to the standard errors traversal.
+func (agg aggregate) Unwrap() []error {
+	return []error(agg)
+}

@@ -3,28 +3,13 @@ package api
 import (
 	"context"
 	"errors"
-	"net/http"
 
+	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/oidc"
 )
 
-const (
-	// IAMPrincipalTypeExtra carries the IAM principal type used to select the
-	// authorization policy for an authenticated identity.
-	IAMPrincipalTypeExtra = "iam.principal.type"
-	// OAuth2ClientIDExtra carries the OAuth 2.0 client_id associated with an
-	// access token.
-	OAuth2ClientIDExtra = "oauth2.client_id"
-	// OAuth2ScopeExtra carries the OAuth 2.0 scopes granted to an access token.
-	OAuth2ScopeExtra = "oauth2.scope"
-	// OAuth2ClientPrincipalType identifies a client_credentials service
-	// principal.
-	OAuth2ClientPrincipalType = "oauth2_client"
-)
-
-// OAuth2AccessTokenAuthenticator validates IAM service access tokens and maps
-// their verified claims to the authentication information consumed by API
-// authorizers.
+// OAuth2AccessTokenAuthenticator validates OAuth 2.0 access tokens and maps
+// their verified claims to the canonical authentication information.
 type OAuth2AccessTokenAuthenticator struct {
 	// Client verifies access tokens against one lazily discovered provider.
 	Client *oidc.Client
@@ -36,36 +21,28 @@ func NewOAuth2AccessTokenAuthenticator(client *oidc.Client) *OAuth2AccessTokenAu
 	return &OAuth2AccessTokenAuthenticator{Client: client}
 }
 
-// OAuth2BearerAuthenticationError writes the RFC 6750 Bearer challenge for a
-// failed protected-resource request.
-func OAuth2BearerAuthenticationError(w http.ResponseWriter, _ *http.Request, err error) {
-	challenge := "Bearer"
-	if errors.Is(err, oidc.ErrInvalidAccessToken) {
-		challenge += ` error="invalid_token"`
-	}
-	w.Header().Set("WWW-Authenticate", challenge)
-	Unauthorized(w, "Unauthorized")
-}
-
-// AuthenticateToken verifies raw and returns its service principal, client ID,
-// granted scopes, and the audience validated by this authenticator.
-func (a *OAuth2AccessTokenAuthenticator) AuthenticateToken(ctx context.Context, raw string) (*AuthenticateInfo, error) {
+// AuthenticateToken verifies raw and returns its subject, current actor, and
+// access constraints. OAuth client metadata remains in the protocol result.
+func (a *OAuth2AccessTokenAuthenticator) AuthenticateToken(ctx context.Context, raw string) (*AuthenticationInfo, error) {
 	token, err := a.Client.VerifyAccessToken(ctx, raw)
 	if err != nil {
+		if errors.Is(err, oidc.ErrInvalidAccessToken) {
+			log.FromContext(ctx).Error(err, "OAuth 2.0 access token rejected")
+			return nil, NewUnauthorizedChallengeError(`Bearer error="invalid_token"`, "Unauthorized")
+		}
 		return nil, err
 	}
-	return &AuthenticateInfo{
-		Audiences: token.Audience,
-		User: UserInfo{
-			ID:   token.Subject,
-			Name: token.Issuer + "#" + token.Subject,
-			Extra: map[string][]string{
-				IAMPrincipalTypeExtra: {OAuth2ClientPrincipalType},
-				OAuth2ClientIDExtra:   {token.ClientID},
-				OAuth2ScopeExtra:      token.Scopes,
-			},
+	info := &AuthenticationInfo{
+		Subject: Subject{ID: token.Subject, Name: token.Username},
+		Access: &AccessConstraints{
+			Audiences: append([]string(nil), token.Audience...),
+			Scopes:    append([]string(nil), token.Scopes...),
 		},
-	}, nil
+	}
+	if token.Actor != nil {
+		info.Actor = &Subject{ID: token.Actor.Subject}
+	}
+	return info, nil
 }
 
 var _ TokenAuthenticator = &OAuth2AccessTokenAuthenticator{}

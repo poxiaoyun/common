@@ -14,7 +14,7 @@ type TokenAuthenticatorChain []TokenAuthenticator
 
 var _ TokenAuthenticator = TokenAuthenticatorChain{}
 
-func (c TokenAuthenticatorChain) AuthenticateToken(ctx context.Context, token string) (*AuthenticateInfo, error) {
+func (c TokenAuthenticatorChain) AuthenticateToken(ctx context.Context, token string) (*AuthenticationInfo, error) {
 	var errlist []error
 	for _, authn := range c {
 		info, err := authn.AuthenticateToken(ctx, token)
@@ -37,7 +37,7 @@ type BasicAuthenticatorChain []BasicAuthenticator
 
 var _ BasicAuthenticator = BasicAuthenticatorChain{}
 
-func (c BasicAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
+func (c BasicAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticationInfo, error) {
 	var errlist []error
 	for _, authn := range c {
 		info, err := authn.AuthenticateBasic(ctx, username, password)
@@ -60,7 +60,7 @@ type SSHAuthenticatorChain []SSHAuthenticator
 
 var _ SSHAuthenticator = SSHAuthenticatorChain{}
 
-func (c SSHAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticateInfo, error) {
+func (c SSHAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticationInfo, error) {
 	var errlist []error
 	for _, authn := range c {
 		info, err := authn.AuthenticateBasic(ctx, username, password)
@@ -79,7 +79,7 @@ func (c SSHAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, 
 	return nil, errors.NewAggregate(errlist)
 }
 
-func (c SSHAuthenticatorChain) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticateInfo, error) {
+func (c SSHAuthenticatorChain) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticationInfo, error) {
 	var errlist []error
 	for _, authn := range c {
 		info, err := authn.AuthenticatePublicKey(ctx, pubkey)
@@ -98,16 +98,16 @@ func (c SSHAuthenticatorChain) AuthenticatePublicKey(ctx context.Context, pubkey
 	return nil, errors.NewAggregate(errlist)
 }
 
-var _ Authenticator = AuthenticateFunc(nil)
+var _ Authenticator = AuthenticatorFunc(nil)
 
-func SessionAuthenticatorWrap(authn TokenAuthenticator, sessionkey string) Authenticator {
-	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-		token := ExtractTokenFromCookie(r, sessionkey)
+// NewSessionAuthenticator adapts token authentication to a session cookie.
+func NewSessionAuthenticator(authenticator TokenAuthenticator, sessionKey string) Authenticator {
+	return AuthenticatorFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
+		token := ExtractTokenFromCookie(r, sessionKey)
 		if token == "" {
 			return nil, ErrNotProvided
 		}
-		ctx := WithResponseHeader(r.Context(), w.Header())
-		info, err := authn.AuthenticateToken(ctx, token)
+		info, err := authenticator.AuthenticateToken(r.Context(), token)
 		if stderrors.Is(err, ErrNotProvided) {
 			return nil, errors.NewUnauthorized("session credential was not accepted")
 		}
@@ -123,8 +123,10 @@ func ExtractTokenFromCookie(r *http.Request, cookieName string) string {
 	return ""
 }
 
-func BearerTokenAuthenticatorWrap(authn TokenAuthenticator) Authenticator {
-	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+// NewBearerTokenAuthenticator adapts token authentication to HTTP Bearer
+// credentials.
+func NewBearerTokenAuthenticator(authenticator TokenAuthenticator) Authenticator {
+	return AuthenticatorFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
 		token, provided := extractBearerTokenFromRequest(r)
 		if !provided {
 			return nil, ErrNotProvided
@@ -132,13 +134,25 @@ func BearerTokenAuthenticatorWrap(authn TokenAuthenticator) Authenticator {
 		if token == "" {
 			return nil, errors.NewUnauthorized("bearer token is empty")
 		}
-		ctx := WithResponseHeader(r.Context(), w.Header())
-		info, err := authn.AuthenticateToken(ctx, token)
+		info, err := authenticator.AuthenticateToken(r.Context(), token)
 		if stderrors.Is(err, ErrNotProvided) {
 			return nil, errors.NewUnauthorized("bearer token was not accepted")
 		}
 		return info, err
 	})
+}
+
+// BearerTokenAuthenticationError writes the Bearer challenge carried by err,
+// or a bare Bearer challenge when err has no more specific challenge.
+func BearerTokenAuthenticationError(w http.ResponseWriter, _ *http.Request, err error) {
+	challenge := "Bearer"
+	var challengeErr *AuthenticationChallengeError
+	if stderrors.As(err, &challengeErr) {
+		Error(w, err)
+		return
+	}
+	w.Header().Set("WWW-Authenticate", challenge)
+	Unauthorized(w, "Unauthorized")
 }
 
 func ExtractBearerTokenFromRequest(r *http.Request) string {
@@ -162,13 +176,15 @@ func extractBearerTokenFromRequest(r *http.Request) (string, bool) {
 	return values[0], true
 }
 
-func BasicAuthenticatorWrap(authn BasicAuthenticator) Authenticator {
-	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+// NewBasicAuthenticator adapts basic authentication to HTTP Basic
+// credentials.
+func NewBasicAuthenticator(authenticator BasicAuthenticator) Authenticator {
+	return AuthenticatorFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
 		username, password, ok := r.BasicAuth()
 		if !ok {
 			return nil, ErrNotProvided
 		}
-		info, err := authn.AuthenticateBasic(r.Context(), username, password)
+		info, err := authenticator.AuthenticateBasic(r.Context(), username, password)
 		if stderrors.Is(err, ErrNotProvided) {
 			return nil, errors.NewUnauthorized("basic credentials were not accepted")
 		}
@@ -178,7 +194,7 @@ func BasicAuthenticatorWrap(authn BasicAuthenticator) Authenticator {
 
 type AuthenticatorChain []Authenticator
 
-func (d AuthenticatorChain) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+func (d AuthenticatorChain) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
 	var errs []error
 	for _, a := range d {
 		info, err := a.Authenticate(w, r)
@@ -197,8 +213,10 @@ func (d AuthenticatorChain) Authenticate(w http.ResponseWriter, r *http.Request)
 	return nil, errors.NewAggregate(errs)
 }
 
-type AuthenticateFunc func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error)
+// AuthenticatorFunc adapts a function to Authenticator.
+type AuthenticatorFunc func(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error)
 
-func (f AuthenticateFunc) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
+// Authenticate calls f.
+func (f AuthenticatorFunc) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
 	return f(w, r)
 }

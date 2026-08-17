@@ -5,17 +5,14 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
-	"time"
-
-	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
 // AuthorizerFunc adapts a function to Authorizer.
-type AuthorizerFunc func(ctx context.Context, user UserInfo, a Attributes) (authorized Decision, reason string, err error)
+type AuthorizerFunc func(ctx context.Context, authentication AuthenticationInfo, a Attributes) (authorized Decision, reason string, err error)
 
 // Authorize calls f.
-func (f AuthorizerFunc) Authorize(ctx context.Context, user UserInfo, a Attributes) (authorized Decision, reason string, err error) {
-	return f(ctx, user, a)
+func (f AuthorizerFunc) Authorize(ctx context.Context, authentication AuthenticationInfo, a Attributes) (authorized Decision, reason string, err error) {
+	return f(ctx, authentication, a)
 }
 
 // RequestAuthorizerFunc adapts a function to RequestAuthorizer.
@@ -28,14 +25,14 @@ func (f RequestAuthorizerFunc) AuthorizeRequest(r *http.Request) (Decision, stri
 
 // NewAlwaysAllowAuthorizer returns an Authorizer that allows every request.
 func NewAlwaysAllowAuthorizer() Authorizer {
-	return AuthorizerFunc(func(ctx context.Context, user UserInfo, a Attributes) (authorized Decision, reason string, err error) {
+	return AuthorizerFunc(func(ctx context.Context, authentication AuthenticationInfo, a Attributes) (authorized Decision, reason string, err error) {
 		return DecisionAllow, "", nil
 	})
 }
 
 // NewAlwaysDenyAuthorizer returns an Authorizer that denies every request.
 func NewAlwaysDenyAuthorizer() Authorizer {
-	return AuthorizerFunc(func(ctx context.Context, user UserInfo, a Attributes) (authorized Decision, reason string, err error) {
+	return AuthorizerFunc(func(ctx context.Context, authentication AuthenticationInfo, a Attributes) (authorized Decision, reason string, err error) {
 		return DecisionDeny, "", nil
 	})
 }
@@ -47,7 +44,7 @@ func NewWhitelistAuthorizer(pattern ...string) Authorizer {
 	for _, pattern := range pattern {
 		compiledPatterns = append(compiledPatterns, regexp.MustCompile(pattern))
 	}
-	return AuthorizerFunc(func(ctx context.Context, user UserInfo, a Attributes) (authorized Decision, reason string, err error) {
+	return AuthorizerFunc(func(ctx context.Context, authentication AuthenticationInfo, a Attributes) (authorized Decision, reason string, err error) {
 		matched := slices.ContainsFunc(compiledPatterns, func(r *regexp.Regexp) bool {
 			return r.MatchString(a.Path)
 		})
@@ -65,9 +62,9 @@ type AuthorizerChain []Authorizer
 
 // Authorize evaluates the chain according to AuthorizerChain's ordering and
 // short-circuit rules.
-func (c AuthorizerChain) Authorize(ctx context.Context, user UserInfo, a Attributes) (Decision, string, error) {
+func (c AuthorizerChain) Authorize(ctx context.Context, authentication AuthenticationInfo, a Attributes) (Decision, string, error) {
 	for _, authorizer := range c {
-		decision, reason, err := authorizer.Authorize(ctx, user, a)
+		decision, reason, err := authorizer.Authorize(ctx, authentication, a)
 		if err != nil {
 			return DecisionDeny, reason, err
 		}
@@ -99,8 +96,8 @@ type GroupAuthorizer struct {
 
 // Authorize checks the principal's groups and returns DecisionNoOpinion when
 // none match.
-func (g GroupAuthorizer) Authorize(ctx context.Context, user UserInfo, a Attributes) (authorized Decision, reason string, err error) {
-	for _, group := range user.Groups {
+func (g GroupAuthorizer) Authorize(ctx context.Context, authentication AuthenticationInfo, a Attributes) (authorized Decision, reason string, err error) {
+	for _, group := range authentication.Groups {
 		if slices.Contains(g.DeniedGroups, group) {
 			return DecisionDeny, "", nil
 		}
@@ -109,39 +106,4 @@ func (g GroupAuthorizer) Authorize(ctx context.Context, user UserInfo, a Attribu
 		}
 	}
 	return DecisionNoOpinion, "", nil
-}
-
-// NewCacheAuthorizer caches successful decisions from authorizer for ttl.
-func NewCacheAuthorizer(authorizer Authorizer, size int, ttl time.Duration) Authorizer {
-	return &LRUCacheAuthorizer{
-		Authorizer: authorizer,
-		cache:      expirable.NewLRU[string, Decision](size, nil, ttl),
-	}
-}
-
-// LRUCacheAuthorizer caches successful decisions from Authorizer. Denials,
-// NoOpinion decisions, and errors are evaluated on every request.
-type LRUCacheAuthorizer struct {
-	// Authorizer supplies decisions that are not present in the cache.
-	Authorizer Authorizer
-	cache      *expirable.LRU[string, Decision]
-}
-
-// Authorize implements Authorizer.
-func (c *LRUCacheAuthorizer) Authorize(ctx context.Context, user UserInfo, a Attributes) (authorized Decision, reason string, err error) {
-	if c.cache == nil {
-		return c.Authorizer.Authorize(ctx, user, a)
-	}
-	key := user.Name + "@" + ResourcesToWildcard(a.Resources) + ":" + a.Action
-	if decision, ok := c.cache.Get(key); ok {
-		return decision, "", nil
-	}
-	decision, reason, err := c.Authorizer.Authorize(ctx, user, a)
-	if err != nil {
-		return decision, reason, err
-	}
-	if decision == DecisionAllow {
-		c.cache.Add(key, decision)
-	}
-	return decision, reason, nil
 }

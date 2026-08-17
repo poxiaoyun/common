@@ -9,7 +9,7 @@ import (
 	"net/http"
 )
 
-var _ Filter = &AdminssionFilter{}
+var _ Filter = &AdmissionFilter{}
 
 type AdmissionContent struct {
 	ContentEncoding string
@@ -27,20 +27,22 @@ const (
 	DefaultBodySizeLimit = 5 * 1024 * 1024
 )
 
-func NewAdminssionFilter(plugins ...AdmissionPlugin) *AdminssionFilter {
-	return &AdminssionFilter{
+// NewAdmissionFilter returns an admission filter using plugins in order.
+func NewAdmissionFilter(plugins ...AdmissionPlugin) *AdmissionFilter {
+	return &AdmissionFilter{
 		BodySizeLimit: DefaultBodySizeLimit,
 		Plugins:       plugins,
 	}
 }
 
-type AdminssionFilter struct {
+// AdmissionFilter runs matching admission plugins before the request handler.
+type AdmissionFilter struct {
 	BodySizeLimit int64
 	Plugins       []AdmissionPlugin
 }
 
 // Process implements api.Filter.
-func (a *AdminssionFilter) Process(w http.ResponseWriter, r *http.Request, next http.Handler) {
+func (a *AdmissionFilter) Process(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	var bodyBytes []byte
 	if attr := AttributesFromContext(r.Context()); attr != nil {
 		for _, plugin := range a.Plugins {

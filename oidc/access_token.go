@@ -48,16 +48,18 @@ type AutoAccessTokenVerifier struct {
 // 9068 JWT Profile for OAuth 2.0 Access Tokens.
 type JWTAccessTokenClaims struct {
 	JWTClaims
-	ClientID string `json:"client_id,omitempty"`
-	Scope    string `json:"scope,omitempty"`
+	ClientID string       `json:"client_id,omitempty"`
+	Scope    string       `json:"scope,omitempty"`
+	Actor    *ActorClaims `json:"act,omitempty"`
 }
 
 type tokenIntrospectionResponse struct {
 	JWTClaims
-	Active   bool   `json:"active"`
-	ClientID string `json:"client_id,omitempty"`
-	Username string `json:"username,omitempty"`
-	Scope    string `json:"scope,omitempty"`
+	Active   bool         `json:"active"`
+	ClientID string       `json:"client_id,omitempty"`
+	Username string       `json:"username,omitempty"`
+	Scope    string       `json:"scope,omitempty"`
+	Actor    *ActorClaims `json:"act,omitempty"`
 }
 
 var (
@@ -190,6 +192,9 @@ func (v *JWTAccessTokenVerifier) Verify(ctx context.Context, raw string) (*Acces
 	if claims.Issuer == "" || claims.Subject == "" || len(claims.Audience) == 0 || claims.Expiry == nil || claims.IssuedAt == nil || claims.ID == "" || claims.ClientID == "" {
 		return nil, fmt.Errorf("%w: JWT is missing required claims", ErrInvalidAccessToken)
 	}
+	if claims.Actor != nil && claims.Actor.Subject == "" {
+		return nil, fmt.Errorf("%w: JWT actor is missing sub", ErrInvalidAccessToken)
+	}
 	if claims.Issuer != v.issuer {
 		return nil, fmt.Errorf("%w: JWT issuer mismatch", ErrInvalidAccessToken)
 	}
@@ -215,6 +220,7 @@ func (v *JWTAccessTokenVerifier) Verify(ctx context.Context, raw string) (*Acces
 		ID:       claims.ID,
 		ClientID: claims.ClientID,
 		Scopes:   strings.Fields(claims.Scope),
+		Actor:    claims.Actor,
 		claims:   payload,
 	}, nil
 }
@@ -254,6 +260,9 @@ func (v *IntrospectionAccessTokenVerifier) Verify(ctx context.Context, raw strin
 	if !claims.Active {
 		return nil, fmt.Errorf("%w: introspection response is inactive", ErrInvalidAccessToken)
 	}
+	if claims.Actor != nil && claims.Actor.Subject == "" {
+		return nil, fmt.Errorf("%w: introspection actor is missing sub", ErrInvalidAccessToken)
+	}
 	if claims.Issuer != "" && claims.Issuer != v.issuer {
 		return nil, fmt.Errorf("%w: introspection issuer mismatch", ErrInvalidAccessToken)
 	}
@@ -274,6 +283,7 @@ func (v *IntrospectionAccessTokenVerifier) Verify(ctx context.Context, raw strin
 		ClientID: claims.ClientID,
 		Username: claims.Username,
 		Scopes:   strings.Fields(claims.Scope),
+		Actor:    claims.Actor,
 		claims:   payload,
 	}
 	if claims.Expiry != nil {

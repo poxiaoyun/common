@@ -266,6 +266,14 @@ func (u *UserInfo) DecodeClaims(target any) error {
 	return json.Unmarshal(u.claims, target)
 }
 
+// ActorClaims identifies the current actor and optionally retains the prior
+// RFC 8693 delegation history.
+type ActorClaims struct {
+	Issuer  string       `json:"iss,omitempty"`
+	Subject string       `json:"sub"`
+	Actor   *ActorClaims `json:"act,omitempty"`
+}
+
 // AccessToken contains verified JWT or introspection access-token claims.
 // Authorization decisions remain the resource server's responsibility.
 type AccessToken struct {
@@ -278,6 +286,7 @@ type AccessToken struct {
 	ClientID string
 	Username string
 	Scopes   []string
+	Actor    *ActorClaims
 
 	claims json.RawMessage
 }

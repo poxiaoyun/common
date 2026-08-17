@@ -19,7 +19,7 @@ func TestAuthorityMatch(t *testing.T) {
 			authority: []Authority{{Actions: []string{"get", "list"}, Resources: []string{"**"}}},
 			attr: api.Attributes{
 				Action:    "get",
-				Resources: []api.AttrbuteResource{{Resource: "namespaces", Name: "default"}},
+				Resources: []api.AttributeResource{{Resource: "namespaces", Name: "default"}},
 			},
 			want: true,
 		},
@@ -27,7 +27,7 @@ func TestAuthorityMatch(t *testing.T) {
 			authority: []Authority{{Actions: []string{"get", "list"}, Resources: []string{"applications:**"}}},
 			attr: api.Attributes{
 				Action:    "list",
-				Resources: []api.AttrbuteResource{{Resource: "applications"}},
+				Resources: []api.AttributeResource{{Resource: "applications"}},
 			},
 			want: true,
 		},
@@ -35,7 +35,7 @@ func TestAuthorityMatch(t *testing.T) {
 			authority: []Authority{{Actions: []string{"*"}, Resources: []string{"applications:**"}}},
 			attr: api.Attributes{
 				Action:    "get",
-				Resources: []api.AttrbuteResource{{Resource: "applications", Name: "default"}},
+				Resources: []api.AttributeResource{{Resource: "applications", Name: "default"}},
 			},
 			want: true,
 		},
@@ -45,7 +45,7 @@ func TestAuthorityMatch(t *testing.T) {
 			},
 			attr: api.Attributes{
 				Action: "get",
-				Resources: []api.AttrbuteResource{
+				Resources: []api.AttributeResource{
 					{Resource: "applications", Name: "default"},
 					{Resource: "resources", Name: "pods"},
 				},
@@ -56,7 +56,7 @@ func TestAuthorityMatch(t *testing.T) {
 			authority: []Authority{{Actions: []string{"*"}, Resources: []string{"applications:**"}}},
 			attr: api.Attributes{
 				Action:    "list",
-				Resources: []api.AttrbuteResource{{Resource: "applications"}},
+				Resources: []api.AttributeResource{{Resource: "applications"}},
 			},
 			want: true,
 		},
@@ -69,7 +69,7 @@ func TestAuthorityMatch(t *testing.T) {
 			},
 			attr: api.Attributes{
 				Action: "list",
-				Resources: []api.AttrbuteResource{
+				Resources: []api.AttributeResource{
 					{Resource: "tenants", Name: "default"},
 					{Resource: "applications"},
 				},
@@ -85,7 +85,7 @@ func TestAuthorityMatch(t *testing.T) {
 			},
 			attr: api.Attributes{
 				Action: "list",
-				Resources: []api.AttrbuteResource{
+				Resources: []api.AttributeResource{
 					{Resource: "tenants", Name: "default"},
 					{Resource: "applications"},
 				},

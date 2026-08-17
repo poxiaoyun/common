@@ -19,7 +19,7 @@ func TestMatchAttributes(t *testing.T) {
 			name: "get namespaces:*",
 			args: args{
 				act: "get", res: "namespaces:*",
-				att: Attributes{Action: "get", Resources: []AttrbuteResource{{Resource: "namespaces", Name: "default"}}},
+				att: Attributes{Action: "get", Resources: []AttributeResource{{Resource: "namespaces", Name: "default"}}},
 			},
 			want: true,
 		},
@@ -27,7 +27,7 @@ func TestMatchAttributes(t *testing.T) {
 			name: "get namespaces",
 			args: args{
 				act: "get", res: "namespaces",
-				att: Attributes{Action: "get", Resources: []AttrbuteResource{{Resource: "namespaces", Name: "default"}}},
+				att: Attributes{Action: "get", Resources: []AttributeResource{{Resource: "namespaces", Name: "default"}}},
 			},
 			want: false,
 		},
@@ -35,7 +35,7 @@ func TestMatchAttributes(t *testing.T) {
 			name: "list namespaces",
 			args: args{
 				act: "list", res: "namespaces",
-				att: Attributes{Action: "list", Resources: []AttrbuteResource{{Resource: "namespaces"}}},
+				att: Attributes{Action: "list", Resources: []AttributeResource{{Resource: "namespaces"}}},
 			},
 			want: true,
 		},
@@ -51,26 +51,26 @@ func TestMatchAttributes(t *testing.T) {
 
 func TestResourcesToWildcard(t *testing.T) {
 	tests := []struct {
-		resources []AttrbuteResource
+		resources []AttributeResource
 		want      string
 	}{
 		{
-			resources: []AttrbuteResource{{Resource: "namespaces", Name: "default"}},
+			resources: []AttributeResource{{Resource: "namespaces", Name: "default"}},
 			want:      "namespaces:default",
 		},
 		{
-			resources: []AttrbuteResource{{Resource: "namespaces"}},
+			resources: []AttributeResource{{Resource: "namespaces"}},
 			want:      "namespaces",
 		},
 		{
-			resources: []AttrbuteResource{
+			resources: []AttributeResource{
 				{Resource: "namespaces", Name: "default"},
 				{Resource: "pods", Name: "nginx-xxx"},
 			},
 			want: "namespaces:default:pods:nginx-xxx",
 		},
 		{
-			resources: []AttrbuteResource{
+			resources: []AttributeResource{
 				{Resource: "namespaces", Name: ""},
 				{Resource: "pods", Name: "nginx-xxx"},
 			},

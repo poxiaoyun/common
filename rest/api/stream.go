@@ -70,30 +70,31 @@ func NewStreamEncoder[T any](w http.ResponseWriter, format string) (StreamEncode
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events
 // https://html.spec.whatwg.org/multipage/server-sent-events.html#server-sent-events
-type ServerSendEventWriter[T any] struct {
+// ServerSentEventWriter encodes server-sent events to an HTTP response.
+type ServerSentEventWriter[T any] struct {
 	w   http.ResponseWriter
 	buf bytes.Buffer
 }
 
-func NewSSEWriter[T any](w http.ResponseWriter) *ServerSendEventWriter[T] {
+func NewSSEWriter[T any](w http.ResponseWriter) *ServerSentEventWriter[T] {
 	w.Header().Set("Content-Type", ContentTypeEventStream)
 	w.WriteHeader(http.StatusOK)
-	return &ServerSendEventWriter[T]{w: w}
+	return &ServerSentEventWriter[T]{w: w}
 }
 
-func (w *ServerSendEventWriter[T]) SendError(err error) error {
+func (w *ServerSentEventWriter[T]) SendError(err error) error {
 	return w.EncodeEvent("error", err.Error())
 }
 
-func (w *ServerSendEventWriter[T]) Encode(event string, data T) error {
+func (w *ServerSentEventWriter[T]) Encode(event string, data T) error {
 	return w.EncodeEvent(event, data)
 }
 
-func (w *ServerSendEventWriter[T]) Close() error {
+func (w *ServerSentEventWriter[T]) Close() error {
 	return nil
 }
 
-func (w *ServerSendEventWriter[T]) EncodeEvent(event string, data any) error {
+func (w *ServerSentEventWriter[T]) EncodeEvent(event string, data any) error {
 	w.buf.Reset()
 	if event != "" {
 		w.buf.WriteString("event: ")
@@ -121,15 +122,16 @@ type Event struct {
 	Data  []byte `json:"data,omitempty"`
 }
 
-func NewSSEReader[T any](r io.Reader) *ServerSendEventDecoder[T] {
-	return &ServerSendEventDecoder[T]{r: r}
+func NewSSEReader[T any](r io.Reader) *ServerSentEventDecoder[T] {
+	return &ServerSentEventDecoder[T]{r: r}
 }
 
-type ServerSendEventDecoder[T any] struct {
+// ServerSentEventDecoder decodes a server-sent event stream.
+type ServerSentEventDecoder[T any] struct {
 	r io.Reader
 }
 
-func (d *ServerSendEventDecoder[T]) Decode(ctx context.Context, on func(ctx context.Context, kind string, data T) error) error {
+func (d *ServerSentEventDecoder[T]) Decode(ctx context.Context, on func(ctx context.Context, kind string, data T) error) error {
 	return NewSSEDecode(ctx, d.r, func(e Event) error {
 		if e.Event == "error" {
 			return fmt.Errorf("stream error: %s", string(e.Data))

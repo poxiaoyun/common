@@ -7,109 +7,119 @@ import (
 	"testing"
 )
 
-func TestOAuth2RequiredScopeWithPrefix(t *testing.T) {
-	required := OAuth2RequiredScope(func(attributes Attributes) string {
-		if attributes.Action == "get" {
-			return "read"
-		}
-		return ""
-	}).WithPrefix("orders")
-
-	if scope := required(Attributes{Action: "get"}); scope != "orders.read" {
-		t.Fatalf("scope = %q", scope)
-	}
-	if scope := required(Attributes{Action: "delete"}); scope != "" {
-		t.Fatalf("unmapped scope = %q", scope)
-	}
-}
-
-func TestOAuth2ScopeAuthorizer(t *testing.T) {
-	authorizer := OAuth2ScopeAuthorizer{
-		RequiredScope: func(attributes Attributes) string {
-			if attributes.Action == "get" {
-				return "orders.read"
-			}
-			return "orders.write"
+func TestAuthorizationFilterUsesOAuth2ScopeAuthorizerInChain(t *testing.T) {
+	tests := []struct {
+		name              string
+		authentication    AuthenticationInfo
+		action            string
+		fallbackDecision  Decision
+		wantStatus        int
+		wantChallenge     string
+		wantFallbackCalls int
+	}{
+		{
+			name: "scope authorizes access token",
+			authentication: AuthenticationInfo{
+				Subject: Subject{ID: "client"},
+				Access:  &AccessConstraints{Scopes: []string{"orders.read"}},
+			},
+			action:            "get",
+			fallbackDecision:  DecisionDeny,
+			wantStatus:        http.StatusNoContent,
+			wantFallbackCalls: 0,
+		},
+		{
+			name: "missing scope denies access token",
+			authentication: AuthenticationInfo{
+				Subject: Subject{ID: "client"},
+				Access:  &AccessConstraints{Scopes: []string{"orders.write"}},
+			},
+			action:            "get",
+			fallbackDecision:  DecisionAllow,
+			wantStatus:        http.StatusForbidden,
+			wantChallenge:     `Bearer error="insufficient_scope"`,
+			wantFallbackCalls: 0,
+		},
+		{
+			name: "unmapped operation denies access token",
+			authentication: AuthenticationInfo{
+				Subject: Subject{ID: "client"},
+				Access:  &AccessConstraints{Scopes: []string{"orders.read"}},
+			},
+			action:            "delete",
+			fallbackDecision:  DecisionAllow,
+			wantStatus:        http.StatusForbidden,
+			wantChallenge:     `Bearer error="insufficient_scope"`,
+			wantFallbackCalls: 0,
+		},
+		{
+			name:              "non access-token authentication uses fallback policy",
+			authentication:    AuthenticationInfo{Subject: Subject{ID: "user"}},
+			action:            "get",
+			fallbackDecision:  DecisionAllow,
+			wantStatus:        http.StatusNoContent,
+			wantFallbackCalls: 1,
 		},
 	}
-	service := UserInfo{Extra: map[string][]string{
-		IAMPrincipalTypeExtra: {OAuth2ClientPrincipalType},
-		OAuth2ScopeExtra:      {"orders.read"},
-	}}
-	decision, _, err := authorizer.Authorize(context.Background(), service, Attributes{Action: "get"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision != DecisionAllow {
-		t.Fatalf("read decision = %s", decision)
-	}
-	decision, reason, err := authorizer.Authorize(context.Background(), service, Attributes{Action: "update"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision != DecisionDeny || reason != "missing required OAuth 2.0 scope" {
-		t.Fatalf("write decision = %s, reason = %q", decision, reason)
-	}
-	decision, _, err = authorizer.Authorize(context.Background(), UserInfo{Name: "user"}, Attributes{Action: "update"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision != DecisionNoOpinion {
-		t.Fatalf("user decision = %s", decision)
-	}
-	chain := AuthorizerChain{authorizer, NewAlwaysAllowAuthorizer()}
-	decision, _, err = chain.Authorize(context.Background(), UserInfo{Name: "user"}, Attributes{Action: "update"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision != DecisionAllow {
-		t.Fatalf("chained user decision = %s", decision)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fallbackCalls := 0
+			authorizer := AuthorizerChain{
+				OAuth2ScopeAuthorizer{ResolveRequiredScope: func(attributes Attributes) string {
+					if attributes.Action == "get" {
+						return "orders.read"
+					}
+					return ""
+				}},
+				AuthorizerFunc(func(context.Context, AuthenticationInfo, Attributes) (Decision, string, error) {
+					fallbackCalls++
+					return tt.fallbackDecision, "", nil
+				}),
+			}
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/orders", nil)
+			request = request.WithContext(WithAuthentication(request.Context(), tt.authentication))
+			request = request.WithContext(WithAttributes(request.Context(), &Attributes{Action: tt.action}))
+
+			filter := NewAuthorizationFilter(authorizer)
+			filter.Process(response, request, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
+
+			if response.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", response.Code, tt.wantStatus)
+			}
+			if got := response.Header().Get("WWW-Authenticate"); got != tt.wantChallenge {
+				t.Fatalf("WWW-Authenticate = %q, want %q", got, tt.wantChallenge)
+			}
+			if fallbackCalls != tt.wantFallbackCalls {
+				t.Fatalf("fallback authorizer calls = %d, want %d", fallbackCalls, tt.wantFallbackCalls)
+			}
+		})
 	}
 }
 
-func TestOAuth2ScopeAuthorizerDeniesUnmappedServiceRequest(t *testing.T) {
-	authorizer := OAuth2ScopeAuthorizer{
-		RequiredScope: func(Attributes) string { return "" },
-	}
-	service := UserInfo{Extra: map[string][]string{
-		IAMPrincipalTypeExtra: {OAuth2ClientPrincipalType},
-		OAuth2ScopeExtra:      {"orders.read"},
-	}}
-	decision, _, err := authorizer.Authorize(context.Background(), service, Attributes{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision != DecisionDeny {
-		t.Fatalf("decision = %s", decision)
-	}
-}
-
-func TestOAuth2ScopeDenialWritesBearerChallenge(t *testing.T) {
-	service := UserInfo{Extra: map[string][]string{
-		IAMPrincipalTypeExtra: {OAuth2ClientPrincipalType},
-		OAuth2ScopeExtra:      {"orders.read"},
-	}}
-	authorizer := OAuth2ScopeAuthorizer{
-		RequiredScope: func(Attributes) string { return "orders.write" },
-	}
+func TestAuthorizationFilterDoesNotReportBusinessDenialAsInsufficientScope(t *testing.T) {
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/orders", nil)
-	request = request.WithContext(WithResponseHeader(request.Context(), response.Header()))
-	request = request.WithContext(WithAuthenticate(request.Context(), AuthenticateInfo{User: service}))
-	request = request.WithContext(WithAttributes(request.Context(), &Attributes{Method: http.MethodPost}))
+	request := httptest.NewRequest(http.MethodGet, "/orders", nil)
+	request = request.WithContext(WithAuthentication(request.Context(), AuthenticationInfo{
+		Subject: Subject{ID: "client"},
+		Access:  &AccessConstraints{Scopes: []string{"orders.read"}},
+	}))
+	request = request.WithContext(WithAttributes(request.Context(), &Attributes{Action: "get"}))
 
-	NewAuthorizationFilter(authorizer).Process(
-		response,
-		request,
-		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-			t.Fatal("denied request reached handler")
-		}),
-	)
+	filter := NewAuthorizationFilter(AuthorizerFunc(func(context.Context, AuthenticationInfo, Attributes) (Decision, string, error) {
+		return DecisionDeny, "denied by resource policy", nil
+	}))
+	filter.Process(response, request, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("denied request reached handler")
+	}))
 
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
 	}
-	if got := response.Header().Get("WWW-Authenticate"); got != `Bearer error="insufficient_scope"` {
-		t.Fatalf("WWW-Authenticate = %q", got)
+	if challenge := response.Header().Get("WWW-Authenticate"); challenge != "" {
+		t.Fatalf("WWW-Authenticate = %q, want empty", challenge)
 	}
 }

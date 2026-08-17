@@ -33,8 +33,7 @@ import (
 )
 
 var PageParams = []Param{
-	QueryParam("limit", "size limit").Optional(),
-	QueryParam("size", "size limit").Optional(),
+	QueryParam("size", "maximum number of items in one response").Optional(),
 	QueryParam("page", "page number").Optional(),
 	QueryParam("search", "Search string for searching").Optional(),
 	QueryParam("sort", "Sort string for sorting").In("name", "name-", "time", "time-").Optional(),

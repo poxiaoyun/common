@@ -57,12 +57,13 @@ func ServeContentResponse(w http.ResponseWriter, r *http.Request, response Conte
 	ServeContent(w, r, response.Content, response.ContentLength)
 }
 
-// HttpRange specifies the byte range to be sent to the client.
-type HttpRange struct {
+// HTTPRange specifies the byte range to be sent to the client.
+type HTTPRange struct {
 	start, length int64
 }
 
-func (r HttpRange) ContentRange(size int64) string {
+// ContentRange returns the HTTP Content-Range field value for size.
+func (r HTTPRange) ContentRange(size int64) string {
 	return fmt.Sprintf("bytes %d-%d/%d", r.start, r.start+r.length-1, size)
 }
 
@@ -70,7 +71,7 @@ var ErrNoOverlap = stderrors.New("no overlapping ranges")
 
 // ParseRange parses a Range header string as per RFC 7233.
 // ErrNoOverlap is returned if none of the ranges overlap.
-func ParseRange(s string, size int64) ([]HttpRange, error) {
+func ParseRange(s string, size int64) ([]HTTPRange, error) {
 	if s == "" {
 		return nil, nil // header not present
 	}
@@ -78,7 +79,7 @@ func ParseRange(s string, size int64) ([]HttpRange, error) {
 	if !strings.HasPrefix(s, b) {
 		return nil, stderrors.New("invalid range")
 	}
-	var ranges []HttpRange
+	var ranges []HTTPRange
 	noOverlap := false
 	for _, ra := range strings.Split(s[len(b):], ",") {
 		ra = textproto.TrimString(ra)
@@ -90,7 +91,7 @@ func ParseRange(s string, size int64) ([]HttpRange, error) {
 			return nil, stderrors.New("invalid range")
 		}
 		start, end = textproto.TrimString(start), textproto.TrimString(end)
-		var r HttpRange
+		var r HTTPRange
 		if start == "" {
 			// If no start is specified, end specifies the
 			// range start relative to the end of the file,

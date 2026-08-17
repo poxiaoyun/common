@@ -16,7 +16,7 @@ type UserRoleView struct {
 }
 
 func (a *API) CurrentRoles(w http.ResponseWriter, r *http.Request) {
-	api.OnCurrentUser(w, r, func(ctx context.Context, username string) (any, error) {
+	api.OnCurrentSubject(w, r, func(ctx context.Context, username string) (any, error) {
 		list := store.List[UserRole]{}
 		options := []store.ListOption{
 			store.WithSubScopes(),

@@ -156,7 +156,7 @@ func (a *API) SignIn(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		if auditlog := api.AuditLogFromContext(ctx); auditlog != nil {
-			auditlog.Subject = login.Username
+			auditlog.Subject = api.Subject{Name: login.Username}
 		}
 		return a.Provider.Signin(ctx, session, *login)
 	})
@@ -167,7 +167,7 @@ func (a *API) SignOut(w http.ResponseWriter, r *http.Request) {
 		if auditlog := api.AuditLogFromContext(ctx); auditlog != nil {
 			profile, _ := a.Provider.GetCurrentProfile(ctx, session)
 			if profile != nil {
-				auditlog.Subject = profile.Name
+				auditlog.Subject = api.Subject{ID: profile.Subject, Name: profile.Name}
 			}
 		}
 		if err := a.Provider.Signout(ctx, session); err != nil {

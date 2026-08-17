@@ -2,10 +2,23 @@
 
 `rest/api` provides the HTTP routing, authentication, authorization, audit, and request-context interfaces shared by services using `common`.
 
-Authenticators implement `TokenAuthenticator`, `BasicAuthenticator`, `SSHAuthenticator`, or the request-level `Authenticator`. `StaticTokenAuthenticator` maps one opaque token to a fixed `UserInfo`, exposes the configured `Digest` and `User`, and returns `ErrNotProvided` when the token does not match so another authenticator may decide.
+Authenticators normalize credentials into `AuthenticationInfo`, which embeds the request `Subject` and may include a current `Actor` and OAuth access constraints. `Subject.ID` is the stable key for authorization, ownership, and audit. Display names are not identity keys.
 
-Callers compose authenticators with the provided chains and install the result through `NewAuthenticateFilter`. `FallbackAuthenticator` adds an explicit fallback around a completed request authenticator; use `NewFallbackAuthenticator(chain, NewAnonymousAuthenticator())` when requests without credentials should receive the anonymous identity. `AnonymousAuthenticator` remains an ordinary standalone request, token, basic, and SSH authenticator. Authorization remains a separate decision made from the verified `UserInfo`.
+Callers compose authenticators and install the result through `NewAuthenticationFilter`. `FallbackAuthenticator` adds an explicit fallback around a completed request authenticator; use `NewFallbackAuthenticator(chain, NewAnonymousAuthenticator())` when requests without credentials should receive the anonymous subject. An invalid supplied credential is never downgraded to anonymous.
 
-`AuthenticatorChain` distinguishes an absent or inapplicable credential (`ErrNotProvided`) from an applicable credential that failed validation. An authenticator must not return `ErrNotProvided` after claiming a request credential. The chain keeps trying authenticators after a validation failure, allowing another configured protocol to authenticate the request. `FallbackAuthenticator` invokes its fallback only when the completed primary authenticator returns `ErrNotProvided`, so an anonymous fallback never downgrades invalid credentials or backend failures to anonymous access.
+`AuthenticationChallengeError` carries a public response status and `WWW-Authenticate` value through authenticator and authorizer composition. Provider adapters log diagnostic errors before translating them into this shared response error. The final HTTP error writer writes the challenge only after the request is rejected. `NewBearerTokenAuthenticationFilter` returns a bare `Bearer` challenge when no more specific challenge is present. Invalid OAuth access tokens add `error="invalid_token"`, while insufficient scope produces HTTP 403 with `error="insufficient_scope"`.
 
-Request adapters own credential presence. Bearer, Basic, and Session adapters return `ErrNotProvided` only when their credential is absent; once present, a credential rejected by every underlying authenticator becomes an unauthorized error.
+Authorizers receive the complete `AuthenticationInfo`. OAuth scopes are access-token authorization information. `OAuth2ScopeAuthorizer` may be composed with other complete, alternative policies through `AuthorizerChain`; deployments that require both scopes and local policy must provide an Authorizer with those explicit combining semantics before installing `NewAuthorizationFilter`.
+
+Authorization reasons are descriptive only. To intentionally return a specific denial status, such as hiding a resource with HTTP 404, an Authorizer returns the corresponding `common/errors.Status`; untyped evaluation errors are returned as HTTP 403.
+
+Authentication and authorization errors are diagnostic by default: filters record their details through the logger in the request context and return generic 401 or 403 responses. Reasons and explicit `common/errors.Status` messages are considered intentionally public and must not contain secrets.
+
+Authentication and authorization filters do not write trace data. OpenTelemetry behavior is owned by `trace.go` and composed explicitly: install `NewEndUserTraceFilter` after authentication and `NewAuthorizationTraceFilter` after request attributes only when those potentially sensitive or high-cardinality attributes are required. Route tracing records the low-cardinality `http.route` template and does not record dynamic path-variable values.
+
+`StaticTokenAuthenticator` maps one opaque token to a fixed `AuthenticationInfo`. Request-header and webhook adapters transport the same canonical value without provider-specific attribute maps.
+
+Resource List APIs use `meta.Page[T]` and `meta.ListOptions`. The query field
+for batch length is `size`; `limit` is not a second spelling. A non-empty
+`continue` selects continuation pagination and takes precedence over `page`.
+Defaults and maximum sizes belong to the service that owns the HTTP boundary.

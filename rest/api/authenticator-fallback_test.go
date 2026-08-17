@@ -7,12 +7,12 @@ import (
 )
 
 func TestFallbackAuthenticatorUsesFallbackWhenPrimaryDoesNotApply(t *testing.T) {
-	want := &AuthenticateInfo{User: UserInfo{Name: AnonymousUser}}
+	want := &AuthenticationInfo{Subject: Subject{ID: AnonymousSubjectID}}
 	authenticator := NewFallbackAuthenticator(
-		AuthenticateFunc(func(http.ResponseWriter, *http.Request) (*AuthenticateInfo, error) {
+		AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) {
 			return nil, ErrNotProvided
 		}),
-		AuthenticateFunc(func(http.ResponseWriter, *http.Request) (*AuthenticateInfo, error) {
+		AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) {
 			return want, nil
 		}),
 	)

@@ -3,13 +3,17 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr/funcr"
+	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/oidc"
 )
 
@@ -30,6 +34,10 @@ func TestOAuth2AccessTokenAuthenticator(t *testing.T) {
 			if !ok || clientID != "orders-api" || secret != "resource-secret" {
 				t.Fatalf("introspection credentials = %q, %q", clientID, secret)
 			}
+			if request.FormValue("token") == "invalid-access-token" {
+				_ = json.NewEncoder(response).Encode(map[string]any{"active": false})
+				return
+			}
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"active":    true,
 				"iss":       server.URL,
@@ -38,6 +46,8 @@ func TestOAuth2AccessTokenAuthenticator(t *testing.T) {
 				"exp":       time.Now().Add(time.Hour).Unix(),
 				"client_id": "service-client",
 				"scope":     "orders.read orders.write",
+				"username":  "Orders Worker",
+				"act":       map[string]any{"sub": "gateway"},
 			})
 		default:
 			http.NotFound(response, request)
@@ -72,35 +82,97 @@ func TestOAuth2AccessTokenAuthenticator(t *testing.T) {
 	if discoveryCalls.Load() != 1 {
 		t.Fatalf("Discovery calls = %d, want 1", discoveryCalls.Load())
 	}
-	if !slices.Equal(info.Audiences, []string{"urn:orders:api", "urn:other:api"}) {
-		t.Fatalf("audiences = %v", info.Audiences)
+	if info.Access == nil || !slices.Equal(info.Access.Audiences, []string{"urn:orders:api", "urn:other:api"}) {
+		t.Fatalf("access = %#v", info.Access)
 	}
-	if info.User.ID != "service-client" || info.User.Name != server.URL+"#service-client" {
-		t.Fatalf("user = %#v", info.User)
+	if info.ID != "service-client" || info.Name != "Orders Worker" {
+		t.Fatalf("subject = %#v", info.Subject)
 	}
-	if !slices.Equal(info.User.Extra[IAMPrincipalTypeExtra], []string{OAuth2ClientPrincipalType}) ||
-		!slices.Equal(info.User.Extra[OAuth2ClientIDExtra], []string{"service-client"}) ||
-		!slices.Equal(info.User.Extra[OAuth2ScopeExtra], []string{"orders.read", "orders.write"}) {
-		t.Fatalf("extra = %#v", info.User.Extra)
+	if !slices.Equal(info.Access.Scopes, []string{"orders.read", "orders.write"}) {
+		t.Fatalf("scopes = %#v", info.Access.Scopes)
+	}
+	if info.Actor == nil || info.Actor.ID != "gateway" {
+		t.Fatalf("actor = %#v", info.Actor)
+	}
+
+	var logOutput strings.Builder
+	logger := funcr.New(func(prefix, args string) {
+		logOutput.WriteString(prefix)
+		logOutput.WriteString(args)
+	}, funcr.Options{})
+	ctx := log.NewContext(context.Background(), logger)
+	_, err = authenticator.AuthenticateToken(ctx, "invalid-access-token")
+	var challengeErr *AuthenticationChallengeError
+	if !errors.As(err, &challengeErr) {
+		t.Fatalf("AuthenticateToken() error = %v, want AuthenticationChallengeError", err)
+	}
+	if challengeErr.Challenge != `Bearer error="invalid_token"` {
+		t.Fatalf("challenge = %q, want invalid_token", challengeErr.Challenge)
+	}
+	if !strings.Contains(logOutput.String(), oidc.ErrInvalidAccessToken.Error()) {
+		t.Fatalf("log did not contain token validation error: %s", logOutput.String())
 	}
 }
 
-func TestOAuth2BearerAuthenticationError(t *testing.T) {
+func TestBearerTokenAuthenticationError(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		err       error
 		challenge string
 	}{
 		{name: "missing", err: ErrNotProvided, challenge: "Bearer"},
-		{name: "invalid", err: oidc.ErrInvalidAccessToken, challenge: `Bearer error="invalid_token"`},
+		{
+			name:      "challenged",
+			err:       NewUnauthorizedChallengeError(`Bearer error="invalid_token"`, "Unauthorized"),
+			challenge: `Bearer error="invalid_token"`,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			OAuth2BearerAuthenticationError(
+			BearerTokenAuthenticationError(
 				response,
 				httptest.NewRequest(http.MethodGet, "/resource", nil),
 				test.err,
 			)
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+			}
+			if got := response.Header().Get("WWW-Authenticate"); got != test.challenge {
+				t.Fatalf("WWW-Authenticate = %q, want %q", got, test.challenge)
+			}
+		})
+	}
+}
+
+func TestBearerTokenAuthenticationFilterWritesOAuth2Challenge(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		authorization string
+		err           error
+		challenge     string
+	}{
+		{name: "missing", challenge: "Bearer"},
+		{
+			name:          "invalid",
+			authorization: "Bearer invalid-token",
+			err:           NewUnauthorizedChallengeError(`Bearer error="invalid_token"`, "Unauthorized"),
+			challenge:     `Bearer error="invalid_token"`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			filter := NewBearerTokenAuthenticationFilter(TokenAuthenticatorChain{
+				tokenAuthenticatorFunc(func(context.Context, string) (*AuthenticationInfo, error) {
+					return nil, test.err
+				}),
+			})
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/resource", nil)
+			request.Header.Set("Authorization", test.authorization)
+
+			filter.Process(response, request, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("protected handler was called")
+			}))
+
 			if response.Code != http.StatusUnauthorized {
 				t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
 			}
