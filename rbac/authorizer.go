@@ -8,7 +8,6 @@ import (
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/rest/api"
 	"xiaoshiai.cn/common/store"
-	"xiaoshiai.cn/common/wildcard"
 )
 
 var _ api.Authorizer = &RBACAuthorizer{}
@@ -114,7 +113,9 @@ func ScopedAuthorityMatch(scopes []store.Scope, authorities []Authority, act, ex
 		if !slices.ContainsFunc(item.Actions, func(item string) bool { return item == "*" || item == act }) {
 			return false
 		}
-		if slices.ContainsFunc(item.Resources, func(item string) bool { return wildcard.Match(prefix+item, expr) }) {
+		if slices.ContainsFunc(item.Resources, func(item string) bool {
+			return api.MatchResourceWildcard(prefix+item, expr)
+		}) {
 			return true
 		}
 	}

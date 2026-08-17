@@ -29,14 +29,13 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/exp/slices"
 	"xiaoshiai.cn/common/log"
-	"xiaoshiai.cn/common/wildcard"
+	"xiaoshiai.cn/common/pattern"
 )
 
 type Auditor interface {
 	OnRequest(w http.ResponseWriter, r *http.Request) (http.ResponseWriter, *AuditLog)
 	OnResponse(w http.ResponseWriter, r *http.Request, auditlog *AuditLog)
 }
-
 
 func NewAuditFilter(auditor Auditor, sink AuditSink) Filter {
 	return FilterFunc(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -174,7 +173,11 @@ func (a *SimpleAuditor) Process(w http.ResponseWriter, r *http.Request, next htt
 		return
 	}
 	for _, path := range a.Options.WhiteList {
-		if wildcard.Match(path, r.URL.Path) {
+		compiled, err := pattern.CompileWildcard(path, pattern.WildcardOptions{Separator: '/'})
+		if err != nil {
+			continue
+		}
+		if compiled.Match(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

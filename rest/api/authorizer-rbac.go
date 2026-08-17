@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"xiaoshiai.cn/common/wildcard"
+	"xiaoshiai.cn/common/pattern"
 )
 
 type Authority struct {
@@ -22,7 +22,7 @@ func MatchAttributes(act, res string, att Attributes) bool {
 	if att.Action != act && att.Action != "*" {
 		return false
 	}
-	return wildcard.Match(res, ResourcesToWildcard(att.Resources))
+	return MatchResourceWildcard(res, ResourcesToWildcard(att.Resources))
 }
 
 func (a Authority) MatchService(service string) bool {
@@ -36,8 +36,20 @@ func (a Authority) MatchActionResource(act, res string) bool {
 	}
 	// match resources
 	return slices.ContainsFunc(a.Resources, func(item string) bool {
-		return wildcard.Match(item, res)
+		return MatchResourceWildcard(item, res)
 	})
+}
+
+var resourceWildcardOptions = pattern.WildcardOptions{Separator: ':'}
+
+// MatchResourceWildcard reports whether a resource expression matches a
+// colon-separated resource value.
+func MatchResourceWildcard(expression, value string) bool {
+	compiled, err := pattern.CompileWildcard(expression, resourceWildcardOptions)
+	if err != nil {
+		return false
+	}
+	return compiled.Match(value)
 }
 
 // return wildcards for action and expression
