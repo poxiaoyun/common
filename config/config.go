@@ -90,7 +90,8 @@ func printDefault(fs *pflag.FlagSet) {
 }
 
 func logConfig(from, k, v string) {
-	if strings.Contains(strings.ToLower(k), "password") {
+	key := strings.ToLower(k)
+	if strings.Contains(key, "password") || strings.Contains(key, "secret") || strings.Contains(key, "token") {
 		v = strings.Repeat("*", len(v))
 	}
 	log.Info("config", "from", from, "key", k, "val", v)
