@@ -14,6 +14,17 @@ type StrategyStore struct {
 	Stratage Strategy
 }
 
+// Schema implements store.Store.
+func (s *StrategyStore) Schema() *store.Schema {
+	return s.Store.Schema()
+}
+
+// Capabilities implements store.Store. Wrapper capabilities are intentionally
+// conservative until the wrapper has its own conformance coverage.
+func (s *StrategyStore) Capabilities() store.Capabilities {
+	return store.Capabilities{}
+}
+
 func (s *StrategyStore) Ping(ctx context.Context) error {
 	pinger, ok := s.Store.(store.Pinger)
 	if !ok {

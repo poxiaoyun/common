@@ -2,7 +2,9 @@ package store
 
 import (
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	jsonpatch "github.com/evanphx/json-patch"
@@ -107,19 +109,30 @@ func (s *mergeFromPatch) Data(obj Object) ([]byte, error) {
 	return s.createPatch(originalJSON, modifiedJSON, obj)
 }
 
-func ApplyPatch(to Object, from Object, patch Patch) error {
-	patchtype := patch.Type()
-	patchdata, err := patch.Data(from)
+// ApplyPatch applies patch to the current object. A non-zero resourceVersion
+// in a merge patch is a precondition and must match the current version.
+func ApplyPatch(current Object, request Object, patch Patch) error {
+	patchData, err := patch.Data(request)
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	switch patchtype {
+	switch patch.Type() {
 	case PatchTypeJSONPatch:
-		return JsonPatchObject(to, patchdata)
+		return JsonPatchObject(current, patchData)
 	case PatchTypeMergePatch:
-		return JsonMergePatchObject(to, patchdata)
+		condition := struct {
+			ResourceVersion *int64 `json:"resourceVersion"`
+		}{}
+		if err := json.Unmarshal(patchData, &condition); err != nil {
+			return errors.NewBadRequest(err.Error())
+		}
+		if condition.ResourceVersion != nil && *condition.ResourceVersion != 0 && *condition.ResourceVersion != current.GetResourceVersion() {
+			return errors.NewConflict(current.GetResource(), current.GetID(),
+				fmt.Errorf("resourceVersion %d does not match", *condition.ResourceVersion))
+		}
+		return JsonMergePatchObject(current, patchData)
 	default:
-		return fmt.Errorf("unsupported patch type: %s", patchtype)
+		return fmt.Errorf("unsupported patch type: %s", patch.Type())
 	}
 }
 
@@ -154,6 +167,9 @@ func JsonPatchObject(obj any, patch []byte) error {
 	}
 	patchedData, err := patchObj.Apply(olddata)
 	if err != nil {
+		if stderrors.Is(err, jsonpatch.ErrTestFailed) {
+			return errors.NewCustomError(http.StatusUnprocessableEntity, errors.StatusReasonInvalid, err.Error())
+		}
 		return err
 	}
 	if err := json.Unmarshal(patchedData, obj); err != nil {

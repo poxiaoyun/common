@@ -5,15 +5,11 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
 
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
-	"xiaoshiai.cn/common/retry"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -32,6 +28,17 @@ func NewCacheStore(from store.Store) *CacheStore {
 type CacheStore struct {
 	scopes []store.Scope
 	core   *cacheStoreCore
+}
+
+// Schema implements store.Store.
+func (g *CacheStore) Schema() *store.Schema {
+	return g.core.store.Schema()
+}
+
+// Capabilities implements store.Store. The wrapper reports only Watch because
+// its other optional query behaviors are not part of the cache contract.
+func (g *CacheStore) Capabilities() store.Capabilities {
+	return store.Capabilities{Watch: g.core.store.Capabilities().Watch}
 }
 
 func (g *CacheStore) Ping(ctx context.Context) error {
@@ -236,8 +243,9 @@ func (g *cacheStoreCore) resource(resource string) *cachedResource {
 	}
 	c := &cachedResource{
 		resource: resource,
+		ready:    make(chan struct{}),
+		items:    map[string]*store.Unstructured{},
 		watchers: map[int64]*cachedWatcher{},
-		kvs:      newThreadSafeReversionMap(),
 	}
 	go c.run(g.ctx, g.store)
 	g.resources[resource] = c
@@ -245,20 +253,24 @@ func (g *cacheStoreCore) resource(resource string) *cachedResource {
 }
 
 type cachedResource struct {
-	resource    string
-	initialized atomic.Bool
-	kvs         *threadsafeReversionMap
+	resource string
 
-	watcherIndex atomic.Int64
-	watcherLock  sync.RWMutex
-	watchers     map[int64]*cachedWatcher
+	stateLock     sync.RWMutex
+	ready         chan struct{}
+	isReady       bool
+	terminalError error
+	items         map[string]*store.Unstructured
+	nextWatcherID int64
+	watchers      map[int64]*cachedWatcher
 }
 
 func (c *cachedResource) get(ctx context.Context, scopes []store.Scope, name string) (*store.Unstructured, error) {
-	if err := c.waitSync(ctx); err != nil {
+	if err := c.waitUntilReady(ctx); err != nil {
 		return nil, err
 	}
-	objval, ok := c.kvs.get(c.getkey(scopes, name))
+	c.stateLock.RLock()
+	defer c.stateLock.RUnlock()
+	objval, ok := c.items[c.getObjectKey(scopes, name)]
 	if !ok {
 		return nil, errors.NewNotFound(c.resource, name)
 	}
@@ -268,18 +280,16 @@ func (c *cachedResource) get(ctx context.Context, scopes []store.Scope, name str
 func (c *cachedResource) list(ctx context.Context, scopes []store.Scope,
 	labelselector, fieldselector store.Requirements,
 ) ([]*store.Unstructured, int64, error) {
-	return c.listPrefix(ctx, c.getlistkey(scopes), labelselector, fieldselector)
-}
-
-func (c *cachedResource) listPrefix(ctx context.Context, prefix string,
-	labelselector, fieldselector store.Requirements,
-) ([]*store.Unstructured, int64, error) {
-	if err := c.waitSync(ctx); err != nil {
+	if err := c.waitUntilReady(ctx); err != nil {
 		return nil, 0, err
 	}
-	objs, rev := c.kvs.list(prefix)
+	c.stateLock.RLock()
+	defer c.stateLock.RUnlock()
 	items := []*store.Unstructured{}
-	for _, obj := range objs {
+	for _, obj := range c.items {
+		if !store.ScopesEquals(obj.GetScopes(), scopes) {
+			continue
+		}
 		if !store.MatchLabelReqirements(obj, labelselector) {
 			continue
 		}
@@ -288,202 +298,123 @@ func (c *cachedResource) listPrefix(ctx context.Context, prefix string,
 		}
 		items = append(items, obj)
 	}
-	return items, rev, nil
+	return items, 0, nil
 }
 
-func (e *cachedResource) getlistkey(scopes []store.Scope) string {
-	key := e.resource
-	for _, scope := range scopes {
-		key += "/" + scope.Resource + "/" + scope.Name
-	}
-	return key + "/"
-}
-
-func (e *cachedResource) getkey(scopes []store.Scope, name string) string {
-	key := e.resource
+func (c *cachedResource) getObjectKey(scopes []store.Scope, name string) string {
+	key := c.resource
 	for _, scope := range scopes {
 		key += ("/" + scope.Resource + "/" + scope.Name)
 	}
 	return key + "/" + name
 }
 
-func (c *cachedResource) waitSync(ctx context.Context) error {
-	if c.initialized.Load() {
-		return nil
-	}
-	interval := 500 * time.Millisecond
+func (c *cachedResource) waitUntilReady(ctx context.Context) error {
 	for {
-		if c.initialized.Load() {
+		c.stateLock.RLock()
+		if c.isReady {
+			c.stateLock.RUnlock()
 			return nil
 		}
+		if c.terminalError != nil {
+			err := c.terminalError
+			c.stateLock.RUnlock()
+			return err
+		}
+		ready := c.ready
+		c.stateLock.RUnlock()
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
+		case <-ready:
 		}
-		log.Info("waiting for cache resource to sync", "resource", c.resource)
-		time.Sleep(interval)
 	}
 }
 
-func (c *cachedResource) run(ctx context.Context, store store.Store) {
+func (c *cachedResource) run(ctx context.Context, storage store.Store) {
 	log.Info("start syncing cache resource", "resource", c.resource)
-	retry.OnError(ctx, func(ctx context.Context) error {
-		return c.sync(ctx, store)
-	})
+	list := &store.List[store.Unstructured]{Resource: c.resource}
+	reflector := NewReflector(storage, list, store.WithWatchSubscopes())
+	handler := ReflectorHandlerFuncs[store.Unstructured]{
+		ReplaceFunc:    c.replace,
+		ApplyFunc:      c.apply,
+		InvalidateFunc: c.invalidate,
+	}
+	if err := reflector.Run(ctx, handler); err != nil {
+		c.fail(err)
+	}
 }
 
-func (c *cachedResource) sync(ctx context.Context, s store.Store) error {
-	log := log.FromContext(ctx)
-
-	opts := []store.WatchOption{
-		func(wo *store.WatchOptions) {
-			wo.ResourceVersion = ptr.To(c.kvs.latestSyncRevision())
-			wo.IncludeSubScopes = true
-			wo.SendInitialEvents = true
-		},
+func (c *cachedResource) replace(_ context.Context, objects []*store.Unstructured) error {
+	items := make(map[string]*store.Unstructured, len(objects))
+	for _, object := range objects {
+		items[c.getObjectKey(object.GetScopes(), object.GetID())] = object
 	}
-	log.Info("start watching cache resource", "resource", c.resource)
-
-	w, err := s.Watch(ctx, &store.List[store.Unstructured]{Resource: c.resource}, opts...)
-	if err != nil {
-		return err
+	c.stateLock.Lock()
+	c.items = items
+	c.terminalError = nil
+	if !c.isReady {
+		c.isReady = true
+		close(c.ready)
 	}
-	defer w.Stop()
+	c.stateLock.Unlock()
+	log.Info("cache resource synced", "resource", c.resource)
+	return nil
+}
 
-	firstbookmark := false
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case event, ok := <-w.Events():
-			if !ok {
-				return fmt.Errorf("watcher channel closed")
-			}
-			if event.Error != nil {
-				return event.Error
-			}
-			if event.Type == store.WatchEventBookmark {
-				if !firstbookmark {
-					firstbookmark = true
-					log.Info("cache resource synced", "resource", c.resource)
-					c.initialized.Store(true)
-				}
-				continue
-			}
-			objval, ok := event.Object.(*store.Unstructured)
-			if !ok {
-				continue
-			}
-			objid := c.getkey(objval.GetScopes(), objval.GetID())
-			c.kvs.set(objid, event.Type, objval)
+func (c *cachedResource) apply(_ context.Context, eventType store.WatchEventType, object *store.Unstructured) error {
+	key := c.getObjectKey(object.GetScopes(), object.GetID())
+	c.stateLock.Lock()
+	old, exists := c.items[key]
+	var current *store.Unstructured
+	switch eventType {
+	case store.WatchEventCreate, store.WatchEventUpdate:
+		if exists && old.GetUID() == object.GetUID() && old.GetResourceVersion() >= object.GetResourceVersion() {
+			c.stateLock.Unlock()
+			return nil
 		}
-	}
-}
-
-func newThreadSafeReversionMap() *threadsafeReversionMap {
-	return &threadsafeReversionMap{
-		items:    map[string]*store.Unstructured{},
-		watchers: map[int64]*threadsafeReversionMapWacther{},
-	}
-}
-
-type threadsafeReversionMap struct {
-	lock             sync.RWMutex
-	items            map[string]*store.Unstructured
-	lastSyncRevision int64
-
-	watcherID atomic.Int64
-	watchers  map[int64]*threadsafeReversionMapWacther
-}
-
-func (c *threadsafeReversionMap) latestSyncRevision() int64 {
-	c.lock.RLock()
-	defer c.lock.RUnlock()
-	return c.lastSyncRevision
-}
-
-func (c *threadsafeReversionMap) get(key string) (*store.Unstructured, bool) {
-	c.lock.RLock()
-	defer c.lock.RUnlock()
-	obj, ok := c.items[key]
-	return obj, ok
-}
-
-func (c *threadsafeReversionMap) list(prefix string) ([]*store.Unstructured, int64) {
-	c.lock.RLock()
-	defer c.lock.RUnlock()
-	objs := make([]*store.Unstructured, 0, len(c.items))
-	for key, obj := range c.items {
-		if strings.HasPrefix(key, prefix) {
-			objs = append(objs, obj)
-		}
-	}
-	return objs, c.lastSyncRevision
-}
-
-func (c *threadsafeReversionMap) notify(key string, kind store.WatchEventType, obj *store.Unstructured) {
-	for _, w := range c.watchers {
-		w.send(key, kind, obj)
-	}
-}
-
-func (c *threadsafeReversionMap) set(key string, event store.WatchEventType, obj *store.Unstructured) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	if latestversion := obj.GetResourceVersion(); c.lastSyncRevision < latestversion {
-		c.lastSyncRevision = latestversion
-	}
-	switch event {
-	case store.WatchEventCreate:
-		exists, ok := c.items[key]
-		if ok && exists.GetResourceVersion() >= obj.GetResourceVersion() {
-			return
-		}
-		c.items[key] = obj
-	case store.WatchEventUpdate:
-		exists, ok := c.items[key]
-		if !ok || exists.GetResourceVersion() >= obj.GetResourceVersion() {
-			return
-		}
-		c.items[key] = obj
+		c.items[key] = object
+		current = object
 	case store.WatchEventDelete:
-		if _, ok := c.items[key]; !ok {
-			return
+		if !exists || old.GetUID() != object.GetUID() || old.GetResourceVersion() > object.GetResourceVersion() {
+			c.stateLock.Unlock()
+			return nil
 		}
 		delete(c.items, key)
+	default:
+		c.stateLock.Unlock()
+		return fmt.Errorf("cache event type %q is not an object mutation", eventType)
 	}
-	c.notify(key, event, obj)
+	for id, watcher := range c.watchers {
+		if watcher.enqueueTransition(old, current) {
+			continue
+		}
+		delete(c.watchers, id)
+		watcher.expire(errors.NewResourceExpired(c.resource, "watcher fell behind"))
+	}
+	c.stateLock.Unlock()
+	return nil
 }
 
-func (c *threadsafeReversionMap) watch(ctx context.Context, prefix string, on func(key string, kind store.WatchEventType, obj *store.Unstructured)) {
-	// lock here to block new incoming events
-	c.lock.Lock()
-	w := &threadsafeReversionMapWacther{
-		id:     c.watcherID.Add(1),
-		prefix: prefix,
-		on:     on,
+func (c *cachedResource) invalidate(_ context.Context, cause error) {
+	c.stateLock.Lock()
+	watchers := c.watchers
+	c.watchers = map[int64]*cachedWatcher{}
+	if c.isReady {
+		c.isReady = false
+		c.ready = make(chan struct{})
 	}
-	for key, obj := range c.items {
-		w.send(key, store.WatchEventCreate, obj)
+	c.stateLock.Unlock()
+	for _, watcher := range watchers {
+		watcher.expire(errors.NewResourceExpired(c.resource, cause.Error()))
 	}
-	c.watchers[w.id] = w
-	c.lock.Unlock()
-
-	<-ctx.Done()
-	c.lock.Lock()
-	delete(c.watchers, w.id)
-	c.lock.Unlock()
 }
 
-type threadsafeReversionMapWacther struct {
-	id     int64
-	prefix string
-	on     func(key string, kind store.WatchEventType, obj *store.Unstructured)
-}
-
-func (t *threadsafeReversionMapWacther) send(key string, kind store.WatchEventType, obj *store.Unstructured) {
-	if strings.HasPrefix(key, t.prefix) {
-		t.on(key, kind, obj)
+func (c *cachedResource) fail(err error) {
+	c.stateLock.Lock()
+	c.terminalError = err
+	if !c.isReady {
+		close(c.ready)
 	}
+	c.stateLock.Unlock()
 }

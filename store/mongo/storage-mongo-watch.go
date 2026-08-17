@@ -4,12 +4,14 @@ import (
 	"context"
 	stderrors "errors"
 	"reflect"
+	"sync"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/bsoncodec"
 	"go.mongodb.org/mongo-driver/bson/bsonrw"
 	"go.mongodb.org/mongo-driver/mongo"
 	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readconcern"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
@@ -29,17 +31,35 @@ func (m *MongoStorage) Watch(ctx context.Context, obj store.ObjectList, opts ...
 	for _, opt := range opts {
 		opt(&options)
 	}
+	resource, err := store.GetResource(obj)
+	if err != nil {
+		return nil, err
+	}
+	if options.ResourceVersion != nil && *options.ResourceVersion > 0 {
+		return nil, errors.NewResourceExpired(resource, "watch history is unavailable")
+	}
 	_, newObjFunc, err := store.NewItemFuncFromList(obj)
 	if err != nil {
 		return nil, err
 	}
 	var watcher store.Watcher
 	err = m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
 		if options.ID != "" {
 			filter = append(filter, bson.E{Key: "id", Value: options.ID})
 		}
-		newwatcher, err := NewMongoWatcher(ctx, col, m.core.bsonOptions, m.core.bsonRegistry, newObjFunc, options, filter)
+		findFilter := ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
+		watchFilter := ToWatchFilter(filter)
+		newwatcher, err := NewMongoWatcher(
+			ctx,
+			col,
+			m.core.bsonOptions,
+			m.core.bsonRegistry,
+			newObjFunc,
+			m.scopes,
+			options,
+			findFilter,
+			watchFilter,
+		)
 		if err != nil {
 			return err
 		}
@@ -49,15 +69,17 @@ func (m *MongoStorage) Watch(ctx context.Context, obj store.ObjectList, opts ...
 	return watcher, err
 }
 
-func toWatchFilter(filter bson.D) bson.D {
+// ToWatchFilter converts an object filter to a change stream event filter.
+func ToWatchFilter(filter bson.D) bson.D {
 	ret := bson.D{
-		bson.E{Key: "fullDocument", Value: bson.M{"$exists": true}},
 		bson.E{Key: "operationType", Value: bson.M{"$in": bson.A{"insert", "update", "replace", "delete"}}},
 	}
 	// https://www.mongodb.com/docs/manual/reference/change-events/
 	for _, f := range filter {
-		f.Key = "fullDocument." + f.Key
-		ret = append(ret, f)
+		ret = append(ret, bson.E{Key: "$or", Value: bson.A{
+			bson.D{{Key: "fullDocument." + f.Key, Value: f.Value}},
+			bson.D{{Key: "fullDocumentBeforeChange." + f.Key, Value: f.Value}},
+		}})
 	}
 	return ret
 }
@@ -69,42 +91,61 @@ func NewMongoWatcher(ctx context.Context,
 	bsonOptions *mongooptions.BSONOptions,
 	bsonRegistry *bsoncodec.Registry,
 	newobj func() store.Object,
+	scopes []store.Scope,
 	opts store.WatchOptions,
-	filter bson.D,
+	findFilter bson.D,
+	watchFilter bson.D,
 ) (*MongoWatcher, error) {
 	watchCtx, cancel := context.WithCancel(ctx)
-	var cur *mongo.Cursor
-	if opts.SendInitialEvents {
-		log.FromContext(watchCtx).Info("send initial events", "filter", filter)
-		newcur, err := col.Find(watchCtx, filter)
-		if err != nil {
-			cancel()
-			return nil, err
-		}
-		cur = newcur
-	}
 	stream, err := col.Watch(watchCtx,
 		mongo.Pipeline{
-			bson.D{{Key: "$match", Value: toWatchFilter(filter)}},
+			bson.D{{Key: "$match", Value: watchFilter}},
 		},
 		// check support full document on delete
 		// https://www.mongodb.com/docs/manual/reference/change-events/delete/#document-pre--and-post-images
 		mongooptions.ChangeStream().
+			SetBatchSize(0).
 			SetFullDocument(mongooptions.Required).
-			SetFullDocumentBeforeChange(mongooptions.WhenAvailable),
+			SetFullDocumentBeforeChange(mongooptions.Required),
 	)
 	if err != nil {
-		if cur != nil {
-			_ = cur.Close(watchCtx)
-		}
 		cancel()
 		return nil, errors.NewInternalError(err)
+	}
+	var cur *mongo.Cursor
+	if opts.SendInitialEvents {
+		// batchSize=0 makes the aggregate firstBatch empty. Consume it so the
+		// first TryNext after Find is guaranteed to issue getMore.
+		stream.TryNext(watchCtx)
+		if err := stream.Err(); err != nil {
+			_ = stream.Close(watchCtx)
+			cancel()
+			return nil, errors.NewInternalError(err)
+		}
+		log.FromContext(watchCtx).Info("send initial events", "filter", findFilter)
+		// Collection.Clone does not preserve BSONOptions in the current driver.
+		snapshot := col.Database().Collection(
+			col.Name(),
+			mongooptions.Collection().
+				SetReadConcern(readconcern.Snapshot()).
+				SetBSONOptions(bsonOptions).
+				SetRegistry(bsonRegistry),
+		)
+		cur, err = snapshot.Find(watchCtx, findFilter)
+		if err != nil {
+			_ = stream.Close(watchCtx)
+			cancel()
+			return nil, errors.NewInternalError(err)
+		}
 	}
 	w := &MongoWatcher{
 		col:           col,
 		bsonRegistry:  bsonRegistry,
 		bsonOptions:   bsonOptions,
 		newObjectFunc: newobj,
+		scopes:        scopes,
+		labelSelector: opts.LabelRequirements,
+		fieldSelector: opts.FieldRequirements,
 		results:       make(chan store.WatchEvent, 64),
 		cancel:        cancel,
 	}
@@ -117,9 +158,12 @@ type MongoWatcher struct {
 	bsonRegistry  *bsoncodec.Registry
 	bsonOptions   *mongooptions.BSONOptions
 	newObjectFunc func() store.Object
+	scopes        []store.Scope
+	labelSelector store.Requirements
+	fieldSelector store.Requirements
 	results       chan store.WatchEvent
-	dropOnFull    bool
 	cancel        context.CancelFunc
+	stop          sync.Once
 }
 
 // Event implements Watcher.
@@ -135,6 +179,7 @@ func (w *MongoWatcher) runlist(ctx context.Context, cur *mongo.Cursor) error {
 			return errors.NewInternalError(err)
 		}
 		item.SetResource(w.col.Name())
+		item.SetScopes(w.scopes)
 		if !w.send(ctx, store.WatchEvent{Type: store.WatchEventCreate, Object: item}) {
 			return ctx.Err()
 		}
@@ -142,82 +187,133 @@ func (w *MongoWatcher) runlist(ctx context.Context, cur *mongo.Cursor) error {
 	if err := cur.Err(); err != nil {
 		return errors.NewInternalError(err)
 	}
-	if !w.send(ctx, store.WatchEvent{Type: store.WatchEventBookmark}) {
-		return ctx.Err()
-	}
 	return nil
 }
 
 func (w *MongoWatcher) run(ctx context.Context, cur *mongo.Cursor, stream *mongo.ChangeStream) {
 	defer close(w.results)
 	defer w.Stop()
+	if err := w.consume(ctx, cur, stream); err != nil && !stderrors.Is(err, context.Canceled) {
+		w.send(ctx, store.WatchEvent{Error: err})
+	}
+}
+
+func (w *MongoWatcher) consume(ctx context.Context, cur *mongo.Cursor, stream *mongo.ChangeStream) error {
+	defer stream.Close(ctx)
 	if cur != nil {
 		if err := w.runlist(ctx, cur); err != nil {
-			if !stderrors.Is(err, context.Canceled) {
-				w.send(ctx, store.WatchEvent{Error: err})
-			}
-			return
+			return err
+		}
+		// The initial batch was consumed before Find, so this fetch is one
+		// post-Find getMore. Drain its complete batch before publishing Bookmark.
+		if err := w.sendNextBatch(ctx, stream); err != nil {
+			return err
+		}
+		if !w.send(ctx, store.WatchEvent{Type: store.WatchEventBookmark}) {
+			return ctx.Err()
 		}
 	}
-	type rawMongoEvent struct {
-		OperationType            string   `json:"operationType"`
-		FullDocument             bson.Raw `json:"fullDocument"`
-		FullDocumentBeforeChange bson.Raw `json:"fullDocumentBeforeChange"`
-		DocumentKey              bson.Raw `json:"documentKey"`
-	}
-	defer stream.Close(ctx)
-
 	for stream.Next(ctx) {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			raw := rawMongoEvent{}
-			if err := stream.Decode(&raw); err != nil {
-				w.send(ctx, store.WatchEvent{Error: errors.NewInternalError(err)})
-				return
-			}
-			event := store.WatchEvent{}
-
-			var old, new store.Object
-			if olddoc := raw.FullDocumentBeforeChange; len(olddoc) > 0 {
-				old = w.newObjectFunc()
-				if err := bsonUnmarshal(w.bsonRegistry, olddoc, old); err != nil {
-					w.send(ctx, store.WatchEvent{Error: errors.NewInternalError(err)})
-					return
-				}
-				old.SetResource(w.col.Name())
-			}
-			if newdoc := raw.FullDocument; len(newdoc) > 0 {
-				new = w.newObjectFunc()
-				if err := bsonUnmarshal(w.bsonRegistry, newdoc, new); err != nil {
-					w.send(ctx, store.WatchEvent{Error: errors.NewInternalError(err)})
-					return
-				}
-				new.SetResource(w.col.Name())
-			}
-			switch raw.OperationType {
-			case "insert":
-				event.Type = store.WatchEventCreate
-				event.Object = new
-			case "update", "replace":
-				event.Type = store.WatchEventUpdate
-				event.Object = new
-			case "delete":
-				event.Type = store.WatchEventDelete
-				event.Object = old
-			}
-			if !w.send(ctx, event) {
-				return
-			}
+		if err := w.sendCurrentChange(ctx, stream); err != nil {
+			return err
 		}
 	}
 	if err := stream.Err(); err != nil {
-		if stderrors.Is(err, context.Canceled) {
-			return
-		}
-		w.send(ctx, store.WatchEvent{Error: errors.NewInternalError(err)})
+		return errors.NewInternalError(err)
 	}
+	return ctx.Err()
+}
+
+func (w *MongoWatcher) sendNextBatch(ctx context.Context, stream *mongo.ChangeStream) error {
+	if !stream.TryNext(ctx) {
+		if err := stream.Err(); err != nil {
+			return errors.NewInternalError(err)
+		}
+		return nil
+	}
+	for {
+		if err := w.sendCurrentChange(ctx, stream); err != nil {
+			return err
+		}
+		if stream.RemainingBatchLength() == 0 {
+			return nil
+		}
+		if !stream.TryNext(ctx) {
+			if err := stream.Err(); err != nil {
+				return errors.NewInternalError(err)
+			}
+			return ctx.Err()
+		}
+	}
+}
+
+type rawMongoEvent struct {
+	FullDocument             bson.Raw `json:"fullDocument"`
+	FullDocumentBeforeChange bson.Raw `json:"fullDocumentBeforeChange"`
+}
+
+func (w *MongoWatcher) sendCurrentChange(ctx context.Context, stream *mongo.ChangeStream) error {
+	raw := rawMongoEvent{}
+	if err := stream.Decode(&raw); err != nil {
+		return errors.NewInternalError(err)
+	}
+	event, err := w.watchEvent(raw)
+	if err != nil {
+		return errors.NewInternalError(err)
+	}
+	if event.Type != "" && !w.send(ctx, event) {
+		return ctx.Err()
+	}
+	return nil
+}
+
+func (w *MongoWatcher) watchEvent(raw rawMongoEvent) (store.WatchEvent, error) {
+	var old, new store.Object
+	if len(raw.FullDocumentBeforeChange) > 0 {
+		old = w.newObjectFunc()
+		if err := bsonUnmarshal(w.bsonRegistry, raw.FullDocumentBeforeChange, old); err != nil {
+			return store.WatchEvent{}, err
+		}
+		old.SetResource(w.col.Name())
+		old.SetScopes(w.scopes)
+	}
+	if len(raw.FullDocument) > 0 {
+		new = w.newObjectFunc()
+		if err := bsonUnmarshal(w.bsonRegistry, raw.FullDocument, new); err != nil {
+			return store.WatchEvent{}, err
+		}
+		new.SetResource(w.col.Name())
+		new.SetScopes(w.scopes)
+	}
+	oldMatches, err := w.matches(old)
+	if err != nil {
+		return store.WatchEvent{}, err
+	}
+	newMatches, err := w.matches(new)
+	if err != nil {
+		return store.WatchEvent{}, err
+	}
+	switch {
+	case !oldMatches && newMatches:
+		return store.WatchEvent{Type: store.WatchEventCreate, Object: new}, nil
+	case oldMatches && newMatches:
+		return store.WatchEvent{Type: store.WatchEventUpdate, Object: new}, nil
+	case oldMatches && !newMatches:
+		return store.WatchEvent{Type: store.WatchEventDelete, Object: old}, nil
+	default:
+		return store.WatchEvent{}, nil
+	}
+}
+
+func (w *MongoWatcher) matches(obj store.Object) (bool, error) {
+	if obj == nil || !store.MatchLabelReqirements(obj, w.labelSelector) {
+		return false, nil
+	}
+	uns, err := store.ToUnstructured(obj)
+	if err != nil {
+		return false, err
+	}
+	return store.MatchUnstructuredFieldRequirments(uns, w.fieldSelector), nil
 }
 
 func bsonUnmarshal(bsoncodec *bsoncodec.Registry, data []byte, obj store.Object) error {
@@ -232,16 +328,6 @@ func bsonUnmarshal(bsoncodec *bsoncodec.Registry, data []byte, obj store.Object)
 }
 
 func (w *MongoWatcher) send(ctx context.Context, e store.WatchEvent) bool {
-	if w.dropOnFull {
-		select {
-		case w.results <- e:
-			return true
-		case <-ctx.Done():
-			return false
-		default:
-			return true
-		}
-	}
 	select {
 	case w.results <- e:
 		return true
@@ -251,7 +337,7 @@ func (w *MongoWatcher) send(ctx context.Context, e store.WatchEvent) bool {
 }
 
 func (w *MongoWatcher) Stop() {
-	if w.cancel != nil {
+	w.stop.Do(func() {
 		w.cancel()
-	}
+	})
 }

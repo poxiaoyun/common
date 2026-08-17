@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/bsoncodec"
 	"go.mongodb.org/mongo-driver/bson/bsonrw"
@@ -71,21 +70,28 @@ type BsonTimeCodec struct{}
 
 // DecodeValue implements bsoncodec.ValueDecoder.
 func (b BsonTimeCodec) DecodeValue(ctx bsoncodec.DecodeContext, vr bsonrw.ValueReader, v reflect.Value) error {
-	t, err := vr.ReadDateTime()
-	if err != nil {
-		strval, err := vr.ReadString()
+	var value time.Time
+	switch vr.Type() {
+	case bson.TypeDateTime:
+		datetime, err := vr.ReadDateTime()
 		if err != nil {
 			return err
 		}
-		tim, err := time.Parse(time.RFC3339, strval)
+		dateTime := primitive.DateTime(datetime)
+		value = dateTime.Time()
+	case bson.TypeString:
+		text, err := vr.ReadString()
 		if err != nil {
 			return err
 		}
-		v.Set(reflect.ValueOf(meta.Time{Time: tim}))
-		return nil
+		value, err = time.Parse(time.RFC3339, text)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("cannot decode %s as time", vr.Type())
 	}
-	tim := meta.Time{Time: primitive.DateTime(t).Time()}
-	v.Set(reflect.ValueOf(tim))
+	v.Set(reflect.ValueOf(meta.Time{Time: value}))
 	return nil
 }
 
@@ -125,8 +131,8 @@ func (BsonQuantityCodec) EncodeValue(ctx bsoncodec.EncodeContext, vw bsonrw.Valu
 	return nil
 }
 
-func NewMongoStorage(ctx context.Context, scheme *store.Schema, options *MongoDBOptions) (*MongoStorage, error) {
-	scheme, err := scheme.Clone()
+func NewMongoStorage(ctx context.Context, schema *store.Schema, options *MongoDBOptions) (*MongoStorage, error) {
+	schema, err := schema.Clone()
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +145,7 @@ func NewMongoStorage(ctx context.Context, scheme *store.Schema, options *MongoDB
 	}
 	core := &MongoStorageCore{
 		db:             db,
-		scheme:         scheme,
+		schema:         schema,
 		bsonRegistry:   mongoBsonRegistry,
 		bsonOptions:    mongoBsonOptions,
 		collections:    map[string]*mongo.Collection{},
@@ -180,11 +186,8 @@ func NewMongoDB(ctx context.Context,
 	return cli.Database(opts.Database), nil
 }
 
-var setUpdateTimestampQuery = bson.E{Key: "$currentDate", Value: bson.D{{Key: "updationTimestamp", Value: true}}}
-var incGenerationQuery = bson.E{Key: "$inc", Value: bson.D{{Key: "generation", Value: 1}}}
-
 type MongoStorageCore struct {
-	scheme             *store.Schema
+	schema             *store.Schema
 	db                 *mongo.Database
 	bsonRegistry       *bsoncodec.Registry
 	bsonOptions        *mongooptions.BSONOptions
@@ -195,12 +198,13 @@ type MongoStorageCore struct {
 }
 
 func (m *MongoStorageCore) initCollections(ctx context.Context) error {
-	for _, resource := range m.scheme.Resources() {
-		definition, err := m.scheme.Resource(resource)
+	for _, resource := range m.schema.Resources() {
+		definition, err := m.schema.Resource(resource)
 		if err != nil {
 			return err
 		}
 		col := m.db.Collection(resource)
+		m.collections[resource] = col
 		indexes := make([]mongo.IndexModel, 0, len(definition.Indexes))
 		for _, index := range definition.Indexes {
 			indexOptions := mongooptions.Index().SetName(index.Name).SetUnique(index.Unique)
@@ -234,20 +238,35 @@ func PartialFilterExpression(fields []string) bson.M {
 	return bson.M{"$and": expressions}
 }
 
-var commonFindOneAndUpdateOptions = mongooptions.FindOneAndUpdate().SetReturnDocument(mongooptions.After)
-
 type MongoStorage struct {
 	core   *MongoStorageCore
 	scopes []store.Scope
+}
+
+// Capabilities implements store.Store.
+func (m *MongoStorage) Capabilities() store.Capabilities {
+	return store.Capabilities{
+		LabelSelector:    true,
+		FieldSelector:    true,
+		Search:           true,
+		Sort:             true,
+		Page:             true,
+		Projection:       true,
+		OptimisticLock:   true,
+		Watch:            true,
+		Transaction:      true,
+		SecondaryIndexes: true,
+		UniqueIndexes:    true,
+	}
 }
 
 func (m *MongoStorage) Ping(ctx context.Context) error {
 	return m.core.db.Client().Ping(ctx, nil)
 }
 
-// Scheme implements Storage.
-func (m *MongoStorage) Scheme() *store.Schema {
-	return m.core.scheme
+// Schema implements store.Store.
+func (m *MongoStorage) Schema() *store.Schema {
+	return m.core.schema.Snapshot()
 }
 
 func (m *MongoStorage) Database() *mongo.Database {
@@ -270,7 +289,7 @@ func (m *MongoStorage) Count(ctx context.Context, obj store.Object, opts ...stor
 	}
 	var count int
 	err := m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
+		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
 		m.core.logger.V(5).Info("count", "collection", col.Name(), "filter", filter)
 		doccount, err := col.CountDocuments(ctx, filter)
 		if err != nil {
@@ -289,22 +308,9 @@ func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...st
 		opt(&creationopt)
 	}
 	return m.on(ctx, into, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		if into.GetID() == "" {
-			if creationopt.AutoIncrementOnName {
-				// if name is empty, get next auto increment id
-				cnt, err := GetCounter(ctx, col.Database(), col.Name())
-				if err != nil {
-					return errors.NewInternalError(err)
-				}
-				into.SetID(strconv.FormatUint(uint64(cnt), 10))
-			} else {
-				into.SetID(primitive.NewObjectID().Hex())
-			}
-		}
-		into.SetCreationTimestamp(meta.Now())
-		into.SetUID(uuid.NewString())
-		into.SetGeneration(1)
-		data, err := m.mergeConditionOnChange(into, []string{"status"})
+		store.PrepareObjectForCreate(into, col.Name(), m.scopes)
+		into.SetResourceVersion(1)
+		data, err := m.mergeConditionOnChange(into, nil)
 		if err != nil {
 			return err
 		}
@@ -375,12 +381,49 @@ func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...sto
 	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: id})
-		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
-		m.core.logger.V(5).Info("delete", "collection", col.Name(), "filter", filter)
-		if err := col.FindOneAndDelete(ctx, filter).Decode(obj); err != nil {
-			return WarpMongoError(err, col, obj)
+		for {
+			current := store.NewObject(obj)
+			found := col.FindOne(ctx, filter)
+			if err := found.Decode(current); err != nil {
+				return WarpMongoError(err, col, obj)
+			}
+			current.SetResource(col.Name())
+			current.SetScopes(m.scopes)
+			if err := store.ValidateDeletePreconditions(current, options.Preconditions); err != nil {
+				return err
+			}
+			if err := store.ValidateDeleteRequirements(current, options.LabelRequirements, options.FieldRequirements); err != nil {
+				return err
+			}
+			policy := store.DeletePropagationBackground
+			if options.PropagationPolicy != nil {
+				policy = *options.PropagationPolicy
+			}
+			versionFilter := append(slices.Clone(filter), bson.E{Key: "resourceVersion", Value: current.GetResourceVersion()})
+			if store.PrepareObjectForDelete(current, policy) {
+				result, err := col.DeleteOne(ctx, versionFilter)
+				if err != nil {
+					return WarpMongoError(err, col, obj)
+				}
+				if result.DeletedCount == 0 {
+					continue
+				}
+				return store.CopyObject(current, obj)
+			}
+			current.SetResourceVersion(current.GetResourceVersion() + 1)
+			data, err := m.mergeConditionOnChange(current, nil)
+			if err != nil {
+				return err
+			}
+			result, err := col.ReplaceOne(ctx, versionFilter, m.beforeSave(data))
+			if err != nil {
+				return WarpMongoError(err, col, obj)
+			}
+			if result.MatchedCount == 0 {
+				continue
+			}
+			return store.CopyObject(current, obj)
 		}
-		return nil
 	})
 }
 
@@ -391,7 +434,7 @@ func (m *MongoStorage) DeleteBatch(ctx context.Context, obj store.ObjectList, op
 		opt(&options)
 	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
+		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
 		m.core.logger.V(5).Info("delete all", "collection", col.Name(), "filter", filter)
 		if _, err := col.DeleteMany(ctx, filter); err != nil {
 			return WarpMongoError(err, col, nil)
@@ -411,7 +454,7 @@ func (m *MongoStorage) Get(ctx context.Context, id string, obj store.Object, opt
 	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: id})
-		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
+		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
 		findopt := mongooptions.FindOne()
 		if len(options.Fields) != 0 {
 			project := bson.M{}
@@ -424,71 +467,34 @@ func (m *MongoStorage) Get(ctx context.Context, id string, obj store.Object, opt
 		if err := col.FindOne(ctx, filter, findopt).Decode(obj); err != nil {
 			return WarpMongoError(err, col, obj)
 		}
+		obj.SetResource(col.Name())
+		obj.SetScopes(m.scopes)
 		return nil
 	})
 }
 
 // Update implements Storage.
 func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
-	id := obj.GetID()
-	if id == "" {
-		return errors.NewBadRequest("id is required")
-	}
-	updateoptions := store.UpdateOptions{}
+	options := store.UpdateOptions{}
 	for _, opt := range opts {
-		opt(&updateoptions)
+		opt(&options)
 	}
-	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = append(filter, bson.E{Key: "id", Value: id})
-		filter = conditionsmatch(filter, SelectorToReqirements(updateoptions.LabelRequirements, updateoptions.FieldRequirements))
-		// in order not to update creation time or creator
-		fields, err := m.mergeConditionOnChange(obj, []string{"creator", "creationTimestamp", "status", "generation"})
-		if err != nil {
-			return err
-		}
-		fields = slices.DeleteFunc(fields, func(e bson.E) bool {
-			return e.Key == "id"
-		})
-		fields = m.beforeSave(fields)
-		update := bson.D{{Key: "$set", Value: fields}, incGenerationQuery}
-		if m.core.setUpdateTimestamp {
-			update = append(update, setUpdateTimestampQuery)
-		}
-		m.core.logger.V(5).Info("update", "collection", col.Name(), "filter", filter, "update", update)
-		if err := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions).Decode(obj); err != nil {
-			return WarpMongoError(err, col, obj)
-		}
-		return nil
+	return m.replace(ctx, obj, options.LabelRequirements, options.FieldRequirements, false, obj.GetResourceVersion(), func(current, desired store.Object) error {
+		return store.CopyObject(obj, desired)
 	})
 }
 
 // Patch implements Storage.
 func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	id := obj.GetID()
-	if id == "" {
-		return errors.NewBadRequest("id is required")
-	}
 	options := store.PatchOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = append(filter, bson.E{Key: "id", Value: id})
-		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
-		update, err := convertPatch(patch, obj, []string{"creator", "creationTimestamp", "status", "generation"}, nil)
-		if err != nil {
+	return m.replace(ctx, obj, options.LabelRequirements, options.FieldRequirements, false, 0, func(current, desired store.Object) error {
+		if err := store.CopyObject(current, desired); err != nil {
 			return err
 		}
-		update = append(update, incGenerationQuery)
-		if m.core.setUpdateTimestamp {
-			update = append(update, setUpdateTimestampQuery)
-		}
-		m.core.logger.V(5).Info("patch", "collection", col.Name(), "filter", filter, "update", update)
-		result := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions)
-		if err := result.Decode(obj); err != nil {
-			return WarpMongoError(err, col, obj)
-		}
-		return nil
+		return store.ApplyPatch(desired, obj, patch)
 	})
 }
 
@@ -499,11 +505,12 @@ func (m *MongoStorage) PatchBatch(ctx context.Context, obj store.ObjectList, pat
 		opt(&options)
 	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = conditionsmatch(filter, SelectorToReqirements(options.LabelRequirements, options.FieldRequirements))
-		update, err := convertBatchPatch(patch, []string{"creator", "creationTimestamp", "status", "generation"}, nil)
+		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
+		update, err := convertBatchPatch(patch, []string{"creator", "creationTimestamp", "resourceVersion", "status", "generation"}, nil)
 		if err != nil {
 			return err
 		}
+		update = append(update, bson.E{Key: "$inc", Value: bson.D{{Key: "resourceVersion", Value: 1}}})
 		m.core.logger.V(5).Info("batch patch", "collection", col.Name(), "filter", filter, "update", update)
 		if _, err := col.UpdateMany(ctx, filter, update); err != nil {
 			return ConvetMongoListError(err, col)
@@ -542,6 +549,7 @@ func (m *MongoStorage) List(ctx context.Context, list store.ObjectList, opts ...
 		// set resource for each item
 		store.ForEachItem(list, func(item store.Object) error {
 			item.SetResource(col.Name())
+			item.SetScopes(m.scopes)
 			return nil
 		})
 		return nil
@@ -565,10 +573,10 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, fields []stri
 		if len(opts.SearchFields) > 0 {
 			match = append(match, searchStage(opts.SearchFields, search))
 		} else {
-			match = append(match, searchStage([]string{"name"}, search))
+			match = append(match, searchStage([]string{"id", "name"}, search))
 		}
 	}
-	match = conditionsmatch(match, SelectorToReqirements(opts.LabelRequirements, opts.FieldRequirements))
+	match = ConditionsMatch(match, opts.LabelRequirements, opts.FieldRequirements, "")
 	pipeline := bson.A{}
 	// pre conditions
 	pipeline = append(pipeline, pre...)
@@ -639,12 +647,13 @@ func scopesmatch(match bson.D, scopes []store.Scope) bson.D {
 		resourcekey := store.ScopeResourceToFieldName(scope.Resource)
 		conds = append(conds, store.Requirement{Operator: store.Equals, Key: resourcekey, Values: []any{scope.Name}})
 	}
-	return conditionsmatch(match, conds)
+	return ConditionsMatch(match, nil, conds, "")
 }
 
-func conditionsmatch(match bson.D, conds store.Requirements) bson.D {
-	for _, cond := range conds {
-		key, values := cond.Key, cond.Values
+// ConditionsMatch appends label and field requirements for the selected document prefix.
+func ConditionsMatch(match bson.D, labels store.Requirements, fields store.Requirements, prefix string) bson.D {
+	for _, cond := range fields {
+		key, values := prefix+cond.Key, cond.Values
 		switch cond.Operator {
 		case store.Equals:
 			if len(values) == 0 {
@@ -690,7 +699,59 @@ func conditionsmatch(match bson.D, conds store.Requirements) bson.D {
 			match = append(match, bson.E{Key: key, Value: bson.M{string(cond.Operator): values[0]}})
 		}
 	}
-	return match
+	if len(labels) == 0 {
+		return match
+	}
+
+	input := "$" + prefix + "labels"
+	expressions := make(bson.A, 0, len(labels))
+	for _, requirement := range labels {
+		value := bson.D{
+			{Key: "$ifNull", Value: bson.A{
+				bson.D{
+					{Key: "$getField", Value: bson.D{
+						{Key: "field", Value: bson.D{{Key: "$literal", Value: requirement.Key}}},
+						{Key: "input", Value: input},
+					}},
+				},
+				nil,
+			}},
+		}
+
+		comparison := bson.A{value, nil}
+		var operator string
+		switch requirement.Operator {
+		case store.Equals, store.DoubleEquals:
+			operator = "$eq"
+			comparison[1] = bson.D{{Key: "$literal", Value: requirement.Values[0]}}
+		case store.NotEquals:
+			operator = "$ne"
+			comparison[1] = bson.D{{Key: "$literal", Value: requirement.Values[0]}}
+		case store.In, store.NotIn:
+			expression := bson.D{
+				{Key: "$in", Value: bson.A{
+					value,
+					bson.D{{Key: "$literal", Value: bson.A(requirement.Values)}},
+				}},
+			}
+			if requirement.Operator == store.NotIn {
+				expression = bson.D{{Key: "$not", Value: bson.A{expression}}}
+			}
+			expressions = append(expressions, expression)
+			continue
+		case store.Exists:
+			operator = "$ne"
+		case store.DoesNotExist:
+			operator = "$eq"
+		}
+		expressions = append(expressions, bson.D{{Key: operator, Value: comparison}})
+	}
+	return append(match, bson.E{
+		Key: "$expr",
+		Value: bson.D{
+			{Key: "$and", Value: expressions},
+		},
+	})
 }
 
 func searchStage(keys []string, search string) bson.E {
@@ -700,9 +761,9 @@ func searchStage(keys []string, search string) bson.E {
 	// do not support regex, it raise error when search is invalid regex
 	search = escapeRegex(search)
 	if len(keys) > 1 {
-		fields := []bson.A{}
+		fields := bson.A{}
 		for _, key := range keys {
-			fields = append(fields, bson.A{key, bson.M{"$regex": search, "$options": "i"}})
+			fields = append(fields, bson.D{{Key: key, Value: bson.M{"$regex": search, "$options": "i"}}})
 		}
 		return bson.E{Key: "$or", Value: fields}
 	}
@@ -814,53 +875,87 @@ type MongoStorageStatus struct {
 
 // Patch implements StatusStorage.
 func (m *MongoStorageStatus) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	id := obj.GetID()
-	if id == "" {
-		return errors.NewBadRequest("id is required")
+	options := store.PatchOptions{}
+	for _, opt := range opts {
+		opt(&options)
 	}
-	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = append(filter, bson.E{Key: "id", Value: id})
-		update, err := convertPatch(patch, obj, nil, []string{"status"})
-		if err != nil {
+	return m.replace(ctx, obj, options.LabelRequirements, options.FieldRequirements, true, 0, func(current, desired store.Object) error {
+		if err := store.CopyObject(current, desired); err != nil {
 			return err
 		}
-		if m.core.setUpdateTimestamp {
-			update = append(update, setUpdateTimestampQuery)
-		}
-		m.core.logger.V(5).Info("patch status", "collection", col.Name(), "filter", filter, "update", update)
-		if err := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions).Decode(obj); err != nil {
-			return WarpMongoError(err, col, obj)
-		}
-		return nil
+		return store.ApplyPatch(desired, obj, patch)
 	})
 }
 
 // Update implements StatusStorage.
 func (m *MongoStorageStatus) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
-	id := obj.GetID()
-	if id == "" {
+	options := store.UpdateOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return m.replace(ctx, obj, options.LabelRequirements, options.FieldRequirements, true, obj.GetResourceVersion(), func(current, desired store.Object) error {
+		return store.CopyObject(obj, desired)
+	})
+}
+
+func (m *MongoStorage) replace(
+	ctx context.Context,
+	obj store.Object,
+	labelRequirements store.Requirements,
+	fieldRequirements store.Requirements,
+	status bool,
+	requestedVersion int64,
+	change func(current, desired store.Object) error,
+) error {
+	if obj.GetID() == "" {
 		return errors.NewBadRequest("id is required")
 	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		filter = append(filter, bson.E{Key: "id", Value: id})
-		// inoder not to update creation time or creator
-		// we need convert obj to bson.D
-		fields, err := FlattenData(obj, 1, nil, []string{"status"})
-		if err != nil {
-			return errors.NewBadRequest("invalid object")
-		}
-		fields = slices.DeleteFunc(fields, func(e bson.E) bool {
-			return e.Key == "id"
-		})
-		update := bson.D{{Key: "$set", Value: fields}}
-		if m.core.setUpdateTimestamp {
-			update = append(update, setUpdateTimestampQuery)
-		}
-		m.core.logger.V(5).Info("update status", "collection", col.Name(), "filter", filter, "update", update)
-		if err := col.FindOneAndUpdate(ctx, filter, update, commonFindOneAndUpdateOptions).Decode(obj); err != nil {
+		filter = append(filter, bson.E{Key: "id", Value: obj.GetID()})
+		filter = ConditionsMatch(filter, labelRequirements, fieldRequirements, "")
+		current := store.NewObject(obj)
+		found := col.FindOne(ctx, filter)
+		if err := found.Decode(current); err != nil {
 			return WarpMongoError(err, col, obj)
 		}
-		return nil
+		current.SetResource(col.Name())
+		current.SetScopes(m.scopes)
+		if requestedVersion != 0 && requestedVersion != current.GetResourceVersion() {
+			return errors.NewConflict(col.Name(), obj.GetID(), fmt.Errorf("resourceVersion %d does not match", requestedVersion))
+		}
+		desired := store.NewObject(obj)
+		if err := change(current, desired); err != nil {
+			return err
+		}
+		completeDeletion, err := store.PrepareObjectForUpdate(current, desired, status)
+		if err != nil {
+			return errors.NewInternalError(err)
+		}
+		versionFilter := append(slices.Clone(filter), bson.E{Key: "resourceVersion", Value: current.GetResourceVersion()})
+		if completeDeletion {
+			result, err := col.DeleteOne(ctx, versionFilter)
+			if err != nil {
+				return WarpMongoError(err, col, obj)
+			}
+			if result.DeletedCount == 0 {
+				return errors.NewConflict(col.Name(), obj.GetID(), fmt.Errorf("object changed during update"))
+			}
+			return store.CopyObject(desired, obj)
+		}
+		desired.SetResourceVersion(current.GetResourceVersion() + 1)
+		data, err := m.mergeConditionOnChange(desired, nil)
+		if err != nil {
+			return err
+		}
+		data = m.beforeSave(data)
+		result, err := col.ReplaceOne(ctx, versionFilter, data)
+		if err != nil {
+			return WarpMongoError(err, col, obj)
+		}
+		if result.MatchedCount == 0 {
+			return errors.NewConflict(col.Name(), obj.GetID(), fmt.Errorf("object changed during update"))
+		}
+		return store.CopyObject(desired, obj)
 	})
 }
 
@@ -985,17 +1080,6 @@ func FlattenData(data any, depth int, excludes []string, includes []string) (bso
 		return nil
 	})
 	return into, err
-}
-
-func SelectorToReqirements(labels store.Requirements, fields store.Requirements) store.Requirements {
-	return append(labelsSelectorToReqirements(labels), fields...)
-}
-
-func labelsSelectorToReqirements(sel store.Requirements) store.Requirements {
-	for i := range sel {
-		sel[i].Key = "labels." + sel[i].Key
-	}
-	return sel
 }
 
 // SetScopesFields sets the scope's as fields in the data map.

@@ -9,24 +9,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"google.golang.org/grpc"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/apiserver/pkg/storage"
 	storeerr "k8s.io/apiserver/pkg/storage/errors"
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
-	libmeta "xiaoshiai.cn/common/meta"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -91,7 +88,7 @@ func NewETCD3Client(ctx context.Context, c *Options) (*clientv3.Client, error) {
 	return clientv3.New(cfg)
 }
 
-func NewEtcdCacher(ctx context.Context, scheme *store.Schema, options *Options) (*generic, error) {
+func NewEtcdCacher(ctx context.Context, schema *store.Schema, options *Options) (*generic, error) {
 	cli, err := NewETCD3Client(ctx, options)
 	if err != nil {
 		return nil, err
@@ -100,7 +97,7 @@ func NewEtcdCacher(ctx context.Context, scheme *store.Schema, options *Options) 
 		Client: cli,
 	}
 	kubernetescli.Kubernetes = &kubernetescli
-	result, err := newEtcdCacherFromClient(ctx, &kubernetescli, scheme, options.KeyPrefix, func() {
+	result, err := newEtcdCacherFromClient(ctx, &kubernetescli, schema, options.KeyPrefix, func() {
 		_ = cli.Close()
 	})
 	if err != nil {
@@ -110,27 +107,27 @@ func NewEtcdCacher(ctx context.Context, scheme *store.Schema, options *Options) 
 	return result, nil
 }
 
-func NewEtcdCacherFromClient(ctx context.Context, cli *kubernetes.Client, scheme *store.Schema, storagePrefix string) (*generic, error) {
-	return newEtcdCacherFromClient(ctx, cli, scheme, storagePrefix, nil)
+func NewEtcdCacherFromClient(ctx context.Context, cli *kubernetes.Client, schema *store.Schema, storagePrefix string) (*generic, error) {
+	return newEtcdCacherFromClient(ctx, cli, schema, storagePrefix, nil)
 }
 
 func newEtcdCacherFromClient(
 	ctx context.Context,
 	cli *kubernetes.Client,
-	scheme *store.Schema,
+	schema *store.Schema,
 	storagePrefix string,
 	onClose func(),
 ) (*generic, error) {
 	if cli == nil || cli.Client == nil {
 		return nil, fmt.Errorf("etcd client is nil")
 	}
-	scheme, err := scheme.Clone()
+	schema, err := schema.Clone()
 	if err != nil {
 		return nil, err
 	}
 	resourceFields := make(map[string][]string)
-	for _, resource := range scheme.Resources() {
-		definition, err := scheme.Resource(resource)
+	for _, resource := range schema.Resources() {
+		definition, err := schema.Resource(resource)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +156,7 @@ func newEtcdCacherFromClient(
 	resources := newResourceRegistry(
 		ctx,
 		resourceFields,
-		func(ctx context.Context, resource schema.GroupResource, indexFields []string) (*resourceDB, error) {
+		func(ctx context.Context, resource k8sschema.GroupResource, indexFields []string) (*resourceDB, error) {
 			return newResourceStorage(ctx, cli, storagePrefix, resource, indexFields)
 		},
 		onClose,
@@ -168,6 +165,7 @@ func newEtcdCacherFromClient(
 		storagePrefix: storagePrefix,
 		cli:           cli,
 		resources:     resources,
+		schema:        schema,
 	}
 	return &generic{core: core}, nil
 }
@@ -177,6 +175,28 @@ var _ store.PingableStore = &generic{}
 type generic struct {
 	core   *core
 	scopes []store.Scope
+}
+
+// Schema implements store.Store.
+func (c *generic) Schema() *store.Schema {
+	return c.core.schema.Snapshot()
+}
+
+// Capabilities implements store.Store.
+func (c *generic) Capabilities() store.Capabilities {
+	return store.Capabilities{
+		LabelSelector:    true,
+		FieldSelector:    true,
+		Search:           true,
+		Sort:             true,
+		Page:             true,
+		Continue:         true,
+		SubScopes:        true,
+		OptimisticLock:   true,
+		Watch:            true,
+		TTL:              true,
+		SecondaryIndexes: true,
+	}
 }
 
 // Close stops all resource reflectors and caches. It does not close a client
@@ -192,13 +212,13 @@ func (c *generic) Ping(ctx context.Context) error {
 
 // PatchBatch implements store.Store.
 func (c *generic) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
-	return errors.NewNotImplemented("batch patch is not supported")
+	return errors.NewUnsupported("batch patch is not supported")
 }
 
 // DeleteBatch implements store.Store.
 func (c *generic) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
 	// panic("unimplemented")
-	return errors.NewNotImplemented("delete batch is not supported")
+	return errors.NewUnsupported("delete batch is not supported")
 }
 
 // Count implements store.Store.
@@ -239,14 +259,7 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 		opt(&options)
 	}
 	return c.core.on(ctx, obj, func(ctx context.Context, db *resourceDB) error {
-		if obj.GetID() == "" {
-			return errors.NewBadRequest(fmt.Sprintf("id is required for %s", db.resource))
-		}
-		obj.SetUID(uuid.New().String())
-		obj.SetCreationTimestamp(libmeta.Now())
-		obj.SetGeneration(1)
-		obj.SetScopes(c.scopes)
-		obj.SetResource(db.resource.String())
+		store.PrepareObjectForCreate(obj, db.resource.String(), c.scopes)
 		uns, err := ConvertToUnstructured(obj)
 		if err != nil {
 			return err
@@ -268,28 +281,28 @@ func (c *generic) Delete(ctx context.Context, obj store.Object, opts ...store.De
 		opt(&options)
 	}
 	preconditions := &storage.Preconditions{}
-	if obj.GetUID() != "" {
-		preconditions.UID = ptr.To(types.UID(obj.GetUID()))
+	if options.Preconditions != nil {
+		if options.Preconditions.UID != nil {
+			preconditions.UID = ptr.To(types.UID(*options.Preconditions.UID))
+		}
+		if options.Preconditions.ResourceVersion != nil {
+			preconditions.ResourceVersion = ptr.To(strconv.FormatInt(*options.Preconditions.ResourceVersion, 10))
+		}
 	}
-	predicate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
+	predicate, err := ConvertPredicate(nil, nil)
 	if err != nil {
 		return err
 	}
 	updatefunc := func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error) {
-		// update finalizers
-		nogcFinalizers := slices.DeleteFunc(current.GetFinalizers(), func(finalizer string) bool {
-			return finalizer == store.FinalizerDeleteDependents || finalizer == store.FinalizerOrphanDependents
-		})
-		var gcFinalizers []string
-		if options.PropagationPolicy != nil {
-			switch *options.PropagationPolicy {
-			case store.DeletePropagationForeground:
-				gcFinalizers = append(gcFinalizers, store.FinalizerDeleteDependents)
-			}
+		if err := store.ValidateDeleteRequirements(current, options.LabelRequirements, options.FieldRequirements); err != nil {
+			return nil, err
 		}
-		current.SetFinalizers(append(nogcFinalizers, gcFinalizers...))
-		if current.GetDeletionTimestamp() == nil {
-			current.SetDeletionTimestamp(ptr.To(metav1.Now()))
+		policy := store.DeletePropagationBackground
+		if options.PropagationPolicy != nil {
+			policy = *options.PropagationPolicy
+		}
+		if store.PrepareObjectForDelete(current, policy) {
+			return current, errShouldDelete
 		}
 		return current, nil
 	}
@@ -340,7 +353,7 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 	if err != nil {
 		return err
 	}
-	continueMode := options.Page == 0 || options.Continue != ""
+	continueMode := options.Continue != "" || options.Page == 0 && options.Size > 0
 	v, newItemFunc, err := store.NewItemFuncFromList(list)
 	if err != nil {
 		return err
@@ -376,11 +389,12 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 				filtered = FilterByScopes(filtered, c.scopes)
 			}
 			if options.Search != "" {
+				searchFields := options.SearchFields
+				if len(searchFields) == 0 {
+					searchFields = []string{"id", "name"}
+				}
 				filtered = slices.DeleteFunc(filtered, func(uns StorageObject) bool {
-					if len(options.SearchFields) == 0 {
-						options.SearchFields = []string{"id", "name"}
-					}
-					return !searchObject(&uns, options.SearchFields, options.Search)
+					return !searchObject(&uns, searchFields, options.Search)
 				})
 			}
 			return filtered
@@ -473,27 +487,12 @@ func (c *generic) Patch(ctx context.Context, obj store.Object, patch store.Patch
 		return err
 	}
 	updatefunc := func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error) {
-		patchdata, err := patch.Data(obj)
-		if err != nil {
-			return nil, err
-		}
-		if err := applyPatch(current, patch.Type(), patchdata); err != nil {
+		if err := store.ApplyPatch(current, obj, patch); err != nil {
 			return nil, err
 		}
 		return current, nil
 	}
 	return c.update(ctx, obj, preconditions, predicate, updatefunc)
-}
-
-func applyPatch(to any, patchtype store.PatchType, patchdata []byte) error {
-	switch patchtype {
-	case store.PatchTypeJSONPatch:
-		return store.JsonPatchObject(to, patchdata)
-	case store.PatchTypeMergePatch:
-		return store.JsonMergePatchObject(to, patchdata)
-	default:
-		return fmt.Errorf("unsupported patch type: %s", patchtype)
-	}
 }
 
 // Scope implements store.Store.
@@ -560,11 +559,7 @@ func (s *status) Patch(ctx context.Context, obj store.Object, patch store.Patch,
 		return err
 	}
 	updatefunc := func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error) {
-		patchdata, err := patch.Data(obj)
-		if err != nil {
-			return nil, err
-		}
-		if err := applyPatch(current, patch.Type(), patchdata); err != nil {
+		if err := store.ApplyPatch(current, obj, patch); err != nil {
 			return nil, err
 		}
 		return current, nil
@@ -603,6 +598,7 @@ type core struct {
 	resources     *resourceRegistry
 	storagePrefix string
 	cli           *kubernetes.Client
+	schema        *store.Schema
 }
 
 func (c *core) on(ctx context.Context, example any, fn func(ctx context.Context, db *resourceDB) error) error {
@@ -655,6 +651,10 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 			if err := ConvertFromUnstructured(current, unsobj, db.resource); err != nil {
 				return nil, nil, err
 			}
+			currentMap, err := store.ObjectToMap(unsobj)
+			if err != nil {
+				return nil, nil, err
+			}
 			scopes, id, uid, creation, deletion, generation := unsobj.GetScopes(), unsobj.GetID(), unsobj.GetUID(), unsobj.GetCreationTimestamp(), unsobj.GetDeletionTimestamp(), unsobj.GetGeneration()
 			unsobjchanged, err := fn(ctx, unsobj)
 			if err != nil {
@@ -685,9 +685,16 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 				_ = unstructured.SetNestedField(newuns.Object, status, "status")
 				// generation is already preserved in the copied object
 			} else {
-				// spec update: keep status field from old object, increment generation
+				// Normal updates preserve status and only business-field changes advance generation.
 				_ = unstructured.SetNestedField(newuns.Object, statusfield, "status")
-				_ = unstructured.SetNestedField(newuns.Object, generation+1, "generation")
+				changedMap, err := store.ObjectToMap(unsobjchanged)
+				if err != nil {
+					return nil, nil, err
+				}
+				if !reflect.DeepEqual(store.ObjectBusinessFields(currentMap), store.ObjectBusinessFields(changedMap)) {
+					generation++
+				}
+				_ = unstructured.SetNestedField(newuns.Object, generation, "generation")
 			}
 
 			if ShouldDeleteDuringUpdate(ctx, key, newuns, current) {
@@ -770,7 +777,7 @@ func ConvertToUnstructured(obj store.Object) (*StorageObject, error) {
 	return &uns, nil
 }
 
-func ConvertFromUnstructured(uns *StorageObject, obj store.Object, resource schema.GroupResource) error {
+func ConvertFromUnstructured(uns *StorageObject, obj store.Object, resource k8sschema.GroupResource) error {
 	datafield := uns.Object
 	if datafield == nil {
 		datafield = map[string]any{}
@@ -783,18 +790,26 @@ func ConvertFromUnstructured(uns *StorageObject, obj store.Object, resource sche
 
 func getObjectKey(scopes []store.Scope, resource, name string) string {
 	var key strings.Builder
-	key.WriteString("/" + resource)
+	key.WriteString("/")
+	key.WriteString(resource)
 	for _, scope := range scopes {
-		key.WriteString("/" + scope.Resource + "/" + scope.Name)
+		key.WriteString("/")
+		key.WriteString(scope.Resource)
+		key.WriteString("/")
+		key.WriteString(scope.Name)
 	}
 	return key.String() + "/" + name
 }
 
 func getlistkey(scopes []store.Scope, resource string) string {
 	var key strings.Builder
-	key.WriteString("/" + resource)
+	key.WriteString("/")
+	key.WriteString(resource)
 	for _, scope := range scopes {
-		key.WriteString("/" + scope.Resource + "/" + scope.Name)
+		key.WriteString("/")
+		key.WriteString(scope.Resource)
+		key.WriteString("/")
+		key.WriteString(scope.Name)
 	}
 	return key.String() + "/"
 }

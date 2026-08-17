@@ -8,6 +8,12 @@ type schemaTestObject struct {
 
 func (*schemaTestObject) ResourceName() string { return "users" }
 
+type schemaSnapshotObject struct {
+	ObjectMeta `json:"metadata,omitempty"`
+}
+
+func (*schemaSnapshotObject) ResourceName() string { return "groups" }
+
 func TestSchemaRegister(t *testing.T) {
 	object := &schemaTestObject{ObjectMeta: ObjectMeta{Resource: "users"}}
 	schema := NewSchema()
@@ -85,6 +91,25 @@ func TestSchemaClone(t *testing.T) {
 	original, _ := schema.Resource("users")
 	if original.Indexes[1].Fields[0] != "email" {
 		t.Fatal("Clone() shares index fields with original schema")
+	}
+}
+
+func TestSchemaSnapshot(t *testing.T) {
+	schema := NewSchema()
+	object := &schemaTestObject{ObjectMeta: ObjectMeta{Resource: "users"}}
+	if err := schema.Register(object, ResourceSchema{}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	snapshot := schema.Snapshot()
+	if err := snapshot.Register(
+		&schemaSnapshotObject{},
+		ResourceSchema{},
+	); err != nil {
+		t.Fatalf("snapshot Register() error = %v", err)
+	}
+	if _, err := schema.Resource("groups"); err == nil {
+		t.Fatal("Snapshot() shares registered resources with original schema")
 	}
 }
 

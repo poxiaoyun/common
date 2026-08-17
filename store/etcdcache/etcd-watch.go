@@ -127,34 +127,25 @@ func (w *warpWatcher) run(ctx context.Context) {
 				return
 			}
 			if e.Type == watch.Bookmark {
+				bookmark, err := storageObjectFromWatchEvent(e.Object)
+				if err != nil {
+					w.sendEvent(ctx, store.WatchEvent{Error: err})
+					return
+				}
 				if !w.sendEvent(ctx, store.WatchEvent{
-					Type: store.WatchEventBookmark,
+					Type:            store.WatchEventBookmark,
+					ResourceVersion: bookmark.GetRevision(),
 				}) {
 					return
 				}
 				continue
 			}
-			uns, ok := e.Object.(*StorageObject)
-			if !ok {
-				cachable, ok := e.Object.(runtime.CacheableObject)
-				if !ok {
-					if !w.sendEvent(ctx, store.WatchEvent{
-						Error: fmt.Errorf("object is not an runtime.CacheableObject, current type: %T", e.Object),
-					}) {
-						return
-					}
+			uns, err := storageObjectFromWatchEvent(e.Object)
+			if err != nil {
+				if !w.sendEvent(ctx, store.WatchEvent{Error: err}) {
 					return
 				}
-				obj := cachable.GetObject()
-				uns, ok = obj.(*StorageObject)
-				if !ok {
-					if !w.sendEvent(ctx, store.WatchEvent{
-						Error: fmt.Errorf("cacheable object is not an StorageObject, current type: %T", obj),
-					}) {
-						return
-					}
-					return
-				}
+				return
 			}
 
 			newobj := w.newItemFunc()
@@ -186,6 +177,17 @@ func (w *warpWatcher) run(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func storageObjectFromWatchEvent(obj runtime.Object) (*StorageObject, error) {
+	if cacheable, ok := obj.(runtime.CacheableObject); ok {
+		obj = cacheable.GetObject()
+	}
+	storageObject, ok := obj.(*StorageObject)
+	if !ok {
+		return nil, fmt.Errorf("watch object type is %T, want *StorageObject", obj)
+	}
+	return storageObject, nil
 }
 
 func (w *warpWatcher) sendEvent(ctx context.Context, event store.WatchEvent) bool {

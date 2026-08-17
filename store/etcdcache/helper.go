@@ -119,9 +119,10 @@ func searchObject(uns *StorageObject, fields []string, val string) bool {
 	if len(fields) == 0 {
 		return true
 	}
+	val = strings.ToLower(val)
 	for _, field := range fields {
 		strval, ok := getFieldIndex(uns, strings.Split(field, ".")...)
-		if ok && strings.Contains(strval, val) {
+		if ok && strings.Contains(strings.ToLower(strval), val) {
 			return true
 		}
 	}

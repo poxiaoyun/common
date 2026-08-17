@@ -10,11 +10,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"k8s.io/apiserver/pkg/storage/etcd3/testserver"
 	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/store"
+	"xiaoshiai.cn/common/store/storetest"
 )
+
+func TestStoreConformance(t *testing.T) {
+	client := testserver.RunEtcd(t, nil)
+	capabilities := (&generic{}).Capabilities()
+	storetest.Run(t, storetest.Fixture{
+		Capabilities: capabilities,
+		New: func(t testing.TB, schema *store.Schema) (store.Store, error) {
+			storage, err := NewEtcdCacherFromClient(t.Context(), client, schema, "/store-conformance/"+uuid.NewString())
+			if err == nil {
+				t.Cleanup(storage.Close)
+			}
+			return storage, err
+		},
+	})
+}
 
 type MyObject struct {
 	store.ObjectMeta `json:",inline"`
@@ -45,8 +62,12 @@ func TestEtcdCacherStore(t *testing.T) {
 		if err := storage.Ping(ctx); err != nil {
 			t.Fatalf("Ping() error = %v", err)
 		}
-		if err := storage.Create(ctx, &MyObject{}); !commonerrors.IsCode(err, http.StatusBadRequest) {
-			t.Fatalf("Create() without ID error = %v, want bad request", err)
+		generated := &MyObject{}
+		if err := storage.Create(ctx, generated); err != nil {
+			t.Fatalf("Create() without ID error = %v", err)
+		}
+		if generated.ID == "" {
+			t.Fatal("Create() without ID did not generate an ID")
 		}
 
 		object := &MyObject{

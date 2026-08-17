@@ -6,11 +6,24 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/uuid"
 	"k8s.io/apiserver/pkg/storage/etcd3/testserver"
 	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/store"
+	"xiaoshiai.cn/common/store/storetest"
 )
+
+func TestStoreConformance(t *testing.T) {
+	client := testserver.RunEtcd(t, nil)
+	capabilities := (&EtcdStore{}).Capabilities()
+	storetest.Run(t, storetest.Fixture{
+		Capabilities: capabilities,
+		New: func(t testing.TB, schema *store.Schema) (store.Store, error) {
+			return NewEtcdStoreFromClient(client, schema, "/store-conformance/"+uuid.NewString())
+		},
+	})
+}
 
 func SetupEtcdTestEtcdStore(t *testing.T) store.Store {
 	client := testserver.RunEtcd(t, nil)
@@ -169,8 +182,8 @@ func TestListWithoutSizeReturnsAllItems(t *testing.T) {
 	if list.Continue != "" {
 		t.Fatalf("unpaginated list returned continue token %q", list.Continue)
 	}
-	if list.Total != 0 {
-		t.Fatalf("unpaginated continuation list total is %d, want 0", list.Total)
+	if list.Total != objectCount {
+		t.Fatalf("unpaginated list total is %d, want %d", list.Total, objectCount)
 	}
 }
 
@@ -231,7 +244,7 @@ func TestCacheStore_Get(t *testing.T) {
 	}
 
 	// delete
-	if err := namespaceedStore.Delete(ctx, exists); err != nil {
+	if err := namespaceedStore.Delete(ctx, exists, store.WithDeletePropagation(store.DeletePropagationForeground)); err != nil {
 		t.Fatalf("failed to delete object: %v", err)
 	}
 	if err := namespaceedStore.Get(ctx, "test", exists); err != nil {
@@ -244,9 +257,10 @@ func TestCacheStore_Get(t *testing.T) {
 		t.Fatalf("expected finalizer, got none")
 	}
 
-	// delete backgroud
-	if err := namespaceedStore.Delete(ctx, exists, store.WithDeletePropagation(store.DeletePropagationBackground)); err != nil {
-		t.Fatalf("failed to delete object: %v", err)
+	// Complete foreground deletion after the garbage collector removes its finalizer.
+	store.RemoveFinalizer(exists, store.FinalizerDeleteDependents)
+	if err := namespaceedStore.Update(ctx, exists); err != nil {
+		t.Fatalf("failed to remove deletion finalizer: %v", err)
 	}
 	if err := namespaceedStore.Get(ctx, "test", exists); err != nil {
 		if !errors.IsNotFound(err) {

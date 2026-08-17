@@ -1,11 +1,34 @@
 package meta_test
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
 	"xiaoshiai.cn/common/meta"
 )
+
+func TestObjectMetadataResourceVersionJSON(t *testing.T) {
+	encoded, err := json.Marshal(meta.ObjectMetadata{ID: "object-1", ResourceVersion: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	written := map[string]any{}
+	if err := json.Unmarshal(encoded, &written); err != nil {
+		t.Fatal(err)
+	}
+	if written["resourceVersion"] != float64(7) {
+		t.Fatalf("metadata JSON = %s", encoded)
+	}
+
+	decoded := meta.ObjectMetadata{}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ResourceVersion != 7 {
+		t.Fatalf("resource version = %d", decoded.ResourceVersion)
+	}
+}
 
 func TestParseSearch(t *testing.T) {
 	tests := []struct {

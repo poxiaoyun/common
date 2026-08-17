@@ -3,7 +3,6 @@ package sql
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"net/url"
@@ -13,10 +12,8 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/go-sql-driver/mysql"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lib/pq"
-	"golang.org/x/exp/maps"
 	gormmysql "gorm.io/driver/mysql"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -78,8 +75,8 @@ func (o *Options) ConnectionString() string {
 	}
 }
 
-func NewGormStorage(ctx context.Context, scheme *store.Schema, options *Options) (*Storage, error) {
-	scheme, err := scheme.Clone()
+func NewGormStorage(ctx context.Context, schema *store.Schema, options *Options) (*Storage, error) {
+	schema, err := schema.Clone()
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +104,7 @@ func NewGormStorage(ctx context.Context, scheme *store.Schema, options *Options)
 		helper: NewStructHelper(),
 		driver: options.Driver,
 	}
-	storage := &Storage{core: core, schema: scheme}
+	storage := &Storage{core: core, schema: schema}
 	if err := storage.ensureSchema(ctx); err != nil {
 		return nil, err
 	}
@@ -174,6 +171,26 @@ type Storage struct {
 	conditions []store.Scope
 	core       *core
 	schema     *store.Schema
+}
+
+// Schema implements store.Store.
+func (s *Storage) Schema() *store.Schema {
+	return s.schema.Snapshot()
+}
+
+// Capabilities implements store.Store.
+func (s *Storage) Capabilities() store.Capabilities {
+	return store.Capabilities{
+		LabelSelector:    true,
+		FieldSelector:    true,
+		Search:           true,
+		Sort:             true,
+		Page:             true,
+		Projection:       true,
+		OptimisticLock:   true,
+		SecondaryIndexes: true,
+		UniqueIndexes:    true,
+	}
 }
 
 func (s *Storage) ensureSchema(ctx context.Context) error {
@@ -364,7 +381,11 @@ func (s *Storage) Status() store.StatusStorage {
 
 // Watch implements store.Store.
 func (s *Storage) Watch(ctx context.Context, obj store.ObjectList, opts ...store.WatchOption) (store.Watcher, error) {
-	return nil, errors.NewUnsupported("watch not supported on this storage")
+	options := store.WatchOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return nil, errors.NewUnsupported("sql store does not support watch")
 }
 
 func (s *Storage) Scope(conds ...store.Scope) store.Store {
@@ -498,19 +519,23 @@ func (c *core) count(ctx context.Context, scope []store.Scope, obj store.Object,
 	return int(count), nil
 }
 
-func (c *core) create(ctx context.Context, scopes []store.Scope, in store.Object, _ store.CreateOptions) error {
+func (c *core) create(ctx context.Context, scopes []store.Scope, in store.Object, options store.CreateOptions) error {
 	resource, err := store.GetResource(in)
 	if err != nil {
 		return err
 	}
-	id := in.GetID()
-	if id == "" {
-		id = uuid.New().String()
+	if options.TTL != 0 {
+		return errors.NewUnsupported("SQL store does not support TTL")
 	}
-	in.SetCreationTimestamp(meta.Now())
+	if options.DryRun {
+		return errors.NewUnsupported("SQL store does not support dry-run")
+	}
+	store.PrepareObjectForCreate(in, resource, scopes)
+	id := in.GetID()
+	in.SetResourceVersion(1)
 	save := c.helper.ToDriverValueMap(in)
 	for _, cond := range scopes {
-		save[cond.Resource] = cond.Name
+		save[store.ScopeResourceToFieldName(cond.Resource)] = cond.Name
 	}
 	if err := c.prepare(ctx, resource, nil).Create(save).Error; err != nil {
 		return mapSQLError(err, resource, id)
@@ -518,41 +543,11 @@ func (c *core) create(ctx context.Context, scopes []store.Scope, in store.Object
 	return nil
 }
 
-var statusAllowedKeys = []string{
-	"status",
-	"annotations",
-	"labels",
-	"finalizers",
-	"ownerReferences",
-}
-
 func (c *core) update(ctx context.Context, scope []store.Scope, into store.Object, status bool, options store.UpdateOptions) error {
-	resource, err := store.GetResource(into)
-	if err != nil {
-		return err
-	}
-	id := into.GetID()
-	if id == "" {
-		return NewEmptyIDStorageError(resource)
-	}
-	save := c.helper.ToDriverValueMap(into)
-	maps.DeleteFunc(save, func(key string, _ any) bool {
-		return status && !slices.Contains(statusAllowedKeys, key) || !status && key == "status"
+	requestedVersion := into.GetResourceVersion()
+	return c.replace(ctx, scope, into, options.LabelRequirements, options.FieldRequirements, status, requestedVersion, func(current, desired store.Object) error {
+		return store.CopyObject(into, desired)
 	})
-	for _, cond := range scope {
-		save[cond.Resource] = cond.Name
-	}
-	db := c.prepare(ctx, resource, scope).Where("id = ?", id)
-	if options.FieldRequirements != nil {
-		db = c.applyFields(db, options.FieldRequirements)
-	}
-	if options.LabelRequirements != nil {
-		db = c.applyLabels(db, options.LabelRequirements)
-	}
-	if err := db.Updates(save).Error; err != nil {
-		return mapSQLError(err, resource, id)
-	}
-	return nil
 }
 
 func (c *core) patchBatch(ctx context.Context, scope []store.Scope, list store.ObjectList, patch store.PatchBatch, options store.PatchBatchOptions) error {
@@ -560,51 +555,12 @@ func (c *core) patchBatch(ctx context.Context, scope []store.Scope, list store.O
 }
 
 func (c *core) patch(ctx context.Context, scope []store.Scope, into store.Object, patch store.Patch, status bool, options store.PatchOptions) error {
-	resource, err := store.GetResource(into)
-	if err != nil {
-		return err
-	}
-	id := into.GetID()
-	if id == "" {
-		return NewEmptyIDStorageError(resource)
-	}
-	patchData, err := patch.Data(into)
-	if err != nil {
-		return fmt.Errorf("get patch data: %w", err)
-	}
-	var update map[string]any
-	switch ptype := patch.Type(); ptype {
-	case store.PatchTypeJSONPatch:
-		patchlist := []map[string]any{}
-		if err := json.Unmarshal(patchData, &patchlist); err != nil {
-			return fmt.Errorf("invalid patch data: %w", err)
+	return c.replace(ctx, scope, into, options.LabelRequirements, options.FieldRequirements, status, 0, func(current, desired store.Object) error {
+		if err := store.CopyObject(current, desired); err != nil {
+			return err
 		}
-		jsonupdate, err := JsonPatchToUpdate(patchlist, nil, nil)
-		if err != nil {
-			return errors.NewBadRequest(fmt.Sprintf("invalid json patch data: %s, error: %v", string(patchData), err))
-		}
-		update = jsonupdate
-	case store.PatchTypeMergePatch:
-		patchmap := map[string]any{}
-		if err := json.Unmarshal(patchData, &patchmap); err != nil {
-			return fmt.Errorf("invalid patch data: %w", err)
-		}
-		update = patchmap
-	}
-	maps.DeleteFunc(update, func(key string, _ any) bool {
-		return status && !slices.Contains(statusAllowedKeys, key) || !status && key == "status"
+		return store.ApplyPatch(desired, into, patch)
 	})
-	db := c.prepare(ctx, resource, scope).Where("id = ?", id)
-	if options.FieldRequirements != nil {
-		db = c.applyFields(db, options.FieldRequirements)
-	}
-	if options.LabelRequirements != nil {
-		db = c.applyLabels(db, options.LabelRequirements)
-	}
-	if err := db.Updates(update).Error; err != nil {
-		return mapSQLError(err, resource, id)
-	}
-	return nil
 }
 
 var jsonPatchUnescape = strings.NewReplacer("~1", "/", "~0", "~")
@@ -689,19 +645,127 @@ func (c *core) delete(ctx context.Context, scope []store.Scope, into store.Objec
 		return NewEmptyIDStorageError(resource)
 	}
 
-	db := c.prepare(ctx, resource, scope)
-	if options.FieldRequirements != nil {
-		db = c.applyFields(db, options.FieldRequirements)
+	for {
+		current := store.NewObject(into)
+		if err := c.get(ctx, scope, id, current, store.GetOptions{}); err != nil {
+			return err
+		}
+		if err := store.ValidateDeletePreconditions(current, options.Preconditions); err != nil {
+			return err
+		}
+		if err := store.ValidateDeleteRequirements(current, options.LabelRequirements, options.FieldRequirements); err != nil {
+			return err
+		}
+		policy := store.DeletePropagationBackground
+		if options.PropagationPolicy != nil {
+			policy = *options.PropagationPolicy
+		}
+		if store.PrepareObjectForDelete(current, policy) {
+			if err := c.deleteCurrent(ctx, scope, current); err != nil {
+				if errors.IsConflict(err) {
+					continue
+				}
+				return err
+			}
+			return store.CopyObject(current, into)
+		}
+		current.SetResourceVersion(current.GetResourceVersion() + 1)
+		if err := c.saveCurrent(ctx, scope, current, current.GetResourceVersion()-1); err != nil {
+			if errors.IsConflict(err) {
+				continue
+			}
+			return err
+		}
+		return store.CopyObject(current, into)
 	}
-	if options.LabelRequirements != nil {
-		db = c.applyLabels(db, options.LabelRequirements)
+}
+
+func (c *core) replace(
+	ctx context.Context,
+	scope []store.Scope,
+	into store.Object,
+	labelRequirements store.Requirements,
+	fieldRequirements store.Requirements,
+	status bool,
+	requestedVersion int64,
+	change func(current, desired store.Object) error,
+) error {
+	resource, err := store.GetResource(into)
+	if err != nil {
+		return err
 	}
-	intoV := c.helper.ToDriverValueMap(into)
-	if err := db.Where("id = ?", id).Delete(intoV).Error; err != nil {
-		return mapSQLError(err, resource, id)
+	id := into.GetID()
+	if id == "" {
+		return NewEmptyIDStorageError(resource)
+	}
+	current := store.NewObject(into)
+	getOptions := store.GetOptions{
+		LabelRequirements: labelRequirements,
+		FieldRequirements: fieldRequirements,
+	}
+	if err := c.get(ctx, scope, id, current, getOptions); err != nil {
+		return err
+	}
+	if requestedVersion != 0 && requestedVersion != current.GetResourceVersion() {
+		return errors.NewConflict(resource, id, fmt.Errorf("resourceVersion %d does not match", requestedVersion))
+	}
+	desired := store.NewObject(into)
+	if err := change(current, desired); err != nil {
+		return err
+	}
+	completeDeletion, err := store.PrepareObjectForUpdate(current, desired, status)
+	if err != nil {
+		return err
+	}
+	if completeDeletion {
+		if err := c.deleteCurrent(ctx, scope, current); err != nil {
+			return err
+		}
+		return store.CopyObject(desired, into)
+	}
+	desired.SetResourceVersion(current.GetResourceVersion() + 1)
+	if err := c.saveCurrent(ctx, scope, desired, current.GetResourceVersion()); err != nil {
+		return err
+	}
+	return store.CopyObject(desired, into)
+}
+
+func (c *core) saveCurrent(ctx context.Context, scope []store.Scope, object store.Object, currentVersion int64) error {
+	resource, err := store.GetResource(object)
+	if err != nil {
+		return err
+	}
+	save := c.helper.ToDriverValueMap(object)
+	for _, condition := range scope {
+		save[store.ScopeResourceToFieldName(condition.Resource)] = condition.Name
+	}
+	db := c.prepare(ctx, resource, scope).
+		Where("id = ?", object.GetID()).
+		Where("resourceVersion = ?", currentVersion).
+		Updates(save)
+	if db.Error != nil {
+		return mapSQLError(db.Error, resource, object.GetID())
 	}
 	if db.RowsAffected == 0 {
-		return errors.NewNotFound(resource, id)
+		return errors.NewConflict(resource, object.GetID(), fmt.Errorf("object changed during update"))
+	}
+	return nil
+}
+
+func (c *core) deleteCurrent(ctx context.Context, scope []store.Scope, object store.Object) error {
+	resource, err := store.GetResource(object)
+	if err != nil {
+		return err
+	}
+	db := c.prepare(ctx, resource, scope).
+		Where("id = ?", object.GetID()).
+		Where("resourceVersion = ?", object.GetResourceVersion()).
+		Delete(c.helper.ToDriverValueMap(object))
+	if db.Error != nil {
+		return mapSQLError(db.Error, resource, object.GetID())
+	}
+	if db.RowsAffected == 0 {
+		return errors.NewConflict(resource, object.GetID(), fmt.Errorf("object changed during delete"))
 	}
 	return nil
 }
@@ -740,18 +804,17 @@ func (c *core) list(ctx context.Context, scope []store.Scope, list store.ObjectL
 
 	db := c.prepare(ctx, resource, scope)
 	if opts.Search != "" {
-		if len(opts.SearchFields) > 0 {
-			// search in specified fields
-			conditions := make([]string, 0, len(opts.SearchFields))
-			args := make([]any, 0, len(opts.SearchFields))
-			for _, field := range opts.SearchFields {
-				conditions = append(conditions, fmt.Sprintf("%s LIKE ?", c.quoteKey(field)))
-				args = append(args, fmt.Sprintf("%%%s%%", opts.Search))
-			}
-			db = db.Where(strings.Join(conditions, " OR "), args...)
-		} else {
-			db = db.Where("name like ?", fmt.Sprintf("%%%s%%", opts.Search))
+		searchFields := opts.SearchFields
+		if len(searchFields) == 0 {
+			searchFields = []string{"id", "name"}
 		}
+		conditions := make([]string, 0, len(searchFields))
+		args := make([]any, 0, len(searchFields))
+		for _, field := range searchFields {
+			conditions = append(conditions, fmt.Sprintf("LOWER(%s) LIKE ?", c.quoteKey(field)))
+			args = append(args, "%"+strings.ToLower(opts.Search)+"%")
+		}
+		db = db.Where(strings.Join(conditions, " OR "), args...)
 	}
 	if opts.FieldRequirements != nil {
 		db = c.applyFields(db, opts.FieldRequirements)
@@ -845,7 +908,7 @@ func (c *core) applyCondition(db *gorm.DB, key string, op store.Operator, vals [
 func (c *core) prepare(ctx context.Context, tablename string, scopes []store.Scope) *gorm.DB {
 	db := c.db.WithContext(ctx)
 	for _, cond := range scopes {
-		key, val := c.quoteKey(cond.Resource), cond.Name
+		key, val := c.quoteKey(store.ScopeResourceToFieldName(cond.Resource)), cond.Name
 		db = db.Where(key+" = ?", val)
 	}
 	return db.Table(tablename)

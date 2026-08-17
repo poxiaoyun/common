@@ -19,26 +19,43 @@ import (
 
 var _ store.PingableStore = &Client{}
 
-func NewRemoteStore(server *url.URL) *Client {
-	return &Client{cli: &httpclient.Client{
-		Server: server,
-		OnResponse: func(req *http.Request, resp *http.Response) error {
-			if resp.StatusCode < 400 {
-				return nil
-			}
-			body, _ := io.ReadAll(resp.Body)
-			statuserr := &errors.Status{}
-			if err := json.Unmarshal(body, statuserr); err == nil {
-				return statuserr
-			}
-			return errors.NewBadRequest(string(body))
+// NewRemoteStore creates a REST-backed Store using schema as its local resource
+// contract.
+func NewRemoteStore(server *url.URL, schema *store.Schema) *Client {
+	return &Client{
+		cli: &httpclient.Client{
+			Server: server,
+			OnResponse: func(req *http.Request, resp *http.Response) error {
+				if resp.StatusCode < 400 {
+					return nil
+				}
+				body, _ := io.ReadAll(resp.Body)
+				statuserr := &errors.Status{}
+				if err := json.Unmarshal(body, statuserr); err == nil {
+					return statuserr
+				}
+				return errors.NewBadRequest(string(body))
+			},
 		},
-	}}
+		schema: schema.Snapshot(),
+	}
 }
 
 type Client struct {
 	cli          *httpclient.Client
+	schema       *store.Schema
 	scopesPrefix string
+}
+
+// Schema implements store.Store.
+func (c *Client) Schema() *store.Schema {
+	return c.schema.Snapshot()
+}
+
+// Capabilities implements store.Store. Remote capabilities are conservative
+// until capability discovery is part of the REST protocol.
+func (c *Client) Capabilities() store.Capabilities {
+	return store.Capabilities{}
 }
 
 func (c *Client) Ping(ctx context.Context) error {
@@ -132,9 +149,6 @@ func (c Client) Create(ctx context.Context, obj store.Object, opts ...store.Crea
 	if options.TTL != 0 {
 		queries.Add("ttl", options.TTL.String())
 	}
-	if options.AutoIncrementOnName {
-		queries.Add("autoIncrementOnName", "true")
-	}
 	return c.cli.Post(c.getPath(resource, "")).Queries(queries).JSON(obj).Return(obj).Send(ctx)
 }
 
@@ -149,10 +163,28 @@ func (c Client) Delete(ctx context.Context, obj store.Object, opts ...store.Dele
 		o(&options)
 	}
 	queries := url.Values{}
+	if len(options.LabelRequirements) != 0 {
+		queries.Add("labelSelector", options.LabelRequirements.String())
+	}
+	if len(options.FieldRequirements) != 0 {
+		queries.Add("fieldSelector", options.FieldRequirements.String())
+	}
+	if options.Preconditions != nil {
+		if options.Preconditions.UID != nil {
+			queries.Add("uid", *options.Preconditions.UID)
+		}
+		if options.Preconditions.ResourceVersion != nil {
+			queries.Add("resourceVersion", strconv.FormatInt(*options.Preconditions.ResourceVersion, 10))
+		}
+	}
 	if options.PropagationPolicy != nil {
 		queries.Add("propagationPolicy", string(*options.PropagationPolicy))
 	}
-	return c.cli.Delete(c.getPath(resource, obj.GetID())).Queries(queries).Return(obj).Send(ctx)
+	return c.cli.
+		Delete(c.getPath(resource, obj.GetID())).
+		Queries(queries).
+		Return(obj).
+		Send(ctx)
 }
 
 // Get implements store.Store.
@@ -315,7 +347,7 @@ func (c Client) Scope(scope ...store.Scope) store.Store {
 	for _, s := range scope {
 		prefix += "/" + s.Resource + "/" + s.Name
 	}
-	return &Client{cli: c.cli, scopesPrefix: prefix}
+	return &Client{cli: c.cli, schema: c.schema, scopesPrefix: prefix}
 }
 
 func (s Client) update(ctx context.Context, obj store.Object, status bool, opts ...store.UpdateOption) error {

@@ -41,16 +41,60 @@ func ConvertPredicate(l store.Requirements, f store.Requirements) (storage.Selec
 }
 
 func requirementsToLabelsSelector(reqs store.Requirements) (labels.Selector, error) {
-	selector := labels.Everything()
-	for _, req := range reqs {
-		labelreq, err := labels.NewRequirement(req.Key, selection.Operator(req.Operator), store.AnyToStrings(req.Values))
-		if err != nil {
-			return nil, err
-		}
-		selector = selector.Add(*labelreq)
-	}
-	return selector, nil
+	return requirementLabelSelector{requirements: reqs}, nil
 }
+
+type requirementLabelSelector struct {
+	requirements store.Requirements
+}
+
+func (s requirementLabelSelector) Matches(values labels.Labels) bool {
+	for _, requirement := range s.requirements {
+		labelsMap := map[string]string{}
+		if values.Has(requirement.Key) {
+			labelsMap[requirement.Key] = values.Get(requirement.Key)
+		}
+		if !store.RequirementMatchLabels(requirement, labelsMap) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s requirementLabelSelector) Empty() bool { return len(s.requirements) == 0 }
+
+func (s requirementLabelSelector) String() string { return s.requirements.String() }
+
+func (s requirementLabelSelector) Add(requirements ...labels.Requirement) labels.Selector {
+	result := requirementLabelSelector{requirements: append(store.Requirements(nil), s.requirements...)}
+	for _, requirement := range requirements {
+		result.requirements = append(result.requirements, store.Requirement{
+			Key:      requirement.Key(),
+			Operator: store.Operator(requirement.Operator()),
+			Values:   store.StringsToAny(requirement.Values().List()),
+		})
+	}
+	return result
+}
+
+func (s requirementLabelSelector) Requirements() (labels.Requirements, bool) { return nil, true }
+
+func (s requirementLabelSelector) DeepCopySelector() labels.Selector {
+	return requirementLabelSelector{requirements: append(store.Requirements(nil), s.requirements...)}
+}
+
+func (s requirementLabelSelector) RequiresExactMatch(key string) (string, bool) {
+	for _, requirement := range s.requirements {
+		if requirement.Key == key &&
+			(requirement.Operator == store.Equals || requirement.Operator == store.DoubleEquals) &&
+			len(requirement.Values) == 1 {
+			return store.AnyToString(requirement.Values[0]), true
+		}
+	}
+	return "", false
+}
+
+var _ labels.Selector = requirementLabelSelector{}
 
 func requirementsToFieldsSelector(reqs store.Requirements) (fields.Selector, error) {
 	selectors := make([]fields.Selector, 0, len(reqs))

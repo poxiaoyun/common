@@ -6,15 +6,29 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/store"
+	"xiaoshiai.cn/common/store/storetest"
 )
+
+func TestStoreConformance(t *testing.T) {
+	capabilities := (&InMemory{}).Capabilities()
+	storetest.Run(t, storetest.Fixture{
+		Capabilities: capabilities,
+		New: func(t testing.TB, schema *store.Schema) (store.Store, error) {
+			return New(schema)
+		},
+	})
+}
 
 type user struct {
 	store.ObjectMeta `json:",inline"`
 	Email            string `json:"email,omitempty"`
 	Phone            string `json:"phone,omitempty"`
+	Enabled          bool   `json:"enabled,omitempty"`
+	Team             string `json:"team,omitempty"`
 }
 
 func (*user) ResourceName() string { return "users" }
@@ -137,5 +151,275 @@ func TestGetUsesNameArgument(t *testing.T) {
 	}
 	if got.ID != created.ID || got.Email != created.Email {
 		t.Fatalf("Get(%q) = %#v, want %#v", created.ID, got, created)
+	}
+}
+
+func TestListFiltersSortsAndPagesScopedObjects(t *testing.T) {
+	ctx := context.Background()
+	storage := newUserStore(t)
+	tenantA := storage.Scope(store.Scope{
+		Resource: "tenants",
+		Name:     "a",
+	})
+	tenantB := storage.Scope(store.Scope{
+		Resource: "tenants",
+		Name:     "b",
+	})
+	for _, item := range []struct {
+		storage store.Store
+		user    *user
+	}{
+		{
+			storage: tenantA,
+			user: &user{
+				ObjectMeta: store.ObjectMeta{
+					ID:   "alice",
+					Name: "Alice",
+				},
+				Email:   "alice@example.com",
+				Enabled: true,
+			},
+		},
+		{
+			storage: tenantA,
+			user: &user{
+				ObjectMeta: store.ObjectMeta{
+					ID:   "bob",
+					Name: "Bob",
+				},
+				Email:   "bob@example.com",
+				Enabled: true,
+			},
+		},
+		{
+			storage: tenantB,
+			user: &user{
+				ObjectMeta: store.ObjectMeta{
+					ID:   "carol",
+					Name: "Carol",
+				},
+				Email:   "carol@example.com",
+				Enabled: false,
+			},
+		},
+	} {
+		if err := item.storage.Create(ctx, item.user); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tenantUsers := &store.List[user]{}
+	if err := tenantA.List(ctx, tenantUsers); err != nil {
+		t.Fatal(err)
+	}
+	if len(tenantUsers.Items) != 2 {
+		t.Fatalf("tenant users = %#v, want two", tenantUsers.Items)
+	}
+	if got := tenantUsers.Items[0].Scopes; len(got) != 1 || got[0].Name != "a" {
+		t.Fatalf("tenant scopes = %#v, want tenant a", got)
+	}
+
+	allEnabled := &store.List[user]{}
+	if err := storage.List(
+		ctx,
+		allEnabled,
+		store.WithSubScopes(),
+		store.WithFieldRequirements(store.RequirementEqual("enabled", true)),
+		store.WithSort("name-"),
+		store.WithPageSize(1, 1),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if allEnabled.Total != 2 || len(allEnabled.Items) != 1 || allEnabled.Items[0].ID != "bob" {
+		t.Fatalf("enabled users = %#v, total = %d", allEnabled.Items, allEnabled.Total)
+	}
+}
+
+func TestPatchPersistsChangesAndUpdatesIndexes(t *testing.T) {
+	ctx := context.Background()
+	storage := newUserStore(t).Scope(store.Scope{
+		Resource: "tenants",
+		Name:     "a",
+	})
+	created := &user{
+		ObjectMeta: store.ObjectMeta{ID: "alice"},
+		Email:      "old@example.com",
+	}
+	if err := storage.Create(ctx, created); err != nil {
+		t.Fatal(err)
+	}
+	previousVersion := created.ResourceVersion
+	if err := storage.Patch(ctx, created, store.MapMergePatch{
+		"email": "new@example.com",
+		"phone": "1234",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if created.Email != "new@example.com" || created.Phone != "1234" {
+		t.Fatalf("patched user = %#v", created)
+	}
+	if created.ResourceVersion <= previousVersion {
+		t.Fatalf("resource version = %d, want greater than %d", created.ResourceVersion, previousVersion)
+	}
+
+	got := &user{}
+	if err := storage.Get(ctx, created.ID, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Email != "new@example.com" || got.Phone != "1234" {
+		t.Fatalf("stored user = %#v", got)
+	}
+	reused := &user{
+		ObjectMeta: store.ObjectMeta{ID: "bob"},
+		Email:      "old@example.com",
+	}
+	if err := storage.Create(ctx, reused); err != nil {
+		t.Fatalf("old index was not released: %v", err)
+	}
+}
+
+func TestCountAndBatchOperationsUseSelectors(t *testing.T) {
+	ctx := context.Background()
+	storage := newUserStore(t).Scope(store.Scope{
+		Resource: "tenants",
+		Name:     "a",
+	})
+	for _, item := range []*user{
+		{
+			ObjectMeta: store.ObjectMeta{ID: "alice"},
+			Email:      "alice@example.com",
+			Enabled:    true,
+		},
+		{
+			ObjectMeta: store.ObjectMeta{ID: "bob"},
+			Email:      "bob@example.com",
+			Enabled:    true,
+		},
+		{
+			ObjectMeta: store.ObjectMeta{ID: "carol"},
+			Email:      "carol@example.com",
+			Enabled:    false,
+		},
+	} {
+		if err := storage.Create(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count, err := storage.Count(
+		ctx,
+		&user{},
+		store.WithCountFieldRequirements(store.RequirementEqual("enabled", true)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("enabled count = %d, want 2", count)
+	}
+
+	if err := storage.PatchBatch(
+		ctx,
+		&store.List[user]{},
+		store.MapMergePatchBacth{"team": "platform"},
+		store.WithPatchBatchFieldRequirements(store.RequirementEqual("enabled", true)),
+	); err != nil {
+		t.Fatal(err)
+	}
+	patched := &store.List[user]{}
+	if err := storage.List(
+		ctx,
+		patched,
+		store.WithFieldRequirements(store.RequirementEqual("team", "platform")),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if patched.Total != 2 {
+		t.Fatalf("patched total = %d, want 2", patched.Total)
+	}
+
+	if err := storage.DeleteBatch(
+		ctx,
+		&store.List[user]{},
+		store.WithDeleteBatchFieldRequirements(store.RequirementEqual("email", "carol@example.com")),
+	); err != nil {
+		t.Fatal(err)
+	}
+	remaining := &store.List[user]{}
+	if err := storage.List(ctx, remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining.Total != 2 {
+		t.Fatalf("remaining total = %d, want 2", remaining.Total)
+	}
+}
+
+func TestWatchSendsInitialAndMutationEvents(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	storage := newUserStore(t).Scope(store.Scope{
+		Resource: "tenants",
+		Name:     "a",
+	})
+	existing := &user{
+		ObjectMeta: store.ObjectMeta{ID: "alice"},
+		Email:      "alice@example.com",
+		Enabled:    true,
+	}
+	if err := storage.Create(ctx, existing); err != nil {
+		t.Fatal(err)
+	}
+
+	watcher, err := storage.Watch(
+		ctx,
+		&store.List[user]{},
+		store.WithSendInitialEvents(),
+		store.WithWatchFieldRequirements(store.RequirementEqual("enabled", true)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watcher.Stop()
+	requireWatchEvent(t, watcher, store.WatchEventCreate, "alice")
+	requireWatchEvent(t, watcher, store.WatchEventBookmark, "")
+
+	created := &user{
+		ObjectMeta: store.ObjectMeta{ID: "bob"},
+		Email:      "bob@example.com",
+		Enabled:    true,
+	}
+	if err := storage.Create(ctx, created); err != nil {
+		t.Fatal(err)
+	}
+	requireWatchEvent(t, watcher, store.WatchEventCreate, "bob")
+	if err := storage.Patch(ctx, created, store.MapMergePatch{"phone": "1234"}); err != nil {
+		t.Fatal(err)
+	}
+	requireWatchEvent(t, watcher, store.WatchEventUpdate, "bob")
+	if err := storage.Delete(ctx, created); err != nil {
+		t.Fatal(err)
+	}
+	requireWatchEvent(t, watcher, store.WatchEventDelete, "bob")
+}
+
+func requireWatchEvent(t *testing.T, watcher store.Watcher, eventType store.WatchEventType, id string) {
+	t.Helper()
+	select {
+	case event := <-watcher.Events():
+		if event.Error != nil {
+			t.Fatal(event.Error)
+		}
+		if event.Type != eventType {
+			t.Fatalf("event type = %q, want %q", event.Type, eventType)
+		}
+		if id == "" {
+			return
+		}
+		item, ok := event.Object.(*user)
+		if !ok || item.ID != id {
+			t.Fatalf("event object = %#v, want user %q", event.Object, id)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for %q event", eventType)
 	}
 }

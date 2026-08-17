@@ -6,11 +6,9 @@ import (
 	stderrors "errors"
 	"fmt"
 	"reflect"
-	"slices"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -92,7 +90,7 @@ func NewETCD3Client(ctx context.Context, c *Options) (*kubernetes.Client, error)
 	return kubernetes.New(cfg)
 }
 
-func NewEtcdStore(ctx context.Context, scheme *store.Schema, c *Options) (*EtcdStore, error) {
+func NewEtcdStore(ctx context.Context, schema *store.Schema, c *Options) (*EtcdStore, error) {
 	client, err := NewETCD3Client(ctx, c)
 	if err != nil {
 		return nil, err
@@ -106,33 +104,33 @@ func NewEtcdStore(ctx context.Context, scheme *store.Schema, c *Options) (*EtcdS
 	if _, err := client.Get(timeouts, "health", kubernetes.GetOptions{}); err != nil {
 		return nil, fmt.Errorf("etcd server is not reachable: %v", err)
 	}
-	return NewEtcdStoreFromClient(client, scheme, c.KeyPrefix)
+	return NewEtcdStoreFromClient(client, schema, c.KeyPrefix)
 }
 
-func NewEtcdStoreFromClient(client *kubernetes.Client, scheme *store.Schema, keyPrefix string) (*EtcdStore, error) {
-	scheme, err := scheme.Clone()
+func NewEtcdStoreFromClient(client *kubernetes.Client, schema *store.Schema, keyPrefix string) (*EtcdStore, error) {
+	schema, err := schema.Clone()
 	if err != nil {
 		return nil, err
 	}
-	if err := validateSchema(scheme); err != nil {
+	if err := validateSchema(schema); err != nil {
 		return nil, err
 	}
-	return &EtcdStore{core: newEtcdStoreCore(client, scheme, keyPrefix)}, nil
+	return &EtcdStore{core: newEtcdStoreCore(client, schema, keyPrefix)}, nil
 }
 
-func newEtcdStoreCore(client *kubernetes.Client, scheme *store.Schema, keyPrefix string) *etcdStoreCore {
+func newEtcdStoreCore(client *kubernetes.Client, schema *store.Schema, keyPrefix string) *etcdStoreCore {
 	return &etcdStoreCore{
 		client:     client,
 		KeyPrefix:  keyPrefix,
-		schema:     scheme,
+		schema:     schema,
 		serializer: &store.JSONSerializer{},
 		leases:     newEtcd3LeaseManager(client, 0, 0, 0),
 	}
 }
 
-func validateSchema(scheme *store.Schema) error {
-	for _, resource := range scheme.Resources() {
-		definition, err := scheme.Resource(resource)
+func validateSchema(schema *store.Schema) error {
+	for _, resource := range schema.Resources() {
+		definition, err := schema.Resource(resource)
 		if err != nil {
 			return err
 		}
@@ -152,6 +150,25 @@ type EtcdStore struct {
 	core   *etcdStoreCore
 }
 
+// Schema implements store.Store.
+func (e *EtcdStore) Schema() *store.Schema {
+	return e.core.schema.Snapshot()
+}
+
+// Capabilities implements store.Store.
+func (e *EtcdStore) Capabilities() store.Capabilities {
+	return store.Capabilities{
+		LabelSelector:  true,
+		FieldSelector:  true,
+		Page:           true,
+		Continue:       true,
+		SubScopes:      true,
+		OptimisticLock: true,
+		Watch:          true,
+		TTL:            true,
+	}
+}
+
 func (e *EtcdStore) Ping(ctx context.Context) error {
 	_, err := e.core.client.KV.Get(ctx, e.core.KeyPrefix, clientv3.WithLimit(1))
 	return err
@@ -159,30 +176,36 @@ func (e *EtcdStore) Ping(ctx context.Context) error {
 
 // PatchBatch implements store.Store.
 func (e *EtcdStore) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
-	return errors.NewNotImplemented("etcd does not support batch patch")
+	return errors.NewUnsupported("etcd does not support batch patch")
 }
 
 // DeleteBatch implements store.Store.
 func (e *EtcdStore) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
-	return errors.NewNotImplemented("etcd does not support delete batch")
+	return errors.NewUnsupported("etcd does not support delete batch")
 }
 
 // Count implements Store.
 func (e *EtcdStore) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
+	options := store.CountOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
 	resource, err := store.GetResource(obj)
 	if err != nil {
 		return 0, err
 	}
-	preparedKey := e.core.getkey(e.scopes, resource, "")
-
-	getResp, err := e.core.client.KV.Get(ctx,
-		preparedKey,
-		clientv3.WithRange(clientv3.GetPrefixRangeEnd(preparedKey)),
-		clientv3.WithCountOnly())
-	if err != nil {
-		return 0, errors.NewInternalError(err)
+	list := &store.List[store.Unstructured]{Resource: resource}
+	listOptions := []store.ListOption{
+		store.WithLabelRequirements(options.LabelRequirements...),
+		store.WithFieldRequirements(options.FieldRequirements...),
 	}
-	return int(getResp.Count), nil
+	if options.IncludeSubScopes {
+		listOptions = append(listOptions, store.WithSubScopes())
+	}
+	if err := e.List(ctx, list, listOptions...); err != nil {
+		return 0, err
+	}
+	return len(list.Items), nil
 }
 
 // Create implements Store.
@@ -198,16 +221,10 @@ func (e *EtcdStore) Create(ctx context.Context, obj store.Object, opts ...store.
 	if err := e.core.validateObject(obj); err != nil {
 		return err
 	}
-	if obj.GetID() == "" {
-		return errors.NewBadRequest("id is required")
+	if creatoptions.DryRun {
+		return errors.NewUnsupported("etcd store does not support dry-run")
 	}
-	if obj.GetResourceVersion() != 0 {
-		return errors.NewInvalid(resource, obj.GetID(), ErrResourceVersionSetOnCreate)
-	}
-	obj.SetUID(uuid.New().String())
-	obj.SetCreationTimestamp(meta.Now())
-	obj.SetScopes(e.scopes)
-	obj.SetResource(resource)
+	store.PrepareObjectForCreate(obj, resource, e.scopes)
 
 	preparedKey := e.core.getkey(e.scopes, resource, obj.GetID())
 
@@ -247,10 +264,7 @@ func keyHasRevision(key string, rev int64) clientv3.Cmp {
 
 // Delete implements Store.
 func (e *EtcdStore) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
-	deleteoptions := &store.DeleteOptions{
-		// Default delete forgroud
-		PropagationPolicy: ptr.To(store.DeletePropagationForeground),
-	}
+	deleteoptions := &store.DeleteOptions{PropagationPolicy: ptr.To(store.DeletePropagationBackground)}
 	for _, opt := range opts {
 		opt(deleteoptions)
 	}
@@ -261,37 +275,39 @@ func (e *EtcdStore) Delete(ctx context.Context, obj store.Object, opts ...store.
 		return errors.NewBadRequest("name is required")
 	}
 
-	if obj.GetDeletionTimestamp() == nil {
-		obj.SetDeletionTimestamp(ptr.To(meta.Now()))
-	}
-	// update finalizers ac
-	if deleteoptions.PropagationPolicy != nil {
-		gcFinalizers := []string{}
-		switch *deleteoptions.PropagationPolicy {
-		case store.DeletePropagationForeground:
-			gcFinalizers = append(gcFinalizers, store.FinalizerDeleteDependents)
+	policy := ptr.Deref(deleteoptions.PropagationPolicy, store.DeletePropagationBackground)
+	for {
+		current := store.NewObject(obj)
+		if err := e.Get(ctx, obj.GetID(), current); err != nil {
+			return err
 		}
-		nogcFinalizers := slices.DeleteFunc(obj.GetFinalizers(), func(finalizer string) bool {
-			return finalizer == store.FinalizerDeleteDependents
-		})
-		obj.SetFinalizers(append(nogcFinalizers, gcFinalizers...))
-	}
-	if len(obj.GetFinalizers()) != 0 {
-		updatefunc := func(current store.Object) (store.Object, error) {
-			// if rev := deleteoptions.ResourceVersion; rev > 0 {
-			// 	if current.GetResourceVersion() != rev {
-			// 		return nil, errors.NewConflict(resource, obj.GetID(),
-			// 			fmt.Errorf("resourceVersion %d does not match", rev))
-			// 	}
-			// }
-			current.SetDeletionTimestamp(obj.GetDeletionTimestamp())
-			current.SetFinalizers(obj.GetFinalizers())
-			return current, nil
+		if err := store.ValidateDeletePreconditions(current, deleteoptions.Preconditions); err != nil {
+			return err
 		}
-		return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{UseUnstructured: true})
+		if err := store.ValidateDeleteRequirements(current, deleteoptions.LabelRequirements, deleteoptions.FieldRequirements); err != nil {
+			return err
+		}
+		if store.PrepareObjectForDelete(current, policy) {
+			if err := e.core.directDelete(ctx, e.scopes, current, current.GetResourceVersion()); err != nil {
+				if errors.IsConflict(err) {
+					continue
+				}
+				return err
+			}
+			return store.CopyObject(current, obj)
+		}
+		updatefunc := func(latest store.Object) (store.Object, error) {
+			if err := store.ValidateDeletePreconditions(latest, deleteoptions.Preconditions); err != nil {
+				return nil, err
+			}
+			if err := store.ValidateDeleteRequirements(latest, deleteoptions.LabelRequirements, deleteoptions.FieldRequirements); err != nil {
+				return nil, err
+			}
+			store.PrepareObjectForDelete(latest, policy)
+			return latest, nil
+		}
+		return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{})
 	}
-	// return e.core.directDelete(ctx, e.scopes, obj, deleteoptions.ResourceVersion)
-	return e.core.directDelete(ctx, e.scopes, obj, 0)
 }
 
 // Get implements Store.
@@ -309,7 +325,18 @@ func (e *EtcdStore) Get(ctx context.Context, name string, obj store.Object, opts
 	}
 	preparedKey := e.core.getkey(e.scopes, resource, name)
 	_, err = e.core.getCurrent(ctx, preparedKey, obj, obj.GetResourceVersion())
-	return err
+	if err != nil {
+		return err
+	}
+	unstructured, err := store.ToUnstructured(obj)
+	if err != nil {
+		return err
+	}
+	if !store.MatchLabelReqirements(obj, options.LabelRequirements) ||
+		!store.MatchUnstructuredFieldRequirments(unstructured, options.FieldRequirements) {
+		return errors.NewNotFound(resource, name)
+	}
+	return nil
 }
 
 const maxLimit = 10000
@@ -333,7 +360,7 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 	}
 	preparedKey := e.core.getlistkey(e.scopes, resource)
 	rangeEnd := clientv3.GetPrefixRangeEnd(preparedKey)
-	continueMode := options.Page == 0 || options.Continue != ""
+	continueMode := options.Continue != "" || options.Page == 0 && options.Size > 0
 	startKey := preparedKey
 	withRev := options.ResourceVersion
 	if continueMode && options.Continue != "" {
@@ -364,7 +391,7 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 		}
 		getResp, err := e.core.client.KV.Get(ctx, startKey, getoptions...)
 		if err != nil {
-			return interpretListError(resource, err)
+			return InterpretEtcdReadError(resource, err)
 		}
 		hasMore = getResp.More
 		if len(getResp.Kvs) == 0 && hasMore {
@@ -410,6 +437,19 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 			break
 		}
 		startKey = string(lastKey) + "\x00"
+	}
+
+	sorts := store.ParseSorts(options.Sort)
+	if len(sorts) == 1 && sorts[0].Field == "id" && sorts[0].Direction == meta.SortDirectionDesc {
+		for left, right := 0, v.Len()-1; left < right; left, right = left+1, right-1 {
+			leftItem := v.Index(left)
+			rightItem := v.Index(right)
+			leftCopy := reflect.New(leftItem.Type())
+			leftValue := leftCopy.Elem()
+			leftValue.Set(leftItem)
+			leftItem.Set(rightItem)
+			rightItem.Set(leftValue)
+		}
 	}
 
 	total := v.Len()
@@ -463,24 +503,17 @@ func (e *EtcdStore) Patch(ctx context.Context, obj store.Object, patch store.Pat
 		opt(options)
 	}
 	updatefunc := func(current store.Object) (store.Object, error) {
-		// backup status field
-		status, hashStatus, err := GetObjectField(obj, "Status")
-		if err != nil {
-			return nil, errors.NewBadRequest(err.Error())
-		}
-		// apply patch
-		if err := store.ApplyPatch(current, obj, patch); err != nil {
+		desired := store.NewObject(obj)
+		if err := store.CopyObject(current, desired); err != nil {
 			return nil, err
 		}
-		// restore status field
-		if hashStatus {
-			if _, err := SetObjectField(current, "Status", status); err != nil {
-				return nil, err
-			}
+		if err := store.ApplyPatch(desired, obj, patch); err != nil {
+			return nil, err
 		}
-		return current, nil
+		_, err := store.PrepareObjectForUpdate(current, desired, false)
+		return desired, err
 	}
-	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{UseUnstructured: true})
+	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{})
 }
 
 // Scope implements Store.
@@ -499,18 +532,23 @@ func (e *EtcdStore) Update(ctx context.Context, obj store.Object, opts ...store.
 	for _, opt := range opts {
 		opt(options)
 	}
+	requested := store.NewObject(obj)
+	if err := store.CopyObject(obj, requested); err != nil {
+		return err
+	}
 	updatefunc := func(current store.Object) (store.Object, error) {
-		if resourceVersion := obj.GetResourceVersion(); resourceVersion != 0 {
+		if resourceVersion := requested.GetResourceVersion(); resourceVersion != 0 {
 			if resourceVersion != current.GetResourceVersion() {
-				return nil, errors.NewConflict(current.GetResource(), obj.GetID(),
+				return nil, errors.NewConflict(current.GetResource(), requested.GetID(),
 					fmt.Errorf("resourceVersion %d does not match", resourceVersion))
 			}
 		}
-		// update the object expect status
-		if err := CopyField(obj, current, "Status"); err != nil {
+		desired := store.NewObject(requested)
+		if err := store.CopyObject(requested, desired); err != nil {
 			return nil, err
 		}
-		return obj, nil
+		_, err := store.PrepareObjectForUpdate(current, desired, false)
+		return desired, err
 	}
 	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{TTL: int64(options.TTL.Seconds())})
 }
@@ -529,24 +567,17 @@ func (e *EtcdStatusStore) Patch(ctx context.Context, obj store.Object, patch sto
 		opt(options)
 	}
 	updatefunc := func(current store.Object) (store.Object, error) {
-		// backup spec field
-		spec, hashSpec, err := GetObjectField(obj, "Spec")
-		if err != nil {
-			return nil, errors.NewBadRequest(err.Error())
-		}
-		//  apply patch
-		if err := store.ApplyPatch(current, obj, patch); err != nil {
+		desired := store.NewObject(obj)
+		if err := store.CopyObject(current, desired); err != nil {
 			return nil, err
 		}
-		// restore spec field
-		if hashSpec {
-			if _, err := SetObjectField(current, "Spec", spec); err != nil {
-				return nil, err
-			}
+		if err := store.ApplyPatch(desired, obj, patch); err != nil {
+			return nil, err
 		}
-		return current, nil
+		_, err := store.PrepareObjectForUpdate(current, desired, true)
+		return desired, err
 	}
-	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{UseUnstructured: true})
+	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{})
 }
 
 // Update implements StatusStorage.
@@ -559,18 +590,23 @@ func (e *EtcdStatusStore) Update(ctx context.Context, obj store.Object, opts ...
 	for _, opt := range opts {
 		opt(options)
 	}
+	requested := store.NewObject(obj)
+	if err := store.CopyObject(obj, requested); err != nil {
+		return err
+	}
 	updatefunc := func(current store.Object) (store.Object, error) {
-		if resourceVersion := obj.GetResourceVersion(); resourceVersion != 0 {
+		if resourceVersion := requested.GetResourceVersion(); resourceVersion != 0 {
 			if resourceVersion != current.GetResourceVersion() {
-				return nil, errors.NewConflict(resource, obj.GetID(),
+				return nil, errors.NewConflict(resource, requested.GetID(),
 					fmt.Errorf("resourceVersion %d does not match", resourceVersion))
 			}
 		}
-		// update the object expect spec
-		if err := CopyField(obj, current, "Spec"); err != nil {
+		desired := store.NewObject(requested)
+		if err := store.CopyObject(requested, desired); err != nil {
 			return nil, err
 		}
-		return obj, nil
+		_, err := store.PrepareObjectForUpdate(current, desired, true)
+		return desired, err
 	}
 	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{TTL: int64(options.TTL.Seconds())})
 }
@@ -633,8 +669,7 @@ func (e *etcdStoreCore) getkey(scopes []store.Scope, resource, name string) stri
 }
 
 type tryUpdateOptions struct {
-	TTL             int64
-	UseUnstructured bool
+	TTL int64
 }
 
 type tryUpdateFunc func(current store.Object) (store.Object, error)
@@ -653,12 +688,8 @@ func (e *etcdStoreCore) tryUpdate(ctx context.Context, scopes []store.Scope, obj
 		return err
 	}
 
-	var current store.Object
-	if options.UseUnstructured {
-		current = &store.Unstructured{}
-	} else {
-		current = reflect.New(v.Type()).Interface().(store.Object)
-	}
+	currentValue := reflect.New(v.Type())
+	current := currentValue.Interface().(store.Object)
 
 	preparedKey := e.getkey(scopes, resource, id)
 
@@ -666,11 +697,7 @@ func (e *etcdStoreCore) tryUpdate(ctx context.Context, scopes []store.Scope, obj
 	if err != nil {
 		return err
 	}
-	maxRetries := 5
 	for {
-		if maxRetries == 0 {
-			return errors.NewConflict(resource, id, fmt.Errorf("max retries reached"))
-		}
 		currentversion := current.GetResourceVersion()
 		updated, err := do(current)
 		if err != nil {
@@ -682,23 +709,20 @@ func (e *etcdStoreCore) tryUpdate(ctx context.Context, scopes []store.Scope, obj
 		if updated.GetID() != id {
 			return errors.NewBadRequest("id cannot be changed")
 		}
-		updated.SetResourceVersion(0)
-		data, err := e.serializer.Encode(updated)
-		if err != nil {
-			return errors.NewInternalError(err)
-		}
-		if !bytes.Equal(data, currentdata) {
-			putopts, err := e.ttlOpts(ctx, options.TTL)
-			if err != nil {
-				return err
-			}
-			txnResp, err := e.client.KV.Txn(ctx).If(
-				keyHasRevision(preparedKey, currentversion),
-			).Then(
-				clientv3.OpPut(preparedKey, string(data), putopts...),
-			).Else(
-				clientv3.OpGet(preparedKey),
-			).Commit()
+		completeDeletion := current.GetDeletionTimestamp() != nil && len(updated.GetFinalizers()) == 0
+		if completeDeletion {
+			txn := e.client.KV.Txn(ctx)
+			txnResp, err := txn.
+				If(
+					keyHasRevision(preparedKey, currentversion),
+				).
+				Then(
+					clientv3.OpDelete(preparedKey),
+				).
+				Else(
+					clientv3.OpGet(preparedKey),
+				).
+				Commit()
 			if err != nil {
 				return errors.NewInternalError(err)
 			}
@@ -709,11 +733,51 @@ func (e *etcdStoreCore) tryUpdate(ctx context.Context, scopes []store.Scope, obj
 					return err
 				}
 				currentdata = newcurrent
-				maxRetries--
+				continue
+			}
+			if err := store.CopyObject(updated, obj); err != nil {
+				return errors.NewInternalError(err)
+			}
+			obj.SetResourceVersion(txnResp.Header.Revision)
+			return nil
+		}
+		updated.SetResourceVersion(0)
+		data, err := e.serializer.Encode(updated)
+		if err != nil {
+			return errors.NewInternalError(err)
+		}
+		if !bytes.Equal(data, currentdata) {
+			putopts, err := e.ttlOpts(ctx, options.TTL)
+			if err != nil {
+				return err
+			}
+			txn := e.client.KV.Txn(ctx)
+			txnResp, err := txn.
+				If(
+					keyHasRevision(preparedKey, currentversion),
+				).
+				Then(
+					clientv3.OpPut(preparedKey, string(data), putopts...),
+				).
+				Else(
+					clientv3.OpGet(preparedKey),
+				).
+				Commit()
+			if err != nil {
+				return errors.NewInternalError(err)
+			}
+			if !txnResp.Succeeded {
+				getResp := (*clientv3.GetResponse)(txnResp.Responses[0].GetResponseRange())
+				newcurrent, err := e.decodeGetResp(getResp, current, 0)
+				if err != nil {
+					return err
+				}
+				currentdata = newcurrent
 				continue
 			}
 			currentversion = txnResp.Responses[0].GetResponsePut().Header.Revision
 		}
+		store.ResetObject(obj)
 		if err := e.serializer.Decode(data, obj); err != nil {
 			return errors.NewInternalError(err)
 		}

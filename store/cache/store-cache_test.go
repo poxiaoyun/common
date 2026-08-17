@@ -2,7 +2,9 @@ package cache
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"k8s.io/apiserver/pkg/storage/etcd3/testserver"
 	"k8s.io/utils/ptr"
@@ -10,6 +12,101 @@ import (
 	"xiaoshiai.cn/common/store"
 	"xiaoshiai.cn/common/store/etcd"
 )
+
+func TestCacheStoreRebuildsFromInitialWatchAfterDisconnect(t *testing.T) {
+	upstream := &initialWatchStore{
+		first:   make(chan store.WatchEvent, 2),
+		second:  make(chan store.WatchEvent, 1),
+		started: make(chan struct{}),
+	}
+	stale := &store.Unstructured{Object: map[string]any{
+		"id":              "stale",
+		"uid":             "stale-uid",
+		"resource":        "testobjects",
+		"resourceVersion": int64(1),
+	}}
+	upstream.first <- store.WatchEvent{Type: store.WatchEventCreate, Object: stale}
+	upstream.first <- store.WatchEvent{Type: store.WatchEventBookmark}
+	upstream.second <- store.WatchEvent{Type: store.WatchEventBookmark}
+
+	cacheStore := NewCacheStore(upstream)
+	list := &store.List[TestObject]{}
+	if err := cacheStore.List(t.Context(), list); err != nil {
+		t.Fatalf("initial List() error = %v", err)
+	}
+	if len(list.Items) != 1 || list.Items[0].ID != "stale" {
+		t.Fatalf("initial List() items = %#v, want stale object", list.Items)
+	}
+
+	close(upstream.first)
+	select {
+	case <-upstream.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cache did not restart initial Watch")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		list = &store.List[TestObject]{}
+		if err := cacheStore.List(t.Context(), list); err != nil {
+			t.Fatalf("rebuilt List() error = %v", err)
+		}
+		if len(list.Items) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rebuilt List() items = %#v, want empty authoritative snapshot", list.Items)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	upstream.mu.Lock()
+	defer upstream.mu.Unlock()
+	for index, options := range upstream.options {
+		if !options.SendInitialEvents || !options.IncludeSubScopes || options.ResourceVersion != nil {
+			t.Fatalf("Watch call %d options = %#v, want initial events without resourceVersion", index+1, options)
+		}
+	}
+}
+
+type initialWatchStore struct {
+	store.Store
+	mu      sync.Mutex
+	first   chan store.WatchEvent
+	second  chan store.WatchEvent
+	started chan struct{}
+	options []store.WatchOptions
+}
+
+func (*initialWatchStore) Capabilities() store.Capabilities {
+	return store.Capabilities{Watch: true}
+}
+
+func (s *initialWatchStore) Watch(_ context.Context, _ store.ObjectList, opts ...store.WatchOption) (store.Watcher, error) {
+	options := store.WatchOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	s.mu.Lock()
+	s.options = append(s.options, options)
+	call := len(s.options)
+	s.mu.Unlock()
+	if call == 1 {
+		return &initialWatcher{events: s.first}, nil
+	}
+	if call == 2 {
+		close(s.started)
+	}
+	return &initialWatcher{events: s.second}, nil
+}
+
+type initialWatcher struct {
+	events <-chan store.WatchEvent
+}
+
+func (*initialWatcher) Stop() {}
+
+func (w *initialWatcher) Events() <-chan store.WatchEvent { return w.events }
 
 func SetupEtcdTestEtcdStore(t *testing.T) (context.Context, store.Store, func() error) {
 	client := testserver.RunEtcd(t, nil)

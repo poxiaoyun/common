@@ -119,18 +119,24 @@ func (s *Schema) NewObject(resource string) (Object, error) {
 	return object, nil
 }
 
-// Clone returns an independent snapshot suitable for store construction.
-func (s *Schema) Clone() (*Schema, error) {
-	if s == nil {
-		return nil, fmt.Errorf("schema is nil")
-	}
+// Snapshot returns an independent copy of the schema.
+func (s *Schema) Snapshot() *Schema {
 	clone := NewSchema()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for resource, definition := range s.resources {
 		clone.resources[resource] = cloneResourceSchema(definition)
 	}
-	return clone, nil
+	return clone
+
+}
+
+// Clone returns an independent snapshot suitable for store construction.
+func (s *Schema) Clone() (*Schema, error) {
+	if s == nil {
+		return nil, fmt.Errorf("schema is nil")
+	}
+	return s.Snapshot(), nil
 }
 
 func normalizeResourceSchema(resource string, definition ResourceSchema) (ResourceSchema, error) {

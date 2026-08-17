@@ -46,9 +46,9 @@ type ListOptions struct {
 	// search="name:test,description:demo" will match objects with name contains "test" or description contains "demo"
 	// see [ParseSearch]
 	Search string `json:"search,omitempty"`
-	// Sort is the sort order of the list.  The format is a comma separated list of fields, optionally
-	// prefixed by "+" or "-".  The default is "+metadata.name", which sorts by the object's name.
-	// For example, "-metadata.name,metadata.creationTimestamp" sorts first by descending name, and then by
+	// Sort is the sort order of the list. The format is a comma-separated list of fields, optionally
+	// suffixed by "+" or "-". The default is "metadata.name+", which sorts by the object's name.
+	// For example, "metadata.name-,metadata.creationTimestamp+" sorts first by descending name, and then by
 	// ascending creation timestamp.
 	// name is alias for metadata.name
 	// time is alias for metadata.creationTimestamp
@@ -78,8 +78,8 @@ type SortField struct {
 	Direction SortDirection `json:"direction,omitempty"`
 }
 
-// ParseSort parses a sort query string. Prefix directions ("-name,+time")
-// are preferred; the historical suffix form ("name-,time+") is also accepted.
+// ParseSort parses a sort query string. Directions follow the field name,
+// such as "name-,time+". The prefix form "-name,+time" is also accepted.
 func ParseSort(sort string) []SortField {
 	if sort == "" {
 		return nil
@@ -99,8 +99,7 @@ func ParseSort(sort string) []SortField {
 			direction = SortDirectionAsc
 			s = s[1:]
 		}
-		// Keep accepting the historical suffix form ("name-") while the
-		// documented and preferred form is the prefix form ("-name").
+		// Parse the standard suffix form, such as "name-".
 		if direction == SortDirectionUnknown && s != "" {
 			switch s[len(s)-1] {
 			case '-':
@@ -172,6 +171,8 @@ type ObjectMetadata struct {
 	Name string `json:"name,omitempty"`
 	// CreationTimestamp is the creation timestamp of the object
 	CreationTimestamp Time `json:"creationTimestamp,omitempty"`
+	// ResourceVersion identifies the persisted version used for concurrency.
+	ResourceVersion int64 `json:"resourceVersion,omitempty"`
 	// DeletionTimestamp is the deletion timestamp of the object
 	DeletionTimestamp *Time `json:"deletionTimestamp,omitempty"`
 	// Labels is a set of key/value labels for the object
@@ -180,4 +181,10 @@ type ObjectMetadata struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 	// Description is the description of the object
 	Description string `json:"description,omitempty"`
+}
+
+// Preconditions restrict a mutation to a caller-observed object version.
+type Preconditions struct {
+	// ResourceVersion is optional; zero means no caller-supplied version condition.
+	ResourceVersion int64
 }

@@ -3,14 +3,15 @@ package etcd
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
+	"slices"
 
 	etcdrpc "go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/sync/errgroup"
 	grpccodes "google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
-	"k8s.io/utils/ptr"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
@@ -39,6 +40,30 @@ func (e *EtcdStore) Watch(ctx context.Context, obj store.ObjectList, opts ...sto
 	if err != nil {
 		return nil, err
 	}
+	key := e.core.getlistkey(e.scopes, resource)
+	recursive := true
+	if options.ID != "" {
+		key = e.core.getkey(e.scopes, resource, options.ID)
+		recursive = false
+	}
+	initialRev := int64(0)
+	if options.ResourceVersion != nil {
+		initialRev = *options.ResourceVersion
+	}
+	watchCtx := clientv3.WithRequireLeader(ctx)
+	if initialRev > 0 || !options.SendInitialEvents {
+		getOptions := []clientv3.OpOption{clientv3.WithLimit(1)}
+		if initialRev > 0 {
+			getOptions = append(getOptions, clientv3.WithRev(initialRev))
+		}
+		response, err := e.core.client.KV.Get(watchCtx, key, getOptions...)
+		if err != nil {
+			return nil, InterpretEtcdReadError(resource, err)
+		}
+		if initialRev == 0 {
+			initialRev = response.Header.Revision
+		}
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	w := &etcdWatcher{
 		core:              e.core,
@@ -46,15 +71,17 @@ func (e *EtcdStore) Watch(ctx context.Context, obj store.ObjectList, opts ...sto
 		fieldSelector:     options.FieldRequirements,
 		newItemFunc:       newItemFunc,
 		resource:          resource,
-		key:               e.core.getlistkey(e.scopes, resource),
+		key:               key,
+		recursive:         recursive,
+		scopes:            slices.Clone(e.scopes),
 		includesubscopes:  options.IncludeSubScopes,
-		initialRev:        ptr.Deref(options.ResourceVersion, 0),
+		sendInitialEvents: options.SendInitialEvents,
+		initialRev:        initialRev,
 		cancel:            cancel,
 		resultChan:        make(chan store.WatchEvent, outgoingEventChanSize),
 		incomingEventChan: make(chan *etcdEvent, incomingEventChanSize),
 	}
-	ctx = clientv3.WithRequireLeader(ctx)
-	go w.run(ctx)
+	go w.run(clientv3.WithRequireLeader(ctx))
 	return w, nil
 }
 
@@ -67,18 +94,23 @@ type etcdWatcher struct {
 
 	resource          string
 	key               string
+	recursive         bool
+	scopes            []store.Scope
 	includesubscopes  bool
+	sendInitialEvents bool
 	initialRev        int64
 	resultChan        chan store.WatchEvent
 	incomingEventChan chan *etcdEvent
 }
 
 type etcdEvent struct {
-	val        []byte
-	rev        int64
-	isCreate   bool
-	isDelete   bool
-	isBookmark bool
+	oldValue        []byte
+	newValue        []byte
+	oldRevision     int64
+	newRevision     int64
+	checkpoint      int64
+	isBookmark      bool
+	bookmarkVersion int64
 }
 
 func (w *etcdWatcher) Stop() {
@@ -93,8 +125,12 @@ func (w *etcdWatcher) sendError(ctx context.Context, err error) {
 	if IsCancelError(err) {
 		return
 	}
+	eventError := err
+	if errors.ReasonForError(err) == errors.StatusReasonUnknown {
+		eventError = errors.NewInternalError(err)
+	}
 	select {
-	case w.resultChan <- store.WatchEvent{Error: errors.NewInternalError(err)}:
+	case w.resultChan <- store.WatchEvent{Error: eventError}:
 	case <-ctx.Done():
 	}
 }
@@ -111,6 +147,7 @@ func (w *etcdWatcher) sendEvent(ctx context.Context, e *etcdEvent) {
 }
 
 func (w *etcdWatcher) run(ctx context.Context) {
+	defer close(w.resultChan)
 	eg, egctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
 		return w.processEvent(egctx)
@@ -128,44 +165,52 @@ func (w *etcdWatcher) run(ctx context.Context) {
 }
 
 func (w *etcdWatcher) listwatch(ctx context.Context) error {
-	// list
-	if err := w.list(ctx); err != nil {
-		return err
+	if w.sendInitialEvents {
+		if err := w.list(ctx); err != nil {
+			return err
+		}
+		w.sendEvent(ctx, &etcdEvent{isBookmark: true, bookmarkVersion: w.initialRev})
 	}
-	// send bookmark once list is done
-	w.sendEvent(ctx, &etcdEvent{isBookmark: true})
 
-	// watch
 	opts := []clientv3.OpOption{
 		clientv3.WithRev(w.initialRev + 1),
 		clientv3.WithPrevKV(),
-		clientv3.WithPrefix(),
+	}
+	if w.recursive {
+		opts = append(opts, clientv3.WithPrefix())
 	}
 	watchCh := w.core.client.Watch(ctx, w.key, opts...)
 	for wres := range watchCh {
 		if err := wres.Err(); err != nil {
-			return err
+			return InterpretEtcdReadError(w.resource, err)
 		}
 		for _, ev := range wres.Events {
 			e := &etcdEvent{
-				rev:      ev.Kv.ModRevision,
-				val:      ev.Kv.Value,
-				isCreate: ev.IsCreate(),
-				isDelete: ev.Type == clientv3.EventTypeDelete,
+				newValue:    ev.Kv.Value,
+				newRevision: ev.Kv.ModRevision,
+				checkpoint:  ev.Kv.ModRevision,
 			}
-			if e.isDelete && ev.PrevKv != nil {
-				e.val = ev.PrevKv.Value
+			if ev.PrevKv != nil {
+				e.oldValue = ev.PrevKv.Value
+				e.oldRevision = ev.PrevKv.ModRevision
+			}
+			if ev.Type == clientv3.EventTypeDelete {
+				e.newValue = nil
+				e.newRevision = 0
 			}
 			w.sendEvent(ctx, e)
 		}
 	}
-	return nil
+	if ctx.Err() != nil {
+		return nil
+	}
+	return fmt.Errorf("etcd watch channel closed")
 }
 
 func (w *etcdWatcher) list(ctx context.Context) error {
-	opts := []clientv3.OpOption{
-		clientv3.WithLimit(maxLimit),
-		clientv3.WithRange(clientv3.GetPrefixRangeEnd(w.key)),
+	opts := []clientv3.OpOption{clientv3.WithLimit(maxLimit)}
+	if w.recursive {
+		opts = append(opts, clientv3.WithRange(clientv3.GetPrefixRangeEnd(w.key)))
 	}
 	if w.initialRev != 0 {
 		opts = append(opts, clientv3.WithRev(w.initialRev))
@@ -179,7 +224,7 @@ func (w *etcdWatcher) list(ctx context.Context) error {
 	for {
 		getResp, err = w.core.client.KV.Get(ctx, continuekey, opts...)
 		if err != nil {
-			return interpretListError(w.resource, err)
+			return InterpretEtcdReadError(w.resource, err)
 		}
 		if len(getResp.Kvs) == 0 && getResp.More {
 			return errors.NewInternalError(fmt.Errorf("no results were found, but etcd indicated there were more values remaining"))
@@ -197,11 +242,7 @@ func (w *etcdWatcher) list(ctx context.Context) error {
 				}
 			}
 			lastKey = kv.Key
-			e := &etcdEvent{
-				val:      kv.Value,
-				rev:      kv.ModRevision,
-				isCreate: true,
-			}
+			e := &etcdEvent{newValue: kv.Value, newRevision: kv.ModRevision}
 			w.sendEvent(ctx, e)
 			// free kv early. Long lists can take O(seconds) to decode.
 			getResp.Kvs[i] = nil
@@ -210,14 +251,20 @@ func (w *etcdWatcher) list(ctx context.Context) error {
 		if !getResp.More {
 			return nil
 		}
+		if !w.recursive {
+			return nil
+		}
 		continuekey = string(lastKey) + "\x00"
 	}
 }
 
-func interpretListError(resource string, err error) error {
+// InterpretEtcdReadError maps etcd revision failures to the Store error model.
+func InterpretEtcdReadError(resource string, err error) error {
 	switch {
-	case err == etcdrpc.ErrCompacted:
-		return errors.NewResourceExpired(resource, "version is compacted")
+	case stderrors.Is(err, etcdrpc.ErrCompacted):
+		return errors.NewResourceExpired(resource, "watch version is compacted")
+	case stderrors.Is(err, etcdrpc.ErrFutureRev):
+		return errors.NewResourceExpired(resource, "watch version is in the future")
 	}
 	return errors.NewInternalError(err)
 }
@@ -253,37 +300,60 @@ func (w *etcdWatcher) processEvent(ctx context.Context) error {
 
 func (w *etcdWatcher) parseEvent(e *etcdEvent) (*store.WatchEvent, error) {
 	if e.isBookmark {
-		return &store.WatchEvent{Type: store.WatchEventBookmark}, nil
+		return &store.WatchEvent{Type: store.WatchEventBookmark, ResourceVersion: e.bookmarkVersion}, nil
 	}
-	obj := w.newItemFunc()
-	if err := w.core.serializer.Decode(e.val, obj); err != nil {
-		return nil, err
-	}
-	obj.SetResourceVersion(e.rev)
-
-	// filter by label selector
-	if !store.MatchLabelReqirements(obj, w.labelSelector) {
-		return nil, nil
-	}
-	matchesFields, err := matchFieldRequirements(obj, w.fieldSelector)
+	old, err := w.decodeObject(e.oldValue, e.oldRevision)
 	if err != nil {
 		return nil, err
 	}
-	if !matchesFields {
+	new, err := w.decodeObject(e.newValue, e.newRevision)
+	if err != nil {
+		return nil, err
+	}
+	oldMatches, err := w.matches(old)
+	if err != nil {
+		return nil, err
+	}
+	newMatches, err := w.matches(new)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case !oldMatches && newMatches:
+		return &store.WatchEvent{Type: store.WatchEventCreate, Object: new, ResourceVersion: e.checkpoint}, nil
+	case oldMatches && newMatches:
+		return &store.WatchEvent{Type: store.WatchEventUpdate, Object: new, ResourceVersion: e.checkpoint}, nil
+	case oldMatches && !newMatches:
+		return &store.WatchEvent{Type: store.WatchEventDelete, Object: old, ResourceVersion: e.checkpoint}, nil
+	default:
 		return nil, nil
 	}
+}
 
-	eventType := store.WatchEventUpdate
-	if e.isDelete {
-		eventType = store.WatchEventDelete
-	} else if e.isCreate {
-		eventType = store.WatchEventCreate
+func (w *etcdWatcher) decodeObject(value []byte, revision int64) (store.Object, error) {
+	if len(value) == 0 {
+		return nil, nil
 	}
-	event := store.WatchEvent{
-		Object: obj,
-		Type:   eventType,
+	object := w.newItemFunc()
+	if err := w.core.serializer.Decode(value, object); err != nil {
+		return nil, err
 	}
-	return &event, nil
+	object.SetResourceVersion(revision)
+	return object, nil
+}
+
+func (w *etcdWatcher) matches(obj store.Object) (bool, error) {
+	if obj == nil || !store.MatchLabelReqirements(obj, w.labelSelector) {
+		return false, nil
+	}
+	if w.includesubscopes {
+		if !store.ScopesIsSameOrUnder(obj.GetScopes(), w.scopes) {
+			return false, nil
+		}
+	} else if !store.ScopesEquals(obj.GetScopes(), w.scopes) {
+		return false, nil
+	}
+	return matchFieldRequirements(obj, w.fieldSelector)
 }
 
 func matchFieldRequirements(obj store.Object, requirements store.Requirements) (bool, error) {

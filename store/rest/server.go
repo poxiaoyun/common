@@ -162,10 +162,7 @@ func (s *Server) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		obj.SetResource(ref.Resource)
 
-		options := store.CreateOptions{
-			TTL:                 api.Query(r, "ttl", time.Duration(0)),
-			AutoIncrementOnName: api.Query(r, "autoIncrementOnName", false),
-		}
+		options := store.CreateOptions{TTL: api.Query(r, "ttl", time.Duration(0))}
 		if err := s.Store.Scope(ref.Scopes...).Create(ctx, obj, func(co *store.CreateOptions) {
 			*co = options
 		}); err != nil {
@@ -301,7 +298,29 @@ func (s *Server) Delete(w http.ResponseWriter, r *http.Request) {
 			}
 			return list, nil
 		}
-		options := store.DeleteOptions{}
+		labelRequirements, fieldRequirements, err := decodeSelector(r)
+		if err != nil {
+			return nil, err
+		}
+		options := store.DeleteOptions{
+			LabelRequirements: labelRequirements,
+			FieldRequirements: fieldRequirements,
+		}
+		uid, uidProvided := r.URL.Query()["uid"]
+		resourceVersion, resourceVersionProvided := r.URL.Query()["resourceVersion"]
+		if uidProvided || resourceVersionProvided {
+			options.Preconditions = &store.Preconditions{}
+		}
+		if uidProvided {
+			options.Preconditions.UID = &uid[0]
+		}
+		if resourceVersionProvided {
+			parsed, err := strconv.ParseInt(resourceVersion[0], 10, 64)
+			if err != nil {
+				return nil, errors.NewBadRequest("resourceVersion must be an integer")
+			}
+			options.Preconditions.ResourceVersion = &parsed
+		}
 		if propagationPolicy := api.Query(r, "propagationPolicy", ""); propagationPolicy != "" {
 			policy := store.DeletionPropagation(propagationPolicy)
 			options.PropagationPolicy = &policy
@@ -309,7 +328,8 @@ func (s *Server) Delete(w http.ResponseWriter, r *http.Request) {
 		obj := &store.Unstructured{}
 		obj.SetResource(ref.Resource)
 		obj.SetID(ref.ID)
-		if err := s.Store.Scope(ref.Scopes...).Delete(ctx, obj, func(do *store.DeleteOptions) {
+		storage := s.Store.Scope(ref.Scopes...)
+		if err := storage.Delete(ctx, obj, func(do *store.DeleteOptions) {
 			*do = options
 		}); err != nil {
 			return nil, err

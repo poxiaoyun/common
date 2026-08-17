@@ -15,7 +15,20 @@ type optionCaptureStore struct {
 	store.Store
 	listOptions       store.ListOptions
 	patchBatchOptions store.PatchBatchOptions
+	deleteOptions     store.DeleteOptions
 }
+
+type remoteSchemaObject struct {
+	store.ObjectMeta `json:",inline"`
+}
+
+func (*remoteSchemaObject) ResourceName() string { return "remote-schema-tests" }
+
+type remoteSchemaMutationObject struct {
+	store.ObjectMeta `json:",inline"`
+}
+
+func (*remoteSchemaMutationObject) ResourceName() string { return "remote-schema-mutations" }
 
 func (s *optionCaptureStore) Scope(...store.Scope) store.Store {
 	return s
@@ -40,16 +53,28 @@ func (s *optionCaptureStore) PatchBatch(_ context.Context, _ store.ObjectList, _
 	return nil
 }
 
+func (s *optionCaptureStore) Delete(_ context.Context, _ store.Object, opts ...store.DeleteOption) error {
+	options := store.DeleteOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	s.deleteOptions = options
+	return nil
+}
+
 func newCaptureRemoteStore(t *testing.T, underlying store.Store) *Client {
 	t.Helper()
-	handler := api.New().Group(NewServer(underlying).Group()).Build()
+	serverAPI := NewServer(underlying)
+	handler := api.New().
+		Group(serverAPI.Group()).
+		Build()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	serverURL, err := url.Parse(server.URL)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	return NewRemoteStore(serverURL)
+	return NewRemoteStore(serverURL, store.NewSchema())
 }
 
 type pingStore struct {
@@ -64,11 +89,37 @@ func (s *pingStore) Ping(context.Context) error {
 
 func TestRemoteStorePing(t *testing.T) {
 	underlying := &pingStore{}
-	if err := newCaptureRemoteStore(t, underlying).Ping(context.Background()); err != nil {
+	remote := newCaptureRemoteStore(t, underlying)
+	if err := remote.Ping(context.Background()); err != nil {
 		t.Fatalf("Ping() error = %v", err)
 	}
 	if !underlying.called {
 		t.Fatal("Ping() was not delegated to the server store")
+	}
+}
+
+func TestRemoteStoreSchemaSnapshot(t *testing.T) {
+	schema := store.NewSchema()
+	if err := schema.Register(&remoteSchemaObject{}, store.ResourceSchema{}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	serverURL, err := url.Parse("https://store.example")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	remote := NewRemoteStore(serverURL, schema)
+	if err := schema.Register(&remoteSchemaMutationObject{}, store.ResourceSchema{}); err != nil {
+		t.Fatalf("source schema Register() error = %v", err)
+	}
+
+	scoped := remote.Scope(store.Scope{Resource: "tenants", Name: "tenant-a"})
+	snapshot := scoped.Schema()
+	if err := snapshot.Register(&remoteSchemaMutationObject{}, store.ResourceSchema{}); err != nil {
+		t.Fatalf("Schema().Register() error = %v", err)
+	}
+	remoteSchema := remote.Schema()
+	if got := remoteSchema.Resources(); !reflect.DeepEqual(got, []string{"remote-schema-tests"}) {
+		t.Fatalf("Schema().Resources() = %v, want [remote-schema-tests]", got)
 	}
 }
 
@@ -113,6 +164,36 @@ func TestRemoteStorePatchBatchPassesSelectors(t *testing.T) {
 	if !reflect.DeepEqual(underlying.patchBatchOptions.FieldRequirements, store.Requirements{fieldRequirement}) {
 		t.Fatalf("FieldRequirements = %#v, want %#v",
 			underlying.patchBatchOptions.FieldRequirements, store.Requirements{fieldRequirement})
+	}
+}
+
+func TestRemoteStoreDeletePassesConditions(t *testing.T) {
+	underlying := &optionCaptureStore{}
+	remote := newCaptureRemoteStore(t, underlying)
+	object := &store.Unstructured{}
+	object.SetResource("widgets")
+	object.SetID("widget-1")
+	labelRequirement := store.RequirementEqual("environment", "test")
+	fieldRequirement := store.RequirementEqual("enabled", "true")
+
+	if err := remote.Delete(context.Background(), object,
+		store.WithDeleteLabelRequirements(labelRequirement),
+		store.WithDeleteFieldRequirements(fieldRequirement),
+		store.WithDeleteUID("uid-1"),
+		store.WithDeleteResourceVersion(7),
+	); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if !reflect.DeepEqual(underlying.deleteOptions.LabelRequirements, store.Requirements{labelRequirement}) {
+		t.Fatalf("LabelRequirements = %#v", underlying.deleteOptions.LabelRequirements)
+	}
+	if !reflect.DeepEqual(underlying.deleteOptions.FieldRequirements, store.Requirements{fieldRequirement}) {
+		t.Fatalf("FieldRequirements = %#v", underlying.deleteOptions.FieldRequirements)
+	}
+	if underlying.deleteOptions.Preconditions == nil ||
+		*underlying.deleteOptions.Preconditions.UID != "uid-1" ||
+		*underlying.deleteOptions.Preconditions.ResourceVersion != 7 {
+		t.Fatalf("Preconditions = %#v", underlying.deleteOptions.Preconditions)
 	}
 }
 

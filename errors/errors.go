@@ -109,7 +109,7 @@ func NewNotImplemented(reason string) *Status {
 }
 
 func NewUnsupported(reason string) *Status {
-	return &Status{Status: StatusFailure, Code: http.StatusNotImplemented, Reason: StatusReasonNotImplemented, Message: reason}
+	return &Status{Status: StatusFailure, Code: http.StatusNotImplemented, Reason: StatusReasonUnsupported, Message: reason}
 }
 
 func NewInternalError(err error) *Status {
@@ -151,6 +151,16 @@ func IsAlreadyExists(err error) bool {
 
 func IsConflict(err error) bool {
 	return ReasonForError(err) == StatusReasonConflict
+}
+
+// IsUnsupported reports whether err says that an optional capability is not supported.
+func IsUnsupported(err error) bool {
+	return ReasonForError(err) == StatusReasonUnsupported
+}
+
+// IsResourceExpired reports whether a requested history version is no longer available.
+func IsResourceExpired(err error) bool {
+	return ReasonForError(err) == StatusReasonResourceExpired
 }
 
 func ReasonForError(err error) StatusReason {
