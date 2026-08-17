@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/ssh"
+	commonerrors "xiaoshiai.cn/common/errors"
 )
 
 type tokenAuthenticatorFunc func(context.Context, string) (*AuthenticateInfo, error)
@@ -81,5 +82,151 @@ func TestAuthenticatorChainPreservesFallbackAndRealErrors(t *testing.T) {
 	chain = chain[:2]
 	if _, err := chain.Authenticate(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil)); !errors.Is(err, realError) {
 		t.Fatalf("Authenticate() error = %v, want aggregate containing real error", err)
+	}
+}
+
+func TestFallbackAuthenticatorUsesAnonymousWhenCredentialsAreNotProvided(t *testing.T) {
+	authenticator := NewFallbackAuthenticator(
+		AuthenticatorChain{
+			AuthenticateFunc(func(http.ResponseWriter, *http.Request) (*AuthenticateInfo, error) {
+				return nil, ErrNotProvided
+			}),
+		},
+		NewAnonymousAuthenticator(),
+	)
+
+	got, err := authenticator.Authenticate(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
+	}
+	if got.User.Name != AnonymousUser {
+		t.Fatalf("Authenticate() user = %q, want %q", got.User.Name, AnonymousUser)
+	}
+}
+
+func TestFallbackAuthenticatorAllowsLaterAuthenticatorToAcceptRejectedCredential(t *testing.T) {
+	rejected := errors.New("OAuth2 credential rejected")
+	want := &AuthenticateInfo{User: UserInfo{Name: "webhook-user"}}
+	authenticator := NewFallbackAuthenticator(
+		AuthenticatorChain{
+			AuthenticateFunc(func(http.ResponseWriter, *http.Request) (*AuthenticateInfo, error) {
+				return nil, rejected
+			}),
+			AuthenticateFunc(func(http.ResponseWriter, *http.Request) (*AuthenticateInfo, error) {
+				return want, nil
+			}),
+		},
+		NewAnonymousAuthenticator(),
+	)
+
+	got, err := authenticator.Authenticate(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil || got != want {
+		t.Fatalf("Authenticate() = %#v, %v, want later authenticator result", got, err)
+	}
+}
+
+func TestFallbackAuthenticatorDoesNotReplaceRejectedCredentialsWithAnonymous(t *testing.T) {
+	rejected := errors.New("credential rejected")
+	authenticator := NewFallbackAuthenticator(
+		AuthenticateFunc(func(http.ResponseWriter, *http.Request) (*AuthenticateInfo, error) {
+			return nil, rejected
+		}),
+		NewAnonymousAuthenticator(),
+	)
+
+	_, err := authenticator.Authenticate(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if !errors.Is(err, rejected) {
+		t.Fatalf("Authenticate() error = %v, want rejected credential", err)
+	}
+}
+
+func TestBearerTokenAuthenticatorRejectsUnrecognizedCredential(t *testing.T) {
+	authenticator := BearerTokenAuthenticatorWrap(tokenAuthenticatorFunc(
+		func(context.Context, string) (*AuthenticateInfo, error) {
+			return nil, ErrNotProvided
+		},
+	))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Authorization", "Bearer unrecognized-token")
+
+	_, err := authenticator.Authenticate(httptest.NewRecorder(), request)
+	if !commonerrors.IsUnauthorized(err) {
+		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
+	}
+}
+
+func TestFallbackAuthenticatorDoesNotTreatEmptyBearerAsMissingCredential(t *testing.T) {
+	authenticator := NewFallbackAuthenticator(
+		BearerTokenAuthenticatorWrap(tokenAuthenticatorFunc(
+			func(context.Context, string) (*AuthenticateInfo, error) {
+				return nil, ErrNotProvided
+			},
+		)),
+		NewAnonymousAuthenticator(),
+	)
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Authorization", "Bearer ")
+
+	_, err := authenticator.Authenticate(httptest.NewRecorder(), request)
+	if !commonerrors.IsUnauthorized(err) {
+		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
+	}
+}
+
+func TestFallbackAuthenticatorDoesNotTreatBearerSchemeWithoutValueAsMissingCredential(t *testing.T) {
+	authenticator := NewFallbackAuthenticator(
+		BearerTokenAuthenticatorWrap(tokenAuthenticatorFunc(
+			func(context.Context, string) (*AuthenticateInfo, error) {
+				return nil, ErrNotProvided
+			},
+		)),
+		NewAnonymousAuthenticator(),
+	)
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Authorization", "Bearer")
+
+	_, err := authenticator.Authenticate(httptest.NewRecorder(), request)
+	if !commonerrors.IsUnauthorized(err) {
+		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
+	}
+}
+
+func TestWebhookAuthenticatorRejectsEmptyBearerCredential(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Authorization", "Bearer ")
+
+	_, err := (&WebhookAuthenticator{}).Authenticate(httptest.NewRecorder(), request)
+	if !commonerrors.IsUnauthorized(err) {
+		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
+	}
+}
+
+func TestBasicAuthenticatorRejectsUnrecognizedCredential(t *testing.T) {
+	authenticator := BasicAuthenticatorWrap(basicAuthenticatorFunc(
+		func(context.Context, string, string) (*AuthenticateInfo, error) {
+			return nil, ErrNotProvided
+		},
+	))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.SetBasicAuth("alice", "incorrect-password")
+
+	_, err := authenticator.Authenticate(httptest.NewRecorder(), request)
+	if !commonerrors.IsUnauthorized(err) {
+		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
+	}
+}
+
+func TestSessionAuthenticatorRejectsUnrecognizedCredential(t *testing.T) {
+	authenticator := SessionAuthenticatorWrap(tokenAuthenticatorFunc(
+		func(context.Context, string) (*AuthenticateInfo, error) {
+			return nil, ErrNotProvided
+		},
+	), "session")
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.AddCookie(&http.Cookie{Name: "session", Value: "unrecognized-token"})
+
+	_, err := authenticator.Authenticate(httptest.NewRecorder(), request)
+	if !commonerrors.IsUnauthorized(err) {
+		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
 	}
 }

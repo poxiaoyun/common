@@ -14,6 +14,7 @@ type AttrbuteResource struct {
 type Attributes struct {
 	// Service is the name of the service that the request is targeting.
 	Service   string             `json:"service,omitempty"`
+	Method    string             `json:"method,omitempty"`
 	Action    string             `json:"action,omitempty"`
 	Resources []AttrbuteResource `json:"resources,omitempty"`
 	Path      string             `json:"path,omitempty"`
@@ -28,7 +29,7 @@ func PrefixedAttributesExtractor(prefix string) AttributeExtractor {
 		}
 		method, path := r.Method, strings.TrimPrefix(r.URL.Path, prefix)
 		action, resources := DefaultRestAttributeExtractor(method, path)
-		return &Attributes{Action: action, Resources: resources, Path: path}, nil
+		return &Attributes{Method: method, Action: action, Resources: resources, Path: path}, nil
 	}
 }
 

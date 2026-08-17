@@ -107,7 +107,11 @@ func SessionAuthenticatorWrap(authn TokenAuthenticator, sessionkey string) Authe
 			return nil, ErrNotProvided
 		}
 		ctx := WithResponseHeader(r.Context(), w.Header())
-		return authn.AuthenticateToken(ctx, token)
+		info, err := authn.AuthenticateToken(ctx, token)
+		if stderrors.Is(err, ErrNotProvided) {
+			return nil, errors.NewUnauthorized("session credential was not accepted")
+		}
+		return info, err
 	})
 }
 
@@ -121,22 +125,41 @@ func ExtractTokenFromCookie(r *http.Request, cookieName string) string {
 
 func BearerTokenAuthenticatorWrap(authn TokenAuthenticator) Authenticator {
 	return AuthenticateFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-		token := ExtractBearerTokenFromRequest(r)
-		if token == "" {
+		token, provided := extractBearerTokenFromRequest(r)
+		if !provided {
 			return nil, ErrNotProvided
 		}
+		if token == "" {
+			return nil, errors.NewUnauthorized("bearer token is empty")
+		}
 		ctx := WithResponseHeader(r.Context(), w.Header())
-		return authn.AuthenticateToken(ctx, token)
+		info, err := authn.AuthenticateToken(ctx, token)
+		if stderrors.Is(err, ErrNotProvided) {
+			return nil, errors.NewUnauthorized("bearer token was not accepted")
+		}
+		return info, err
 	})
 }
 
 func ExtractBearerTokenFromRequest(r *http.Request) string {
-	token := r.Header.Get("Authorization")
-	// only support bearer token
-	if after, ok := strings.CutPrefix(token, "Bearer "); ok {
-		return after
+	token, _ := extractBearerTokenFromRequest(r)
+	return token
+}
+
+func extractBearerTokenFromRequest(r *http.Request) (string, bool) {
+	authorization := r.Header.Get("Authorization")
+	scheme, token, hasValue := strings.Cut(authorization, " ")
+	if strings.EqualFold(scheme, "Bearer") {
+		if !hasValue {
+			return "", true
+		}
+		return token, true
 	}
-	return r.URL.Query().Get("token")
+	values, provided := r.URL.Query()["token"]
+	if !provided {
+		return "", false
+	}
+	return values[0], true
 }
 
 func BasicAuthenticatorWrap(authn BasicAuthenticator) Authenticator {
@@ -145,7 +168,11 @@ func BasicAuthenticatorWrap(authn BasicAuthenticator) Authenticator {
 		if !ok {
 			return nil, ErrNotProvided
 		}
-		return authn.AuthenticateBasic(r.Context(), username, password)
+		info, err := authn.AuthenticateBasic(r.Context(), username, password)
+		if stderrors.Is(err, ErrNotProvided) {
+			return nil, errors.NewUnauthorized("basic credentials were not accepted")
+		}
+		return info, err
 	})
 }
 

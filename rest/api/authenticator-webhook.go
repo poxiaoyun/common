@@ -63,8 +63,11 @@ type WebhookAuthenticator struct {
 var _ Authenticator = &WebhookAuthenticator{}
 
 func (w *WebhookAuthenticator) Authenticate(wr http.ResponseWriter, r *http.Request) (*AuthenticateInfo, error) {
-	token := ExtractBearerTokenFromRequest(r)
-	if token != "" {
+	token, provided := extractBearerTokenFromRequest(r)
+	if provided {
+		if token == "" {
+			return nil, errors.NewUnauthorized("bearer token is empty")
+		}
 		return w.AuthenticateToken(r.Context(), token)
 	}
 	username, password, ok := r.BasicAuth()

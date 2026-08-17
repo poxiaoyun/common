@@ -35,8 +35,6 @@ type Session interface {
 	Clear(ctx context.Context) error
 }
 
-type sessionContextKey struct{}
-
 func SessionFromContext(ctx context.Context) (Session, bool) {
 	session := GetContextValue[Session](ctx, "session")
 	if session == nil {
