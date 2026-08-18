@@ -30,6 +30,16 @@ func TestObjectMetadataResourceVersionJSON(t *testing.T) {
 	}
 }
 
+func TestPreconditionsJSON(t *testing.T) {
+	encoded, err := json.Marshal(meta.Preconditions{UID: "uid-1", ResourceVersion: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `{"uid":"uid-1","resourceVersion":7}` {
+		t.Fatalf("encoded preconditions = %s", encoded)
+	}
+}
+
 func TestParseSearch(t *testing.T) {
 	tests := []struct {
 		name string // description of this test case

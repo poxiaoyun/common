@@ -41,6 +41,8 @@ type DeleteOptions struct {
 
 `WithDeleteUID` 和 `WithDeleteResourceVersion` 分别设置对应 precondition，并且可以与 `WithDeleteLabelRequirements`、`WithDeleteFieldRequirements` 组合。
 
+HTTP 和领域客户端使用值类型 `meta.Preconditions` 时，通过 `WithDeletePreconditions` 一次转换 UID 与 ResourceVersion；空 UID 和零 ResourceVersion 表示该条件未提供。
+
 Delete 按以下顺序判断，并使用固定的错误语义：精确 Scope 和 ID 下没有对象时返回 NotFound；对象存在但任一 UID 或 ResourceVersion precondition 不匹配时返回 Conflict；preconditions 匹配但任一 Label 或 Field requirement 不匹配时返回 NotFound。两类条件同时提供时使用 AND 关系。只有 `DeleteOptions.Preconditions` 中的值构成并发前置条件，传入对象自身的 UID 和 ResourceVersion 不产生隐式条件。nil 表示未提供对应 precondition；非 nil 值必须精确匹配，零值也不表示无条件。
 
 条件判断与 Delete 的最终写入必须是一个原子操作。该写入既包括物理删除，也包括设置 DeletionTimestamp 或添加传播 finalizer；任何条件失败都不能修改存储对象、推进 ResourceVersion 或产生 Watch 事件。实现可以在事务语句中同时表达 ID、Scope、requirements、preconditions 和当前存储版本，也可以读取当前对象后以存储版本执行 CAS。CAS 失败时必须基于最新对象重新判断调用方最初提供的全部条件并重新计算删除结果：precondition 已不匹配则返回 Conflict，requirement 已不匹配则返回 NotFound，条件仍匹配才可继续尝试。重试由请求 context 和确定的条件控制，不能使用固定次数、sleep 或时间窗口猜测正确性。
@@ -54,6 +56,9 @@ Store 只管理传播 finalizer，不遍历 OwnerReferences，也不递归删除
 Scope 是有序层级。默认 Get、List、Count 和写操作只匹配完整的当前 Scope，不得命中兄弟或祖先 Scope。`IncludeSubScopes` 只包含当前 Scope 的后代，并且只有声明 `SubScopes` 的实现才可使用。
 
 ## 查询与能力
+
+`PageFromList` 将 Store 的列表结果投影为 `meta.Page`，不暴露 Store 的
+resource 和 scope 元数据。
 
 `Capabilities()` 只描述实现支持的可选行为，供调用方发现能力，也供契约测试选择需要验证的正向语义。它不是运行时校验开关：Store 方法不能根据自身的能力声明决定是否接受某个 option。实现需要拒绝不支持的输入时，应根据自身约束直接返回错误。
 

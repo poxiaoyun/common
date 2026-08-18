@@ -7,13 +7,13 @@ import (
 	"slices"
 
 	"xiaoshiai.cn/common/authn"
-	"xiaoshiai.cn/common/base"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/events"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/meta"
 	"xiaoshiai.cn/common/rest/api"
 	"xiaoshiai.cn/common/store"
+	storerest "xiaoshiai.cn/common/store/rest"
 )
 
 const LastAdminCheck = false
@@ -23,13 +23,13 @@ type ScopedUserRole struct {
 	Role              string             `json:"role"`
 	Roles             []string           `json:"roles,omitempty"`
 	CreationTimestamp meta.Time          `json:"creationTimestamp"`
-	DeleteTimestamp   *meta.Time        `json:"deleteTimestamp"`
+	DeleteTimestamp   *meta.Time         `json:"deleteTimestamp"`
 	UserInfo          *authn.UserProfile `json:"userInfo"`
 }
 
 func (a *ScopedRbacAPI) ListUserRole(w http.ResponseWriter, r *http.Request) {
 	api.OnScope(w, r, a.ScopePathVarNames, func(ctx context.Context, scopes []store.Scope) (any, error) {
-		userRoleList, err := base.GenericList(r, a.Storage.Scope(scopes...), &store.List[UserRole]{})
+		userRoleList, err := storerest.ListObjects(r, a.Storage.Scope(scopes...), &store.List[UserRole]{})
 		if err != nil {
 			return nil, err
 		}

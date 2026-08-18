@@ -4,10 +4,10 @@ import (
 	"context"
 	"net/http"
 
-	"xiaoshiai.cn/common/base"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/rest/api"
 	"xiaoshiai.cn/common/store"
+	storerest "xiaoshiai.cn/common/store/rest"
 )
 
 const (
@@ -30,37 +30,37 @@ type UserRole struct {
 
 func (a *ScopedRbacAPI) ListRoles(w http.ResponseWriter, r *http.Request) {
 	api.OnScope(w, r, a.ScopePathVarNames, func(ctx context.Context, scopes []store.Scope) (any, error) {
-		return base.GenericListWithWatch(w, r, a.Storage.Scope(scopes...), &store.List[Role]{})
+		return storerest.ListObjectsOrWatch(w, r, a.Storage.Scope(scopes...), &store.List[Role]{})
 	})
 }
 
 func (a *ScopedRbacAPI) CreateRole(w http.ResponseWriter, r *http.Request) {
 	api.OnScope(w, r, a.ScopePathVarNames, func(ctx context.Context, scopes []store.Scope) (any, error) {
-		return base.GenericCreate(r, a.Storage.Scope(scopes...), &Role{})
+		return storerest.CreateObject(r, a.Storage.Scope(scopes...), &Role{})
 	})
 }
 
 func (a *ScopedRbacAPI) GetRole(w http.ResponseWriter, r *http.Request) {
 	a.OnRole(w, r, func(ctx context.Context, storage store.Store, name string) (any, error) {
-		return base.GenericGet(r, storage, &Role{}, name)
+		return storerest.GetObject(r, storage, &Role{}, name)
 	})
 }
 
 func (a *ScopedRbacAPI) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	a.OnRole(w, r, func(ctx context.Context, storage store.Store, name string) (any, error) {
-		return base.GenericUpdate(r, storage, &Role{}, name)
+		return storerest.UpdateObject(r, storage, &Role{}, name)
 	})
 }
 
 func (a *ScopedRbacAPI) PatchRole(w http.ResponseWriter, r *http.Request) {
 	a.OnRole(w, r, func(ctx context.Context, storage store.Store, name string) (any, error) {
-		return base.GenericPatch(r, storage, &Role{}, name)
+		return storerest.PatchObject(r, storage, &Role{}, name)
 	})
 }
 
 func (a *ScopedRbacAPI) DeleteRole(w http.ResponseWriter, r *http.Request) {
 	a.OnRole(w, r, func(ctx context.Context, storage store.Store, name string) (any, error) {
-		return base.GenericDelete(r, storage, &Role{}, name)
+		return storerest.DeleteObject(r, storage, &Role{}, name)
 	})
 }
 

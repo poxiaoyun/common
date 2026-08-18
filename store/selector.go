@@ -15,6 +15,33 @@ import (
 
 type Requirements []Requirement
 
+// ListOptionsFromMeta converts caller-facing list options into Store list
+// options, including the label and field selector grammars.
+func ListOptionsFromMeta(options meta.ListOptions) (ListOptions, error) {
+	result := ListOptions{
+		Page:     options.Page,
+		Size:     options.Size,
+		Search:   options.Search,
+		Sort:     options.Sort,
+		Continue: options.Continue,
+	}
+	if options.LabelSelector != "" {
+		selector, err := labels.Parse(options.LabelSelector)
+		if err != nil {
+			return ListOptions{}, err
+		}
+		result.LabelRequirements = LabelsSelectorToReqirements(selector)
+	}
+	if options.FieldSelector != "" {
+		selector, err := fields.ParseSelector(options.FieldSelector)
+		if err != nil {
+			return ListOptions{}, err
+		}
+		result.FieldRequirements = FieldsSelectorToReqirements(selector)
+	}
+	return result, nil
+}
+
 func (r Requirements) String() string {
 	var sb strings.Builder
 	for i, requirement := range r {

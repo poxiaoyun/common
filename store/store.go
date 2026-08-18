@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/utils/ptr"
+	"xiaoshiai.cn/common/meta"
 )
 
 const (
@@ -328,6 +329,25 @@ func WithDeleteFieldRequirements(reqs ...Requirement) DeleteOption {
 func WithDeleteLabelRequirements(reqs ...Requirement) DeleteOption {
 	return func(o *DeleteOptions) {
 		o.LabelRequirements = append(o.LabelRequirements, reqs...)
+	}
+}
+
+// WithDeletePreconditions applies non-zero caller-facing identity conditions.
+// Empty UID and zero ResourceVersion mean the caller omitted that condition.
+func WithDeletePreconditions(preconditions meta.Preconditions) DeleteOption {
+	return func(o *DeleteOptions) {
+		if preconditions.UID != "" {
+			if o.Preconditions == nil {
+				o.Preconditions = &Preconditions{}
+			}
+			o.Preconditions.UID = ptr.To(preconditions.UID)
+		}
+		if preconditions.ResourceVersion != 0 {
+			if o.Preconditions == nil {
+				o.Preconditions = &Preconditions{}
+			}
+			o.Preconditions.ResourceVersion = ptr.To(preconditions.ResourceVersion)
+		}
 	}
 }
 

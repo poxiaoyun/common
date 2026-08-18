@@ -3,7 +3,47 @@ package store
 import (
 	"reflect"
 	"testing"
+
+	"xiaoshiai.cn/common/meta"
 )
+
+func TestListOptionsFromMeta(t *testing.T) {
+	options, err := ListOptionsFromMeta(meta.ListOptions{
+		Page:          2,
+		Size:          25,
+		Search:        "worker",
+		Sort:          "name-",
+		Continue:      "next-token",
+		LabelSelector: "environment=production",
+		FieldSelector: "enabled=true",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLabels := Requirements{RequirementEqual("environment", "production")}
+	wantFields := Requirements{RequirementEqual("enabled", "true")}
+	if options.Page != 2 || options.Size != 25 || options.Search != "worker" || options.Sort != "name-" || options.Continue != "next-token" {
+		t.Fatalf("scalar options = %#v", options)
+	}
+	if !reflect.DeepEqual(options.LabelRequirements, wantLabels) {
+		t.Fatalf("LabelRequirements = %#v, want %#v", options.LabelRequirements, wantLabels)
+	}
+	if !reflect.DeepEqual(options.FieldRequirements, wantFields) {
+		t.Fatalf("FieldRequirements = %#v, want %#v", options.FieldRequirements, wantFields)
+	}
+}
+
+func TestListOptionsFromMetaRejectsInvalidSelectors(t *testing.T) {
+	tests := []meta.ListOptions{
+		{LabelSelector: "environment in ("},
+		{FieldSelector: "enabled in (true)"},
+	}
+	for _, options := range tests {
+		if _, err := ListOptionsFromMeta(options); err == nil {
+			t.Fatalf("ListOptionsFromMeta(%#v) returned no error", options)
+		}
+	}
+}
 
 func TestParseRequirements(t *testing.T) {
 	tests := []struct {

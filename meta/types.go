@@ -17,6 +17,9 @@ import (
 type Empty struct{}
 
 type Page[T any] struct {
+	// ResourceVersion identifies the collection snapshot when the backend can
+	// provide one. It is distinct from each item's resourceVersion.
+	ResourceVersion int64 `json:"resourceVersion,omitempty"`
 	// Total is the total number of items matching the query
 	// it used for page style pagination
 	Total int `json:"total"`
@@ -31,6 +34,22 @@ type Page[T any] struct {
 	// when use continue style pagination, total is not returned and page is ignored
 	// for next page, use the continue token to get next page
 	Continue string `json:"continue,omitempty"`
+}
+
+// ConvertPage maps list items while preserving collection pagination metadata.
+func ConvertPage[T any, R any](page Page[T], convert func(T) R) Page[R] {
+	result := Page[R]{
+		ResourceVersion: page.ResourceVersion,
+		Total:           page.Total,
+		Page:            page.Page,
+		Size:            page.Size,
+		Continue:        page.Continue,
+		Items:           make([]R, 0, len(page.Items)),
+	}
+	for _, item := range page.Items {
+		result.Items = append(result.Items, convert(item))
+	}
+	return result
 }
 
 type ListOptions struct {
@@ -183,8 +202,10 @@ type ObjectMetadata struct {
 	Description string `json:"description,omitempty"`
 }
 
-// Preconditions restrict a mutation to a caller-observed object version.
+// Preconditions restrict a mutation to a caller-observed object identity.
 type Preconditions struct {
+	// UID prevents a mutation from targeting a replacement object with the same ID.
+	UID string `json:"uid,omitempty"`
 	// ResourceVersion is optional; zero means no caller-supplied version condition.
-	ResourceVersion int64
+	ResourceVersion int64 `json:"resourceVersion,omitempty"`
 }

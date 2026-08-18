@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/rest/api"
@@ -44,21 +42,10 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 	s.on(w, r, func(ctx context.Context, ref store.ResourcedObjectReference) (any, error) {
 		log := log.FromContext(ctx)
 		if ref.ID == "" {
-			options := store.ListOptions{
-				Page:             api.Query(r, "page", 0),
-				Size:             api.Query(r, "size", 0),
-				Search:           api.Query(r, "search", ""),
-				Sort:             api.Query(r, "sort", ""),
-				IncludeSubScopes: api.Query(r, "includeSubscopes", false),
-				ResourceVersion:  parseResourceVersion(api.Query(r, "resourceVersion", "")),
-				Continue:         api.Query(r, "continue", ""),
-			}
-			labelsel, fildsel, err := decodeSelector(r)
+			options, err := ListOptionsFromRequest(r)
 			if err != nil {
 				return nil, err
 			}
-			options.LabelRequirements = labelsel
-			options.FieldRequirements = fildsel
 
 			list := store.List[store.Unstructured]{}
 			list.Resource = ref.Resource
@@ -81,14 +68,10 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 			}
 			// watch
 			if watch := api.Query(r, "watch", false); watch {
+				watchOptions := WatchOptionsFromListOptions(options)
+				watchOptions.SendInitialEvents = api.Query(r, "sendInitialEvents", false)
 				watcher, err := s.Store.Scope(ref.Scopes...).Watch(ctx, &list, func(wo *store.WatchOptions) {
-					*wo = store.WatchOptions{
-						LabelRequirements: options.LabelRequirements,
-						FieldRequirements: options.FieldRequirements,
-						IncludeSubScopes:  options.IncludeSubScopes,
-						ResourceVersion:   options.ResourceVersion,
-						SendInitialEvents: api.Query(r, "sendInitialEvents", false),
-					}
+					*wo = watchOptions
 				})
 				if err != nil {
 					return nil, err
@@ -141,17 +124,6 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 
 		}
 	})
-}
-
-func parseResourceVersion(s string) *int64 {
-	if s == "" {
-		return nil
-	}
-	i, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return nil
-	}
-	return &i
 }
 
 func (s *Server) Create(w http.ResponseWriter, r *http.Request) {
@@ -347,23 +319,11 @@ func (s *Server) on(w http.ResponseWriter, r *http.Request,
 }
 
 func decodeSelector(r *http.Request) (store.Requirements, store.Requirements, error) {
-	var labelRequirements store.Requirements
-	if labelsel := api.Query(r, "labelSelector", ""); labelsel != "" {
-		sel, err := labels.Parse(labelsel)
-		if err != nil {
-			return nil, nil, errors.NewBadRequest(err.Error())
-		}
-		labelRequirements = store.LabelsSelectorToReqirements(sel)
+	options, err := store.ListOptionsFromMeta(api.GetListOptions(r))
+	if err != nil {
+		return nil, nil, errors.NewBadRequest(err.Error())
 	}
-	var fieldRequirements store.Requirements
-	if fieldsel := api.Query(r, "fieldSelector", ""); fieldsel != "" {
-		fields, err := fields.ParseSelector(fieldsel)
-		if err != nil {
-			return nil, nil, errors.NewBadRequest(err.Error())
-		}
-		fieldRequirements = store.FieldsSelectorToReqirements(fields)
-	}
-	return labelRequirements, fieldRequirements, nil
+	return options.LabelRequirements, options.FieldRequirements, nil
 }
 
 // decodePath

@@ -266,6 +266,18 @@ type List[T any] struct {
 	Continue        string  `json:"continue,omitempty"` // Used for pagination, if set, indicates that there are more items to list
 }
 
+// PageFromList projects Store list metadata onto the public list contract.
+func PageFromList[T any](list List[T]) meta.Page[T] {
+	return meta.Page[T]{
+		ResourceVersion: list.ResourceVersion,
+		Total:           list.Total,
+		Items:           list.Items,
+		Page:            list.Page,
+		Size:            list.Size,
+		Continue:        list.Continue,
+	}
+}
+
 // GetContinue implements ObjectList.
 func (b *List[T]) GetContinue() string {
 	return b.Continue

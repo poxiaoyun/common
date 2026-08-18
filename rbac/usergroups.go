@@ -4,10 +4,10 @@ import (
 	"context"
 	"net/http"
 
-	"xiaoshiai.cn/common/base"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/rest/api"
 	"xiaoshiai.cn/common/store"
+	storerest "xiaoshiai.cn/common/store/rest"
 )
 
 type UserGroup struct {
@@ -18,37 +18,37 @@ type UserGroup struct {
 
 func (a *ScopedRbacAPI) ListUserGroups(w http.ResponseWriter, r *http.Request) {
 	api.OnScope(w, r, a.ScopePathVarNames, func(ctx context.Context, scopes []store.Scope) (any, error) {
-		return base.GenericListWithWatch(w, r, a.Storage.Scope(scopes...), &store.List[UserGroup]{})
+		return storerest.ListObjectsOrWatch(w, r, a.Storage.Scope(scopes...), &store.List[UserGroup]{})
 	})
 }
 
 func (a *ScopedRbacAPI) GetUserGroup(w http.ResponseWriter, r *http.Request) {
 	a.onUserGroup(w, r, func(ctx context.Context, storage store.Store, name string) (any, error) {
-		return base.GenericGet(r, storage, &UserGroup{}, name)
+		return storerest.GetObject(r, storage, &UserGroup{}, name)
 	})
 }
 
 func (a *ScopedRbacAPI) CreateUserGroup(w http.ResponseWriter, r *http.Request) {
 	a.onUserGroup(w, r, func(ctx context.Context, storage store.Store, tenant string) (any, error) {
-		return base.GenericCreate(r, storage, &UserGroup{Tenant: tenant})
+		return storerest.CreateObject(r, storage, &UserGroup{Tenant: tenant})
 	})
 }
 
 func (a *ScopedRbacAPI) UpdateUserGroup(w http.ResponseWriter, r *http.Request) {
 	a.onUserGroup(w, r, func(ctx context.Context, storage store.Store, name string) (any, error) {
-		return base.GenericUpdate(r, storage, &UserGroup{}, name)
+		return storerest.UpdateObject(r, storage, &UserGroup{}, name)
 	})
 }
 
 func (a *ScopedRbacAPI) PatchUserGroup(w http.ResponseWriter, r *http.Request) {
 	a.onUserGroup(w, r, func(ctx context.Context, storage store.Store, name string) (any, error) {
-		return base.GenericPatch(r, storage, &UserGroup{}, name)
+		return storerest.PatchObject(r, storage, &UserGroup{}, name)
 	})
 }
 
 func (a *ScopedRbacAPI) DeleteUserGroup(w http.ResponseWriter, r *http.Request) {
 	a.onUserGroup(w, r, func(ctx context.Context, storage store.Store, name string) (any, error) {
-		return base.GenericDelete(r, storage, &UserGroup{}, name)
+		return storerest.DeleteObject(r, storage, &UserGroup{}, name)
 	})
 }
 
