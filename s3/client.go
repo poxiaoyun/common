@@ -14,7 +14,7 @@ type Options struct {
 	Address            string `json:"address,omitempty"`
 	AccountID          string `json:"accountID,omitempty" description:"Account ID,ignored if empty"`
 	AccessKey          string `json:"accessKey,omitempty"`
-	SecretKey          string `json:"secretKey,omitempty"`
+	SecretKey          string `json:"secretKey,omitempty" config:"secretKey,sensitive"`
 	PathStyle          bool   `json:"pathStyle,omitempty"`
 	Region             string `json:"region,omitempty"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`

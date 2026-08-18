@@ -32,7 +32,7 @@ const SetScopeFields = false
 type Options struct {
 	Servers       []string `json:"servers,omitempty"`
 	Username      string   `json:"username,omitempty"`
-	Password      string   `json:"password,omitempty"`
+	Password      string   `json:"password,omitempty" config:"password,sensitive"`
 	KeyFile       string   `json:"keyFile,omitempty"`
 	CertFile      string   `json:"certFile,omitempty"`
 	TrustedCAFile string   `json:"trustedCAFile,omitempty"`

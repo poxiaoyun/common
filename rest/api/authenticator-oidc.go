@@ -26,7 +26,7 @@ type OIDCOptions struct {
 	// ClientSecret is the secret for the client ID. If no secret is provided,
 	// the client is assumed to be a public client and authentication will
 	// proceed without a client secret.
-	ClientSecret string `json:"clientSecret" description:"oidc client secret"`
+	ClientSecret string `json:"clientSecret" config:"clientSecret,sensitive" description:"oidc client secret"`
 
 	// Scopes is the set of scopes to request.
 	Scope []string `json:"scope" description:"oidc scope"`

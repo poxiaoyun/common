@@ -13,9 +13,9 @@ import (
 type WebhookOptions struct {
 	Server                string `json:"server,omitempty"`
 	ProxyURL              string `json:"proxyURL,omitempty"`
-	Token                 string `json:"token,omitempty"`
+	Token                 string `json:"token,omitempty" config:"token,sensitive"`
 	Username              string `json:"username,omitempty"`
-	Password              string `json:"password,omitempty"`
+	Password              string `json:"password,omitempty" config:"password,sensitive"`
 	CertFile              string `json:"certFile,omitempty"`
 	KeyFile               string `json:"keyFile,omitempty"`
 	CAFile                string `json:"caFile,omitempty"`

@@ -1,6 +1,8 @@
 package log
 
 import (
+	"strconv"
+
 	"k8s.io/klog/v2"
 )
 
@@ -23,6 +25,12 @@ var (
 )
 
 var DefaultLogger = klog.Background()
+
+// SetVerbosity updates klog's process-wide V level.
+func SetVerbosity(level int) error {
+	verbosity := klog.Level(0)
+	return verbosity.Set(strconv.Itoa(level))
+}
 
 type Logger = klog.Logger
 

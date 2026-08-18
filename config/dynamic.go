@@ -54,7 +54,7 @@ type DynamicConfig interface {
 // DynamicConfigOptions identifies one component's configuration scope.
 type DynamicConfigOptions struct {
 	Server    string `json:"server" description:"Server address for the dynamic configuration service, e.g., 'http://localhost:8080'"`
-	Token     string `json:"token" description:"Authentication token for accessing the dynamic configuration service"`
+	Token     string `json:"token" config:"token,sensitive" description:"Authentication token for accessing the dynamic configuration service"`
 	Component string `json:"component" description:"Component name used to isolate configuration values"`
 }
 

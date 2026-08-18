@@ -86,9 +86,9 @@ func (c *CachedAuditSink) Save(log *AuditLog) error {
 type WebhookAuditSinkOptions struct {
 	Server                string        `json:"server,omitempty" description:"webhook server address. e.g. https://example.com/webhook-audit"`
 	ProxyURL              string        `json:"proxyURL,omitempty" description:"proxy server address"`
-	Token                 string        `json:"token,omitempty" description:"authentication token"`
+	Token                 string        `json:"token,omitempty" config:"token,sensitive" description:"authentication token"`
 	Username              string        `json:"username,omitempty" description:"basic auth username"`
-	Password              string        `json:"password,omitempty" description:"basic auth password"`
+	Password              string        `json:"password,omitempty" config:"password,sensitive" description:"basic auth password"`
 	CertFile              string        `json:"certFile,omitempty" description:"path to TLS certificate file"`
 	KeyFile               string        `json:"keyFile,omitempty" description:"path to TLS key file"`
 	CAFile                string        `json:"caFile,omitempty" description:"path to CA certificate file"`

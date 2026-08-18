@@ -29,7 +29,7 @@ import (
 type MongoDBOptions struct {
 	Address    string `json:"address,omitempty"`
 	Username   string `json:"username,omitempty"`
-	Password   string `json:"password,omitempty"`
+	Password   string `json:"password,omitempty" config:"password,sensitive"`
 	Database   string `json:"database,omitempty"`
 	ReplicaSet string `json:"replicaSet,omitempty"`
 	Direct     bool   `json:"direct,omitempty"`
