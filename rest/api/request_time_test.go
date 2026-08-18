@@ -106,7 +106,15 @@ func TestParseTimeExpr(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ParseTimeExpr(tt.expr)
 			assert.NoError(t, err)
-			assert.Equal(t, tt.expected, got)
+			assert.Equal(t, tt.expected.Offset, got.Offset)
+			assert.Equal(t, tt.expected.RoundUnit, got.RoundUnit)
+			// time.Parse may reuse time.Local when its offset matches the parsed
+			// RFC3339 offset. Compare the instant and numeric offset separately so
+			// the test preserves the offset without depending on Location identity.
+			assert.True(t, tt.expected.Time.Equal(got.Time))
+			_, expectedOffset := tt.expected.Time.Zone()
+			_, actualOffset := got.Time.Zone()
+			assert.Equal(t, expectedOffset, actualOffset)
 		})
 	}
 }
