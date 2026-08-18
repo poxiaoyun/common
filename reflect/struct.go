@@ -1,8 +1,6 @@
 package reflect
 
 import (
-	"encoding"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -16,7 +14,7 @@ func SetFiledValue(dest any, jsonpath string, value any) error {
 
 func parseJsonPath(jsonpath string) []string {
 	pathes := []string{}
-	for _, elem := range strings.Split(jsonpath, ".") {
+	for elem := range strings.SplitSeq(jsonpath, ".") {
 		if elem != "" {
 			if i := strings.IndexRune(elem, '['); i != -1 {
 				path0, path1 := elem[:i], elem[i+1:]
@@ -106,7 +104,7 @@ func getFiledValue(v reflect.Value, path ...string) (any, error) {
 
 func setFieldValue(v reflect.Value, value any, path ...string) error {
 	if len(path) == 0 {
-		return SetValueAutoConvert(v, value)
+		return SetValue(v, value)
 	}
 	switch t := v.Type(); t.Kind() {
 	case reflect.Pointer:
@@ -217,8 +215,43 @@ func StructFieldInfoNByTags(structField reflect.StructField, tagNames ...string)
 	return isEmbedded, isIgnored, omitempty, fieldName
 }
 
-var textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
-var jsonUnmarshalerType = reflect.TypeFor[json.Unmarshaler]()
+// IndirectType returns the first non-pointer type.
+func IndirectType(t reflect.Type) reflect.Type {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t
+}
+
+// IndirectValue returns the first non-pointer value.
+func IndirectValue(value reflect.Value) reflect.Value {
+	for value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	return value
+}
+
+// IndirectValueAlloc returns the first non-pointer value and allocates nil
+// pointers along the way.
+func IndirectValueAlloc(value reflect.Value) reflect.Value {
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			value.Set(reflect.New(value.Type().Elem()))
+		}
+		value = value.Elem()
+	}
+	return value
+}
+
+// IsNilable reports whether values of t can be nil.
+func IsNilable(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return true
+	default:
+		return false
+	}
+}
 
 // WalkStructFields calls fieldFunc for every queryable leaf field in t.
 // Tags are checked in order. Anonymous and inline structs are flattened,
@@ -241,9 +274,7 @@ func walkStructFields(
 	stack map[reflect.Type]bool,
 	fieldFunc func(name string, index []int, omitEmpty bool) error,
 ) error {
-	for t.Kind() == reflect.Pointer {
-		t = t.Elem()
-	}
+	t = IndirectType(t)
 	if t.Kind() != reflect.Struct {
 		return nil
 	}
@@ -269,10 +300,7 @@ func walkStructFields(
 			continue
 		}
 		fieldIndex := append(append([]int(nil), index...), i)
-		fieldType := field.Type
-		for fieldType.Kind() == reflect.Pointer {
-			fieldType = fieldType.Elem()
-		}
+		fieldType := IndirectType(field.Type)
 		if inline && fieldType.Kind() == reflect.Struct {
 			nested = append(nested, nestedField{typ: field.Type, index: fieldIndex, prefix: prefix})
 			continue
@@ -281,7 +309,7 @@ func walkStructFields(
 		if prefix != "" {
 			fieldName = prefix + "." + name
 		}
-		if fieldType.Kind() == reflect.Struct && !ImplementsTextOrJSONUnmarshaler(field.Type) {
+		if fieldType.Kind() == reflect.Struct && !ImplementsJSONUnmarshaler(field.Type) && !ImplementsTextUnmarshaler(field.Type) {
 			nested = append(nested, nestedField{typ: field.Type, index: fieldIndex, prefix: fieldName})
 			continue
 		}
@@ -301,29 +329,11 @@ func walkStructFields(
 	return nil
 }
 
-// ImplementsTextOrJSONUnmarshaler reports whether a type or its pointer
-// implements encoding.TextUnmarshaler or json.Unmarshaler.
-func ImplementsTextOrJSONUnmarshaler(t reflect.Type) bool {
-	if t.Implements(textUnmarshalerType) || t.Implements(jsonUnmarshalerType) {
-		return true
-	}
-	for t.Kind() == reflect.Pointer {
-		t = t.Elem()
-	}
-	ptr := reflect.PointerTo(t)
-	return ptr.Implements(textUnmarshalerType) || ptr.Implements(jsonUnmarshalerType)
-}
-
 // FieldByIndexAlloc follows a struct field index path and allocates nil
 // pointers encountered along the way.
 func FieldByIndexAlloc(value reflect.Value, index []int) reflect.Value {
 	for _, i := range index {
-		for value.Kind() == reflect.Pointer {
-			if value.IsNil() {
-				value.Set(reflect.New(value.Type().Elem()))
-			}
-			value = value.Elem()
-		}
+		value = IndirectValueAlloc(value)
 		value = value.Field(i)
 	}
 	return value
@@ -345,173 +355,4 @@ func FieldByIndex(value reflect.Value, index []int) (reflect.Value, bool) {
 		value = value.Field(i)
 	}
 	return value, value.IsValid()
-}
-
-func SetValueAutoConvert(v reflect.Value, value any) error {
-	return setValueAutoConvert(v, reflect.ValueOf(value))
-}
-
-func setValueAutoConvert(v, newv reflect.Value) error {
-	if !newv.IsValid() {
-		return fmt.Errorf("can not set nil to %v", v.Type())
-	}
-	for newv.Kind() == reflect.Interface {
-		if newv.IsNil() {
-			return fmt.Errorf("can not set nil to %v", v.Type())
-		}
-		newv = newv.Elem()
-	}
-	if v.CanSet() && newv.Type().AssignableTo(v.Type()) {
-		v.Set(newv)
-		return nil
-	}
-	switch newv.Kind() {
-	case reflect.String:
-		return SetStringAutoConvert(v, newv.String())
-	case reflect.Slice, reflect.Array:
-		return SetSliceAutoConvert(v, newv)
-	case reflect.Pointer:
-		if newv.IsNil() {
-			return fmt.Errorf("can not set nil to %v", v.Type())
-		}
-		return setValueAutoConvert(v, newv.Elem())
-	}
-	if v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			v.Set(reflect.New(v.Type().Elem()))
-		}
-		return setValueAutoConvert(v.Elem(), newv)
-	}
-	if newv.Type().ConvertibleTo(v.Type()) && newv.Kind() == v.Kind() {
-		v.Set(newv.Convert(v.Type()))
-		return nil
-	}
-	return fmt.Errorf("can not set value %v to %v", newv.Type(), v.Type())
-}
-
-// SetSliceAutoConvert converts a slice or array value into a target value.
-// Collection targets consume every source element; scalar and unmarshaler
-// targets consume the last source element.
-func SetSliceAutoConvert(v, values reflect.Value) error {
-	if !values.IsValid() || (values.Kind() != reflect.Slice && values.Kind() != reflect.Array) {
-		return fmt.Errorf("source value must be a slice or array")
-	}
-	target := v
-	for target.Kind() == reflect.Pointer {
-		if target.IsNil() {
-			target.Set(reflect.New(target.Type().Elem()))
-		}
-		target = target.Elem()
-	}
-	if values.Len() == 0 {
-		switch target.Kind() {
-		case reflect.Slice:
-			target.Set(reflect.MakeSlice(target.Type(), 0, 0))
-			return nil
-		case reflect.Array:
-			target.SetZero()
-			return nil
-		default:
-			return fmt.Errorf("can not set empty %v to %v", values.Type(), v.Type())
-		}
-	}
-	if ImplementsTextOrJSONUnmarshaler(v.Type()) {
-		return setValueAutoConvert(v, values.Index(values.Len()-1))
-	}
-	switch target.Kind() {
-	case reflect.Slice:
-		slice := reflect.MakeSlice(target.Type(), values.Len(), values.Len())
-		for i := 0; i < values.Len(); i++ {
-			if err := setValueAutoConvert(slice.Index(i), values.Index(i)); err != nil {
-				return err
-			}
-		}
-		target.Set(slice)
-		return nil
-	case reflect.Array:
-		if values.Len() > target.Len() {
-			return fmt.Errorf("can not set %d values to %v", values.Len(), target.Type())
-		}
-		target.SetZero()
-		for i := 0; i < values.Len(); i++ {
-			if err := setValueAutoConvert(target.Index(i), values.Index(i)); err != nil {
-				return err
-			}
-		}
-		return nil
-	default:
-		return setValueAutoConvert(v, values.Index(values.Len()-1))
-	}
-}
-
-// SetStringAutoConvert sets string value to reflect.Value
-// It will auto convert string to target type
-func SetStringAutoConvert(v reflect.Value, str string) error {
-	if v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			v.Set(reflect.New(v.Type().Elem()))
-		}
-		if unmarshaler, ok := v.Interface().(encoding.TextUnmarshaler); ok {
-			return unmarshaler.UnmarshalText([]byte(str))
-		}
-		if unmarshaler, ok := v.Interface().(json.Unmarshaler); ok {
-			return unmarshaler.UnmarshalJSON([]byte(str))
-		}
-		return SetStringAutoConvert(v.Elem(), str)
-	}
-	if v.CanAddr() {
-		if unmarshaler, ok := v.Addr().Interface().(encoding.TextUnmarshaler); ok {
-			return unmarshaler.UnmarshalText([]byte(str))
-		}
-		if unmarshaler, ok := v.Addr().Interface().(json.Unmarshaler); ok {
-			return unmarshaler.UnmarshalJSON([]byte(str))
-		}
-	}
-	switch v.Kind() {
-	case reflect.String:
-		v.SetString(str)
-	case reflect.Bool:
-		n, err := strconv.ParseBool(str)
-		if err != nil {
-			return err
-		}
-		v.SetBool(n)
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n, err := strconv.ParseInt(str, 10, v.Type().Bits())
-		if err != nil {
-			return err
-		}
-		v.SetInt(n)
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		n, err := strconv.ParseUint(str, 10, v.Type().Bits())
-		if err != nil {
-			return err
-		}
-		v.SetUint(n)
-	case reflect.Float32, reflect.Float64:
-		n, err := strconv.ParseFloat(str, v.Type().Bits())
-		if err != nil {
-			return err
-		}
-		v.SetFloat(n)
-	case reflect.Slice:
-		stringSlice := strings.Split(str, ",")
-		slice := reflect.MakeSlice(v.Type(), len(stringSlice), len(stringSlice))
-		for i, s := range stringSlice {
-			if err := SetStringAutoConvert(slice.Index(i), s); err != nil {
-				return err
-			}
-		}
-		v.Set(slice)
-	case reflect.Map:
-		if !v.CanAddr() {
-			return fmt.Errorf("can not address %v", v.Type())
-		}
-		if err := json.Unmarshal([]byte(str), v.Addr().Interface()); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("can not set string to %v", v.Type())
-	}
-	return nil
 }

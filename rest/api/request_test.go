@@ -87,8 +87,8 @@ func TestQueryObject(t *testing.T) {
 	if options.Fallback != "json-name" {
 		t.Fatalf("fallback = %q", options.Fallback)
 	}
-	if options.Custom != "MIXED" {
-		t.Fatalf("custom = %q, want MIXED", options.Custom)
+	if options.Custom != "mixed" {
+		t.Fatalf("custom = %q, want mixed", options.Custom)
 	}
 	if options.Filter == nil || options.Filter.Name != "demo" || !options.Filter.Enabled {
 		t.Fatalf("filter = %#v", options.Filter)

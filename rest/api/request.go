@@ -141,7 +141,7 @@ func QueryObject[T any](r *http.Request) (T, error) {
 		if !ok {
 			return nil
 		}
-		if err := libreflect.SetValueAutoConvert(
+		if err := libreflect.SetValue(
 			libreflect.FieldByIndexAlloc(value, index),
 			values,
 		); err != nil {

@@ -14,7 +14,7 @@ func FlattenStructOmmitEmpty(name string, maxDepth int, ommitEmpty bool, v refle
 	if maxDepth == 0 {
 		return fieldFunc(name, v)
 	}
-	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		v = v.Elem()
 	}
 

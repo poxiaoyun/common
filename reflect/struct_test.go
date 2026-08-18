@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+	"unsafe"
 )
 
 type Foo struct {
@@ -130,7 +131,7 @@ func TestWalkStructFields(t *testing.T) {
 		t.Fatalf("nested pointers were not allocated: %#v", value)
 	}
 	jsonField := FieldByIndexAlloc(reflect.ValueOf(&value).Elem(), fieldIndex("json"))
-	if err := SetStringAutoConvert(jsonField, `{"name":"decoded"}`); err != nil {
+	if err := SetTextValue(jsonField, `{"name":"decoded"}`); err != nil {
 		t.Fatal(err)
 	}
 	if value.JSON.Name != "decoded" {
@@ -138,11 +139,11 @@ func TestWalkStructFields(t *testing.T) {
 	}
 }
 
-func TestSetValueAutoConvertSlices(t *testing.T) {
+func TestSetValueCollections(t *testing.T) {
 	type customInt int
 
 	ints := []customInt{}
-	if err := SetSliceAutoConvert(reflect.ValueOf(&ints).Elem(), reflect.ValueOf([]int{1, 2})); err != nil {
+	if err := SetValue(reflect.ValueOf(&ints).Elem(), []int{1, 2}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(ints, []customInt{1, 2}) {
@@ -150,7 +151,7 @@ func TestSetValueAutoConvertSlices(t *testing.T) {
 	}
 
 	var last *int
-	if err := SetValueAutoConvert(reflect.ValueOf(&last).Elem(), []int{1, 2}); err != nil {
+	if err := SetValue(reflect.ValueOf(&last).Elem(), []int{1, 2}); err != nil {
 		t.Fatal(err)
 	}
 	if last == nil || *last != 2 {
@@ -158,7 +159,7 @@ func TestSetValueAutoConvertSlices(t *testing.T) {
 	}
 
 	bools := []bool{}
-	if err := SetValueAutoConvert(reflect.ValueOf(&bools).Elem(), []string{"true", "false"}); err != nil {
+	if err := SetValue(reflect.ValueOf(&bools).Elem(), []string{"true", "false"}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(bools, []bool{true, false}) {
@@ -166,11 +167,35 @@ func TestSetValueAutoConvertSlices(t *testing.T) {
 	}
 
 	array := [3]int{}
-	if err := SetValueAutoConvert(reflect.ValueOf(&array).Elem(), []int{1, 2}); err != nil {
+	if err := SetValue(reflect.ValueOf(&array).Elem(), []int{1, 2}); err != nil {
 		t.Fatal(err)
 	}
 	if array != [3]int{1, 2, 0} {
 		t.Fatalf("array = %#v", array)
+	}
+}
+
+func TestIndirectReflectionHelpers(t *testing.T) {
+	type nested struct{ Value string }
+	typ := reflect.TypeFor[***nested]()
+	if got := IndirectType(typ); got != reflect.TypeFor[nested]() {
+		t.Fatalf("IndirectType() = %v", got)
+	}
+	valueWithPointers := &nested{Value: "read"}
+	if got := IndirectValue(reflect.ValueOf(&valueWithPointers)).FieldByName("Value").String(); got != "read" {
+		t.Fatalf("IndirectValue() = %q", got)
+	}
+	var value ***nested
+	indirect := IndirectValueAlloc(reflect.ValueOf(&value).Elem())
+	indirect.FieldByName("Value").SetString("set")
+	if value == nil || *value == nil || **value == nil || (***value).Value != "set" {
+		t.Fatalf("IndirectValueAlloc() result = %#v", value)
+	}
+	if !IsNilable(reflect.TypeFor[map[string]string]()) || IsNilable(reflect.TypeFor[string]()) {
+		t.Fatal("IsNilable returned an unexpected result")
+	}
+	if !IsNilable(reflect.TypeFor[unsafe.Pointer]()) {
+		t.Fatal("unsafe.Pointer must be nilable")
 	}
 }
 
