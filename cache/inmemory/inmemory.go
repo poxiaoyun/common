@@ -1,223 +1,74 @@
+// Package inmemory provides process-local cache and counter adapters.
 package inmemory
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/hashicorp/golang-lru/v2/simplelru"
 	"xiaoshiai.cn/common/cache"
 )
 
-type Options struct {
-	TTLCleanInterval time.Duration
-}
-
 var _ cache.Cache[any] = &InMemoryCache[any]{}
 
-func NewTyped[T any](options *Options) *InMemoryCache[T] {
-	c := &InMemoryCache[T]{
-		namespaces: make(map[string]*namespaceCache[T]),
-		stopCh:     make(chan struct{}),
-	}
-	if options.TTLCleanInterval <= 0 {
-		options.TTLCleanInterval = 1 * time.Minute
-	}
-	go c.startCleaner(options.TTLCleanInterval)
-	return c
-}
-
-type InMemoryCache[T any] struct {
-	mu         sync.RWMutex
-	namespaces map[string]*namespaceCache[T]
-	stopCh     chan struct{}
-}
-
-func (c *InMemoryCache[T]) GetOrLoad(ctx context.Context, key string, loader cache.LoadFunc[T], opts ...cache.GetOrSetOption) (T, error) {
-	options := cache.GetOrSetOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	nc := c.getNS(options.Namespace)
-	if val, ok := nc.get(key); ok {
-		return val, nil
-	}
-	data, ttl, err := loader(ctx, key)
+// New returns a process-local cache with the given maximum number of entries.
+func New[T any](capacity int) (*InMemoryCache[T], error) {
+	values, err := simplelru.NewLRU[string, item[T]](capacity, nil)
 	if err != nil {
+		return nil, fmt.Errorf("create in-memory cache: %w", err)
+	}
+	return &InMemoryCache[T]{values: values}, nil
+}
+
+// InMemoryCache is a bounded least-recently-used cache. It is safe for
+// concurrent use and must be constructed with New.
+type InMemoryCache[T any] struct {
+	mu     sync.Mutex
+	values *simplelru.LRU[string, item[T]]
+}
+
+// Get implements cache.Cache.
+func (c *InMemoryCache[T]) Get(ctx context.Context, key string) (T, bool, error) {
+	c.mu.Lock()
+	current, found := c.values.Get(key)
+	if found && !current.expiresAt.IsZero() && !time.Now().Before(current.expiresAt) {
+		c.values.Remove(key)
+		found = false
+	}
+	c.mu.Unlock()
+	if !found {
 		var zero T
-		return zero, err
+		return zero, false, nil
 	}
-	nc.set(key, data, ttl)
-	return data, nil
+	return current.value, true, nil
 }
 
-func (c *InMemoryCache[T]) Get(ctx context.Context, key string, opts ...cache.GetOption) (T, error) {
-	options := cache.GetOptions{}
-	for _, opt := range opts {
-		opt(&options)
+// Set implements cache.Cache.
+func (c *InMemoryCache[T]) Set(ctx context.Context, key string, value T, ttl time.Duration) error {
+	if ttl < 0 {
+		return cache.ErrInvalidTTL
 	}
-	nc := c.getNS(options.Namespace)
-	if val, ok := nc.get(key); ok {
-		return val, nil
+	c.mu.Lock()
+	expiresAt := time.Time{}
+	if ttl > 0 {
+		expiresAt = time.Now().Add(ttl)
 	}
-	var zero T
-	return zero, nil
-}
-
-func (c *InMemoryCache[T]) Set(ctx context.Context, key string, data T, opts ...cache.SetOption) error {
-	options := cache.SetOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	nc := c.getNS(options.Namespace)
-	nc.set(key, data, options.TTL)
+	c.values.Add(key, item[T]{value: value, expiresAt: expiresAt})
+	c.mu.Unlock()
 	return nil
 }
 
-func (c *InMemoryCache[T]) Delete(ctx context.Context, key string, opts ...cache.DeleteOption) error {
-	options := cache.DeleteOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	nc := c.getNS(options.Namespace)
-	nc.delete(key)
+// Delete implements cache.Cache.
+func (c *InMemoryCache[T]) Delete(ctx context.Context, key string) error {
+	c.mu.Lock()
+	c.values.Remove(key)
+	c.mu.Unlock()
 	return nil
-}
-
-func (c *InMemoryCache[T]) GetMany(ctx context.Context, keys []string, opts ...cache.GetOption) (map[string]T, error) {
-	options := cache.GetOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	nc := c.getNS(options.Namespace)
-	result := make(map[string]T)
-	for _, key := range keys {
-		if val, ok := nc.get(key); ok {
-			result[key] = val
-		}
-	}
-	return result, nil
-}
-
-func (c *InMemoryCache[T]) SetMany(ctx context.Context, items map[string]T, opts ...cache.SetOption) error {
-	options := cache.SetOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	nc := c.getNS(options.Namespace)
-	for k, v := range items {
-		nc.set(k, v, options.TTL)
-	}
-	return nil
-}
-
-func (c *InMemoryCache[T]) DeleteMany(ctx context.Context, keys []string, opts ...cache.DeleteOption) error {
-	options := cache.DeleteOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	nc := c.getNS(options.Namespace)
-	for _, k := range keys {
-		nc.delete(k)
-	}
-	return nil
-}
-
-func (c *InMemoryCache[T]) Flush(ctx context.Context, opts ...cache.FlushOption) error {
-	options := cache.FlushOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	nc := c.getNS(options.Namespace)
-	nc.flush()
-	return nil
-}
-
-func (c *InMemoryCache[T]) Close() {
-	close(c.stopCh)
-}
-
-func (c *InMemoryCache[T]) startCleaner(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			c.cleanExpired()
-		case <-c.stopCh:
-			return
-		}
-	}
-}
-
-func (c *InMemoryCache[T]) cleanExpired() {
-	c.mu.RLock()
-	nss := make([]*namespaceCache[T], 0, len(c.namespaces))
-	for _, ns := range c.namespaces {
-		nss = append(nss, ns)
-	}
-	c.mu.RUnlock()
-	now := time.Now()
-	for _, nc := range nss {
-		nc.mu.Lock()
-		for k, it := range nc.items {
-			if it.expiresAt != (time.Time{}) && now.After(it.expiresAt) {
-				delete(nc.items, k)
-			}
-		}
-		nc.mu.Unlock()
-	}
 }
 
 type item[T any] struct {
-	data      T
+	value     T
 	expiresAt time.Time
-}
-
-type namespaceCache[T any] struct {
-	mu    sync.RWMutex
-	items map[string]*item[T]
-}
-
-func (c *InMemoryCache[T]) getNS(ns string) *namespaceCache[T] {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	nc, ok := c.namespaces[ns]
-	if !ok {
-		nc = &namespaceCache[T]{items: make(map[string]*item[T])}
-		c.namespaces[ns] = nc
-	}
-	return nc
-}
-
-func (nc *namespaceCache[T]) get(key string) (T, bool) {
-	nc.mu.RLock()
-	defer nc.mu.RUnlock()
-	it, ok := nc.items[key]
-	if !ok || (it.expiresAt != (time.Time{}) && time.Now().After(it.expiresAt)) {
-		var zero T
-		return zero, false
-	}
-	return it.data, true
-}
-
-func (nc *namespaceCache[T]) set(key string, data T, ttl time.Duration) {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	expires := time.Time{}
-	if ttl > 0 {
-		expires = time.Now().Add(ttl)
-	}
-	nc.items[key] = &item[T]{data: data, expiresAt: expires}
-}
-
-func (nc *namespaceCache[T]) delete(key string) {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	delete(nc.items, key)
-}
-
-func (nc *namespaceCache[T]) flush() {
-	nc.mu.Lock()
-	defer nc.mu.Unlock()
-	nc.items = make(map[string]*item[T])
 }

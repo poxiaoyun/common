@@ -16,7 +16,7 @@
 | [`controller`](./controller) | 基于队列和数据源的协调循环、并发控制及控制器管理 |
 | [`httpclient`](./httpclient) | HTTP 客户端配置、认证 Transport 和请求辅助能力 |
 | [`config`](./config) | 命令行参数、环境变量和动态配置加载 |
-| [`cache`](./cache) | 支持 TTL、命名空间、批量操作和按需加载的泛型缓存接口；包含内存实现 |
+| [`cache`](./cache) | 过期值缓存、原子过期计数与固定窗口限流；包含进程内值缓存适配器 |
 | [`validation`](./validation) | 结构体规则校验、常用字符串校验和字段路径转换 |
 | [`i18n`](./i18n) | 基于 context 的国际化，支持翻译文件、模板、复数、回退和 HTTP 语言检测 |
 | [`version`](./version) | 提供构建版本、Git 提交、Go 版本和运行平台信息 |
