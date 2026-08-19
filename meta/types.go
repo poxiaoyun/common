@@ -84,6 +84,51 @@ type ListOptions struct {
 	LabelSelector string `json:"labelSelector,omitempty"`
 }
 
+// ListOption applies caller-owned policy to public list options.
+type ListOption interface {
+	// ApplyToList applies this option to options in declaration order.
+	ApplyToList(*ListOptions)
+}
+
+// DefaultSizeOption supplies a default list size.
+type DefaultSizeOption int
+
+// ApplyToList fills Size when it is zero.
+func (option DefaultSizeOption) ApplyToList(options *ListOptions) {
+	if options.Size == 0 {
+		options.Size = int(option)
+	}
+}
+
+// DefaultSize supplies a size only when the caller omitted it.
+func DefaultSize(size int) DefaultSizeOption {
+	return DefaultSizeOption(size)
+}
+
+// DefaultSortOption supplies a default list sort.
+type DefaultSortOption string
+
+// ApplyToList fills Sort when it is empty.
+func (option DefaultSortOption) ApplyToList(options *ListOptions) {
+	if options.Sort == "" {
+		options.Sort = string(option)
+	}
+}
+
+// DefaultSort supplies a sort only when the caller omitted it.
+func DefaultSort(sort string) DefaultSortOption {
+	return DefaultSortOption(sort)
+}
+
+// ApplyListOptions expands public list options in declaration order.
+func ApplyListOptions(options []ListOption) ListOptions {
+	resolved := ListOptions{}
+	for _, option := range options {
+		option.ApplyToList(&resolved)
+	}
+	return resolved
+}
+
 type SortDirection string
 
 const (

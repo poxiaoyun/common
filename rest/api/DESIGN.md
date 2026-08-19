@@ -60,3 +60,6 @@ over `page`; a positive page selects page pagination. A request with neither is
 mode-neutral, so the owning service selects its default without changing the
 shared parser. Collection `resourceVersion` is separate from item versions and
 is omitted when the backend cannot express it as the shared integer contract.
+`GetListOptions` accepts boundary-owned defaults for size and sort. Defaults
+are applied before request fields, so an explicitly provided zero size or empty
+sort remains explicit. They never modify Page or Continue.

@@ -22,3 +22,6 @@ Resource List APIs use `meta.Page[T]` and `meta.ListOptions`. The query field
 for batch length is `size`; `limit` is not a second spelling. A non-empty
 `continue` selects continuation pagination and takes precedence over `page`.
 Defaults and maximum sizes belong to the service that owns the HTTP boundary.
+Services can pass `meta.DefaultSize` and `meta.DefaultSort` to `GetListOptions`; these
+options only fill omitted values and do not choose or rewrite the pagination
+mode.

@@ -68,8 +68,24 @@ func (p PathVarList) Map() map[string]string {
 
 type ListOptions = meta.ListOptions
 
-func GetListOptions(r *http.Request) ListOptions {
+func GetListOptions(r *http.Request, modifiers ...meta.ListOption) ListOptions {
 	queries := r.URL.Query()
+	options := meta.ApplyListOptions(modifiers)
+	if queries.Has("page") {
+		options.Page = ValueOrDefault(queries.Get("page"), 0)
+	}
+	if queries.Has("size") {
+		options.Size = ValueOrDefault(queries.Get("size"), 0)
+	}
+	if queries.Has("search") {
+		options.Search = queries.Get("search")
+	}
+	if queries.Has("sort") {
+		options.Sort = queries.Get("sort")
+	}
+	if queries.Has("continue") {
+		options.Continue = queries.Get("continue")
+	}
 	fieldSelector := queries.Get("fieldSelector")
 	if fieldSelector == "" {
 		fieldSelector = queries.Get("field-selector")
@@ -78,15 +94,9 @@ func GetListOptions(r *http.Request) ListOptions {
 	if labelSelector == "" {
 		labelSelector = queries.Get("label-selector")
 	}
-	return ListOptions{
-		Page:          ValueOrDefault(queries.Get("page"), 0),
-		Size:          ValueOrDefault(queries.Get("size"), 0),
-		Search:        queries.Get("search"),
-		Sort:          queries.Get("sort"),
-		Continue:      queries.Get("continue"),
-		FieldSelector: fieldSelector,
-		LabelSelector: labelSelector,
-	}
+	options.FieldSelector = fieldSelector
+	options.LabelSelector = labelSelector
+	return options
 }
 
 func HeaderOrQuery[T any](r *http.Request, key string, defaultValue T) T {
