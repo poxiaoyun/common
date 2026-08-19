@@ -10,6 +10,8 @@
 
 Create 允许调用方不提供 ID。空 ID 生成 UUID，显式非空 ID 保留；UID、ResourceVersion、Generation、CreationTimestamp、Resource、Scopes 和 DeletionTimestamp 都由 Store 管理，调用方预填值不能覆盖服务端值。Generation 从 1 开始，ResourceVersion 在成功持久化后必须为正数。
 
+资源名默认由对象类型名按统一复数规则推导。对象只在既有持久化或外部协议名称与该规则不一致、且兼容该名称是当前要求时实现 `ResourceName() string`；不得为了显式重复默认结果而实现它。
+
 Update 的 `ResourceVersion=0` 表示无条件更新，非零值在 `OptimisticLock` 开启时必须匹配当前版本，否则返回 Conflict。每次成功持久化都推进 ResourceVersion。ObjectMeta 和顶层 status 的变化不推进 Generation，其他业务字段发生变化时 Generation 加一。
 
 普通 Update 和 Patch 保留当前 status。`Status().Update` 和 `Status().Patch` 只修改顶层 status，不能修改元数据、业务字段或 Generation。Patch 必须基于存储中的当前对象原子应用，传入对象上的 ResourceVersion 不是 Patch 的隐式前置条件。

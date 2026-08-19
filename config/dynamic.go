@@ -1,189 +1,168 @@
 package config
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"slices"
 
-	"xiaoshiai.cn/common/controller"
 	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/store"
 )
 
-// Entry is one versioned dynamic configuration value.
-type Entry struct {
-	Key     string `json:"key"`
-	Value   string `json:"value"`
-	Version int64  `json:"version"`
-}
-
-// SetOptions controls the write precondition for one configuration value.
-type SetOptions struct {
-	// ExpectedVersion nil performs an upsert, zero creates only when absent,
-	// and a positive value performs a compare-and-swap update.
-	ExpectedVersion *int64
-}
-
-// DeleteOptions controls the delete precondition for one configuration value.
-type DeleteOptions struct {
-	// ExpectedVersion nil deletes the current value. A positive value requires
-	// that exact version.
-	ExpectedVersion *int64
-}
-
-// Event describes one ordered dynamic configuration change.
-type Event struct {
-	Type  store.WatchEventType
-	Entry Entry
-}
-
-// DynamicConfig stores versioned configuration values.
-type DynamicConfig interface {
-	// Set writes key according to options and returns the persisted version.
-	Set(ctx context.Context, key, value string, options SetOptions) (Entry, error)
-	// Get returns the current value and version for key.
-	Get(ctx context.Context, key string) (Entry, error)
-	// List returns all values ordered by key.
-	List(ctx context.Context) ([]Entry, error)
-	// Delete removes key according to options.
-	Delete(ctx context.Context, key string, options DeleteOptions) error
-	// Watch observes ordered configuration changes.
-	Watch(ctx context.Context, onChanged func(context.Context, Event) error) error
-}
-
-// DynamicConfigOptions identifies one component's configuration scope.
-type DynamicConfigOptions struct {
-	Server    string `json:"server" description:"Server address for the dynamic configuration service, e.g., 'http://localhost:8080'"`
-	Token     string `json:"token" config:"token,sensitive" description:"Authentication token for accessing the dynamic configuration service"`
-	Component string `json:"component" description:"Component name used to isolate configuration values"`
-}
-
-// NewDefaultDynamicConfigOptions returns the default centralized configuration options.
-func NewDefaultDynamicConfigOptions(component string) *DynamicConfigOptions {
-	return &DynamicConfigOptions{Server: "http://config-server:8080", Component: component}
-}
-
-// AddToStoreSchema registers the dynamic configuration resource.
-func AddToStoreSchema(schema *store.Schema) error {
-	return schema.Register(&Setting{}, store.ResourceSchema{})
-}
-
-// NewStoreDynamicConfig returns a Store-backed dynamic configuration adapter.
-func NewStoreDynamicConfig(storage store.Store, options *DynamicConfigOptions) DynamicConfig {
-	storage = storage.Scope(store.Scope{Resource: "configs", Name: options.Component})
-	return &StoreDynamicConfig{Storage: storage}
-}
-
-// Setting is the Store representation of one dynamic configuration value.
-type Setting struct {
+// Configuration is one named, versioned JSON document.
+type Configuration struct {
 	store.ObjectMeta `json:",inline"`
-	Value            string `json:"value"`
+	Value            json.RawMessage `json:"value"`
 }
 
-// StoreDynamicConfig stores configuration values in a common Store.
-type StoreDynamicConfig struct {
-	Storage store.Store
+// WriteOption applies an optional write precondition.
+type WriteOption interface {
+	ApplyToWrite(*WriteOptions)
 }
 
-// List returns all values ordered by key.
-func (s *StoreDynamicConfig) List(ctx context.Context) ([]Entry, error) {
-	settings := &store.List[Setting]{}
-	if err := s.Storage.List(ctx, settings); err != nil {
-		return nil, err
-	}
-	result := make([]Entry, 0, len(settings.Items))
-	for _, setting := range settings.Items {
-		result = append(result, EntryFromSetting(&setting))
-	}
-	slices.SortFunc(result, func(left, right Entry) int {
-		if left.Key < right.Key {
-			return -1
-		}
-		if left.Key > right.Key {
-			return 1
-		}
-		return 0
-	})
-	return result, nil
+// WriteOptions contains the resolved preconditions for one write.
+type WriteOptions struct {
+	IfAbsent        bool
+	ExpectedVersion *int64
 }
 
-// Get returns the current value and version for key.
-func (s *StoreDynamicConfig) Get(ctx context.Context, key string) (Entry, error) {
-	setting := &Setting{}
-	if err := s.Storage.Get(ctx, key, setting); err != nil {
-		return Entry{}, err
-	}
-	return EntryFromSetting(setting), nil
+// IfAbsentOption requires a Set target not to exist.
+type IfAbsentOption struct{}
+
+// ApplyToWrite applies the create-only precondition.
+func (IfAbsentOption) ApplyToWrite(options *WriteOptions) {
+	options.IfAbsent = true
 }
 
-// Set writes key according to options and returns the persisted version.
-func (s *StoreDynamicConfig) Set(ctx context.Context, key, value string, options SetOptions) (Entry, error) {
-	setting := &Setting{ObjectMeta: store.ObjectMeta{ID: key, Name: key}, Value: value}
-	if options.ExpectedVersion != nil {
-		if *options.ExpectedVersion == 0 {
-			if err := s.Storage.Create(ctx, setting); err != nil {
-				return Entry{}, err
-			}
-			return EntryFromSetting(setting), nil
+// IfAbsent requires the Configuration not to exist. It is valid only for Set.
+func IfAbsent() IfAbsentOption {
+	return IfAbsentOption{}
+}
+
+// IfVersionOption requires a Configuration to have a specific version.
+type IfVersionOption int64
+
+// ApplyToWrite applies the version precondition.
+func (option IfVersionOption) ApplyToWrite(options *WriteOptions) {
+	version := int64(option)
+	options.ExpectedVersion = &version
+}
+
+// IfVersion requires the Configuration to have version.
+func IfVersion(version int64) IfVersionOption {
+	return IfVersionOption(version)
+}
+
+// ResolveWriteOptions applies and validates options for one write.
+func ResolveWriteOptions(options ...WriteOption) (WriteOptions, error) {
+	resolved := WriteOptions{}
+	for _, option := range options {
+		if option == nil {
+			return WriteOptions{}, commonerrors.NewBadRequest("configuration write options cannot be nil")
 		}
-		setting.ResourceVersion = *options.ExpectedVersion
-		if err := s.Storage.Update(ctx, setting); err != nil {
-			return Entry{}, err
-		}
-		return EntryFromSetting(setting), nil
+		option.ApplyToWrite(&resolved)
 	}
-	current := &Setting{}
-	err := s.Storage.Get(ctx, key, current)
+	if resolved.ExpectedVersion != nil && (*resolved.ExpectedVersion <= 0 || resolved.IfAbsent) {
+		return WriteOptions{}, commonerrors.NewBadRequest("configuration write preconditions cannot be combined and versions must be positive")
+	}
+	return resolved, nil
+}
+
+// PatchType identifies one supported JSON patch format.
+type PatchType string
+
+const (
+	// MergePatch applies RFC 7396 JSON Merge Patch semantics.
+	MergePatch PatchType = "application/merge-patch+json"
+	// JSONPatch applies RFC 6902 JSON Patch semantics.
+	JSONPatch PatchType = "application/json-patch+json"
+)
+
+// Patch is a patch against a Configuration value root.
+type Patch struct {
+	Type PatchType
+	Data json.RawMessage
+}
+
+// EventType identifies one high-level Configuration state transition.
+type EventType string
+
+const (
+	// EventInitial is always the first Watch event. A nil Configuration means missing.
+	EventInitial EventType = "initial"
+	// EventChange represents a create or update after the initial state.
+	EventChange EventType = "change"
+	// EventDelete represents deletion after the initial state.
+	EventDelete EventType = "delete"
+)
+
+// Event describes one Configuration Watch event.
+type Event struct {
+	Type          EventType
+	Configuration *Configuration
+	Error         error
+}
+
+// Watcher provides an ordered stream for one Configuration.
+type Watcher interface {
+	// Events returns the ordered event stream and closes after Stop or a terminal error.
+	Events() <-chan Event
+	// Stop idempotently stops the Watcher and closes its event stream.
+	Stop()
+}
+
+// Change is the typed event delivered by OnChange.
+type Change[T any] struct {
+	Type    EventType
+	Object  *T
+	Version int64
+}
+
+// DynamicConfig stores typed configuration objects addressed by namespace and name.
+type DynamicConfig interface {
+	// Set serializes object and replaces namespace/name according to options.
+	Set(ctx context.Context, namespace, name string, object any, options ...WriteOption) (*Configuration, error)
+	// Get decodes namespace/name into object. A missing Configuration returns (nil, nil).
+	Get(ctx context.Context, namespace, name string, object any) (*Configuration, error)
+	// Patch changes namespace/name and optionally decodes the persisted result into object.
+	Patch(ctx context.Context, namespace, name string, patch Patch, object any, options ...WriteOption) (*Configuration, error)
+	// Watch observes one Configuration and always starts with exactly one Initial event.
+	Watch(ctx context.Context, namespace, name string) (Watcher, error)
+}
+
+// OnChange watches one Configuration and decodes every state into a fresh T.
+func OnChange[T any](ctx context.Context, client DynamicConfig, namespace, name string, callback func(context.Context, Change[T]) error) error {
+	watcher, err := client.Watch(ctx, namespace, name)
 	if err != nil {
-		if !commonerrors.IsNotFound(err) {
-			return Entry{}, err
-		}
-		if err := s.Storage.Create(ctx, setting); err != nil {
-			return Entry{}, err
-		}
-		return EntryFromSetting(setting), nil
-	}
-	setting.ResourceVersion = current.ResourceVersion
-	if err := s.Storage.Update(ctx, setting); err != nil {
-		return Entry{}, err
-	}
-	return EntryFromSetting(setting), nil
-}
-
-// Delete removes key according to options.
-func (s *StoreDynamicConfig) Delete(ctx context.Context, key string, options DeleteOptions) error {
-	setting := &Setting{}
-	if err := s.Storage.Get(ctx, key, setting); err != nil {
 		return err
 	}
-	if options.ExpectedVersion != nil && setting.ResourceVersion != *options.ExpectedVersion {
-		return commonerrors.NewConflict("setting", key, fmt.Errorf("resourceVersion %d does not match", *options.ExpectedVersion))
-	}
-	if options.ExpectedVersion != nil {
-		return s.Storage.Delete(ctx, setting, store.WithFieldRequirements(
-			store.RequirementEqual("resourceVersion", *options.ExpectedVersion),
-		))
-	}
-	return s.Storage.Delete(ctx, setting)
-}
-
-// Watch observes ordered configuration changes.
-func (s *StoreDynamicConfig) Watch(ctx context.Context, onChanged func(context.Context, Event) error) error {
-	handler := func(ctx context.Context, event controller.TypedWatchEvent[*Setting]) error {
-		if event.Type == store.WatchEventBookmark {
+	defer watcher.Stop()
+	for {
+		select {
+		case <-ctx.Done():
 			return nil
+		case event, open := <-watcher.Events():
+			if !open {
+				return nil
+			}
+			if event.Error != nil {
+				return event.Error
+			}
+			change := Change[T]{Type: event.Type}
+			if event.Configuration != nil {
+				object := new(T)
+				decoder := json.NewDecoder(bytes.NewReader(event.Configuration.Value))
+				decoder.UseNumber()
+				if err := decoder.Decode(object); err != nil {
+					return fmt.Errorf("decode configuration object: %w", err)
+				}
+				change.Object = object
+				change.Version = event.Configuration.ResourceVersion
+			}
+			if err := callback(ctx, change); err != nil {
+				return err
+			}
 		}
-		return onChanged(ctx, Event{Type: event.Type, Entry: EntryFromSetting(event.Object)})
 	}
-	return controller.RunTypedListWatchContext(
-		ctx,
-		s.Storage,
-		controller.EventHandlerFunc[*Setting](handler),
-		store.WithSendInitialEvents(),
-	)
-}
-
-// EntryFromSetting converts a persisted Setting to its public value.
-func EntryFromSetting(setting *Setting) Entry {
-	return Entry{Key: setting.ID, Value: setting.Value, Version: setting.ResourceVersion}
 }
