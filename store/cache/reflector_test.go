@@ -107,10 +107,7 @@ func (*reflectorTestStore) Capabilities() store.Capabilities {
 }
 
 func (s *reflectorTestStore) Watch(_ context.Context, _ store.ObjectList, options ...store.WatchOption) (store.Watcher, error) {
-	configured := store.WatchOptions{}
-	for _, option := range options {
-		option(&configured)
-	}
+	configured := store.ApplyWatchOptions(options)
 	s.mu.Lock()
 	call := len(s.options)
 	s.options = append(s.options, configured)

@@ -77,7 +77,7 @@ func (s *StrategyStore) Create(ctx context.Context, obj store.Object, opts ...st
 // Delete implements store.Store.
 func (s *StrategyStore) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
 	if s.Stratage.DeletionPropagation != "" {
-		opts = append(opts, store.WithDeletePropagation(s.Stratage.DeletionPropagation))
+		opts = append(opts, store.WithPropagation(s.Stratage.DeletionPropagation))
 	}
 	if err := s.Store.Delete(ctx, obj, opts...); err != nil {
 		return err

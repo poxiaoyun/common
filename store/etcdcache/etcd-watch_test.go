@@ -50,7 +50,7 @@ func testEtcdCacherWatch(t *testing.T, client *kubernetes.Client) {
 	t.Run("ID selector and scope filtering", func(t *testing.T) {
 		ctx := context.Background()
 		storage := newTestStore(t, ctx, client, newMyObjectSchema(t))
-		watcher := watchFromCurrent(t, ctx, storage, store.WithWatchID("target"))
+		watcher := watchFromCurrent(t, ctx, storage, store.WithID("target"))
 		if err := storage.Create(ctx, newMyObject("other", "other", true, "blue")); err != nil {
 			t.Fatalf("Create(other) error = %v", err)
 		}
@@ -73,7 +73,7 @@ func testEtcdCacherWatch(t *testing.T, client *kubernetes.Client) {
 		rootWatcher.Stop()
 		assertWatcherClosed(t, rootWatcher)
 
-		subscopeWatcher := watchFromCurrent(t, ctx, storage, store.WithWatchSubscopes())
+		subscopeWatcher := watchFromCurrent(t, ctx, storage, store.WithSubScopes())
 		if err := scoped.Create(ctx, newMyObject("scoped-2", "scoped-2", true, "blue")); err != nil {
 			t.Fatalf("second scoped Create() error = %v", err)
 		}
@@ -89,7 +89,7 @@ func testEtcdCacherWatch(t *testing.T, client *kubernetes.Client) {
 			t,
 			ctx,
 			storage,
-			store.WithWatchFieldRequirements(store.RequirementEqual("enabled", true)),
+			store.WithFieldRequirements(store.RequirementEqual("enabled", true)),
 		)
 		if err := storage.Create(ctx, newMyObject("disabled", "disabled", false, "blue")); err != nil {
 			t.Fatalf("Create(disabled) error = %v", err)
@@ -118,7 +118,7 @@ func watchFromCurrent(t *testing.T, ctx context.Context, storage store.Store, op
 	if err := storage.List(ctx, snapshot, store.WithSubScopes()); err != nil {
 		t.Fatalf("List() before Watch() error = %v", err)
 	}
-	opts = append(opts, store.WithWatchResourceVersion(snapshot.ResourceVersion))
+	opts = append(opts, store.WithResourceVersion(snapshot.ResourceVersion))
 	return openTestWatcher(t, ctx, storage, &store.List[MyObject]{}, opts...)
 }
 

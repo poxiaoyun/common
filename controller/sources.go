@@ -110,7 +110,7 @@ func RunListWatch(ctx context.Context, storage store.Store, resource string, sub
 	list := &store.List[store.Unstructured]{Resource: resource}
 	options := []store.WatchOption{}
 	if subScope {
-		options = append(options, store.WithWatchSubscopes())
+		options = append(options, store.WithSubScopes())
 	}
 	reflector := storecache.NewReflector(storage, list, options...)
 	return reflector.Run(ctx, NewReflectorEventHandler(handler))

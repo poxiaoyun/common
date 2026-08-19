@@ -13,9 +13,16 @@ import (
 
 type optionCaptureStore struct {
 	store.Store
+	getOptions        store.GetOptions
 	listOptions       store.ListOptions
 	patchBatchOptions store.PatchBatchOptions
 	deleteOptions     store.DeleteOptions
+}
+
+func (s *optionCaptureStore) Get(_ context.Context, id string, object store.Object, opts ...store.GetOption) error {
+	s.getOptions = store.ApplyGetOptions(opts)
+	object.SetID(id)
+	return nil
 }
 
 type remoteSchemaObject struct {
@@ -35,30 +42,18 @@ func (s *optionCaptureStore) Scope(...store.Scope) store.Store {
 }
 
 func (s *optionCaptureStore) List(_ context.Context, list store.ObjectList, opts ...store.ListOption) error {
-	options := store.ListOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	s.listOptions = options
+	s.listOptions = store.ApplyListOptions(opts)
 	list.SetContinue("next-token")
 	return nil
 }
 
 func (s *optionCaptureStore) PatchBatch(_ context.Context, _ store.ObjectList, _ store.PatchBatch, opts ...store.PatchBatchOption) error {
-	options := store.PatchBatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	s.patchBatchOptions = options
+	s.patchBatchOptions = store.ApplyPatchBatchOptions(opts)
 	return nil
 }
 
 func (s *optionCaptureStore) Delete(_ context.Context, _ store.Object, opts ...store.DeleteOption) error {
-	options := store.DeleteOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	s.deleteOptions = options
+	s.deleteOptions = store.ApplyDeleteOptions(opts)
 	return nil
 }
 
@@ -127,18 +122,60 @@ func TestRemoteStoreListPassesContinue(t *testing.T) {
 	underlying := &optionCaptureStore{}
 	remote := newCaptureRemoteStore(t, underlying)
 	list := &store.List[store.Unstructured]{Resource: "widgets"}
+	labelRequirement := store.RequirementEqual("environment", "production")
+	fieldRequirement := store.RequirementEqual("enabled", "true")
 
 	if err := remote.List(context.Background(), list,
 		store.WithPageSize(0, 2),
 		store.WithContinue("current-token"),
+		store.WithLabelRequirements(labelRequirement),
+		store.WithFieldRequirements(fieldRequirement),
+		store.WithFields("id", "name"),
+		store.WithResourceVersion(7),
+		store.WithSubScopes(),
 	); err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
 	if got := underlying.listOptions.Continue; got != "current-token" {
 		t.Fatalf("ListOptions.Continue = %q, want %q", got, "current-token")
 	}
+	if !reflect.DeepEqual(underlying.listOptions.Fields, []string{"id", "name"}) {
+		t.Fatalf("ListOptions.Fields = %#v", underlying.listOptions.Fields)
+	}
+	if underlying.listOptions.ResourceVersion == nil || *underlying.listOptions.ResourceVersion != 7 {
+		t.Fatalf("ListOptions.ResourceVersion = %#v", underlying.listOptions.ResourceVersion)
+	}
+	if !underlying.listOptions.IncludeSubScopes {
+		t.Fatal("ListOptions.IncludeSubScopes = false, want true")
+	}
+	if !reflect.DeepEqual(underlying.listOptions.LabelRequirements, store.Requirements{labelRequirement}) {
+		t.Fatalf("ListOptions.LabelRequirements = %#v", underlying.listOptions.LabelRequirements)
+	}
+	if !reflect.DeepEqual(underlying.listOptions.FieldRequirements, store.Requirements{fieldRequirement}) {
+		t.Fatalf("ListOptions.FieldRequirements = %#v", underlying.listOptions.FieldRequirements)
+	}
 	if got := list.Continue; got != "next-token" {
 		t.Fatalf("List.Continue = %q, want %q", got, "next-token")
+	}
+}
+
+func TestRemoteStoreGetPassesProtocolOptions(t *testing.T) {
+	underlying := &optionCaptureStore{}
+	remote := newCaptureRemoteStore(t, underlying)
+	object := &store.Unstructured{}
+	object.SetResource("widgets")
+
+	if err := remote.Get(context.Background(), "widget-1", object,
+		store.WithResourceVersion(7),
+		store.WithFields("id", "name"),
+	); err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if underlying.getOptions.ResourceVersion == nil || *underlying.getOptions.ResourceVersion != 7 {
+		t.Fatalf("GetOptions.ResourceVersion = %#v", underlying.getOptions.ResourceVersion)
+	}
+	if !reflect.DeepEqual(underlying.getOptions.Fields, []string{"id", "name"}) {
+		t.Fatalf("GetOptions.Fields = %#v", underlying.getOptions.Fields)
 	}
 }
 
@@ -151,8 +188,8 @@ func TestRemoteStorePatchBatchPassesSelectors(t *testing.T) {
 
 	err := remote.PatchBatch(context.Background(), list,
 		store.MapMergePatchBacth{"enabled": false},
-		store.WithPatchBatchLabelRequirements(labelRequirement),
-		store.WithPatchBatchFieldRequirements(fieldRequirement),
+		store.WithLabelRequirements(labelRequirement),
+		store.WithFieldRequirements(fieldRequirement),
 	)
 	if err != nil {
 		t.Fatalf("PatchBatch() error = %v", err)
@@ -177,10 +214,10 @@ func TestRemoteStoreDeletePassesConditions(t *testing.T) {
 	fieldRequirement := store.RequirementEqual("enabled", "true")
 
 	if err := remote.Delete(context.Background(), object,
-		store.WithDeleteLabelRequirements(labelRequirement),
-		store.WithDeleteFieldRequirements(fieldRequirement),
-		store.WithDeleteUID("uid-1"),
-		store.WithDeleteResourceVersion(7),
+		store.WithLabelRequirements(labelRequirement),
+		store.WithFieldRequirements(fieldRequirement),
+		store.WithUID("uid-1"),
+		store.WithResourceVersion(7),
 	); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}

@@ -244,7 +244,7 @@ func TestCacheStore_Get(t *testing.T) {
 	}
 
 	// delete
-	if err := namespaceedStore.Delete(ctx, exists, store.WithDeletePropagation(store.DeletePropagationForeground)); err != nil {
+	if err := namespaceedStore.Delete(ctx, exists, store.WithPropagation(store.DeletePropagationForeground)); err != nil {
 		t.Fatalf("failed to delete object: %v", err)
 	}
 	if err := namespaceedStore.Get(ctx, "test", exists); err != nil {

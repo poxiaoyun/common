@@ -197,7 +197,7 @@ func TestMongoStorageBatchPatchAdvancesResourceVersion(t *testing.T) {
 		t.Context(),
 		list,
 		store.RawPatchBatch(store.PatchTypeMergePatch, []byte(`{"description":"patched"}`)),
-		store.WithPatchBatchFieldRequirements(store.NewRequirement("id", store.Equals, object.ID)),
+		store.WithFieldRequirements(store.NewRequirement("id", store.Equals, object.ID)),
 	); err != nil {
 		t.Fatalf("PatchBatch() error = %v", err)
 	}

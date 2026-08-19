@@ -340,37 +340,25 @@ func (s *Storage) Ping(ctx context.Context) error {
 
 // Count implements store.Store.
 func (s *Storage) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
-	options := store.CountOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyCountOptions(opts)
 	return s.core.count(ctx, s.conditions, obj, options)
 }
 
 // DeleteBatch implements store.Store.
 func (s *Storage) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
-	options := store.DeleteBatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyDeleteBatchOptions(opts)
 	return s.core.deleteBatch(ctx, s.conditions, obj, options)
 }
 
 // Patch implements store.Store.
 func (s *Storage) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	options := store.PatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyPatchOptions(opts)
 	return s.core.patch(ctx, s.conditions, obj, patch, false, options)
 }
 
 // PatchBatch implements store.Store.
 func (s *Storage) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
-	options := store.PatchBatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyPatchBatchOptions(opts)
 	return s.core.patchBatch(ctx, s.conditions, obj, patch, options)
 }
 
@@ -381,10 +369,6 @@ func (s *Storage) Status() store.StatusStorage {
 
 // Watch implements store.Store.
 func (s *Storage) Watch(ctx context.Context, obj store.ObjectList, opts ...store.WatchOption) (store.Watcher, error) {
-	options := store.WatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
 	return nil, errors.NewUnsupported("sql store does not support watch")
 }
 
@@ -397,42 +381,27 @@ func (s *Storage) Scope(conds ...store.Scope) store.Store {
 }
 
 func (s *Storage) Create(ctx context.Context, in store.Object, options ...store.CreateOption) error {
-	option := store.CreateOptions{}
-	for _, opt := range options {
-		opt(&option)
-	}
+	option := store.ApplyCreateOptions(options)
 	return s.core.create(ctx, s.conditions, in, option)
 }
 
 func (s *Storage) Get(ctx context.Context, name string, into store.Object, options ...store.GetOption) error {
-	option := store.GetOptions{}
-	for _, opt := range options {
-		opt(&option)
-	}
+	option := store.ApplyGetOptions(options)
 	return s.core.get(ctx, s.conditions, name, into, option)
 }
 
 func (s *Storage) Update(ctx context.Context, into store.Object, options ...store.UpdateOption) error {
-	option := store.UpdateOptions{}
-	for _, opt := range options {
-		opt(&option)
-	}
+	option := store.ApplyUpdateOptions(options)
 	return s.core.update(ctx, s.conditions, into, false, option)
 }
 
 func (s *Storage) List(ctx context.Context, list store.ObjectList, options ...store.ListOption) error {
-	opts := store.ListOptions{}
-	for _, opt := range options {
-		opt(&opts)
-	}
+	opts := store.ApplyListOptions(options)
 	return s.core.list(ctx, s.conditions, list, opts)
 }
 
 func (s *Storage) Delete(ctx context.Context, into store.Object, options ...store.DeleteOption) error {
-	option := store.DeleteOptions{}
-	for _, opt := range options {
-		opt(&option)
-	}
+	option := store.ApplyDeleteOptions(options)
 	return s.core.delete(ctx, s.conditions, into, option)
 }
 
@@ -443,19 +412,13 @@ type StatusStorage struct {
 
 // Patch implements store.StatusStorage.
 func (s *StatusStorage) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	options := store.PatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyPatchOptions(opts)
 	return s.core.patch(ctx, s.conditions, obj, patch, true, options)
 }
 
 // Update implements store.StatusStorage.
 func (s *StatusStorage) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
-	options := store.UpdateOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyUpdateOptions(opts)
 	return s.core.update(ctx, s.conditions, obj, true, options)
 }
 

@@ -27,10 +27,7 @@ func NewObject[T any](t reflect.Type) T {
 
 // Watch implements Storage.
 func (m *MongoStorage) Watch(ctx context.Context, obj store.ObjectList, opts ...store.WatchOption) (store.Watcher, error) {
-	options := store.WatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyWatchOptions(opts)
 	resource, err := store.GetResource(obj)
 	if err != nil {
 		return nil, err

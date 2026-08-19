@@ -37,7 +37,7 @@ func TestCacheStoreWatchUsesInitialSnapshotWithoutHistory(t *testing.T) {
 	if bookmark.Type != store.WatchEventBookmark || bookmark.ResourceVersion != 0 {
 		t.Fatalf("bookmark = %#v, want zero ResourceVersion", bookmark)
 	}
-	if _, err := storage.Watch(t.Context(), &store.List[TestObject]{}, store.WithWatchResourceVersion(1)); !errors.IsResourceExpired(err) {
+	if _, err := storage.Watch(t.Context(), &store.List[TestObject]{}, store.WithResourceVersion(1)); !errors.IsResourceExpired(err) {
 		t.Fatalf("Watch(resourceVersion=1) error = %v, want ResourceExpired", err)
 	}
 }
@@ -85,9 +85,7 @@ func TestCacheStoreWatchReportsSelectorMembershipTransitions(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 	storage := NewCacheStore(upstream)
-	labelSelector := func(options *store.WatchOptions) {
-		options.LabelRequirements = []store.Requirement{store.RequirementEqual("state", "active")}
-	}
+	labelSelector := store.WithLabelRequirements(store.RequirementEqual("state", "active"))
 	watcher, err := storage.Watch(t.Context(), &store.List[TestObject]{}, store.WithSendInitialEvents(), labelSelector)
 	if err != nil {
 		t.Fatalf("Watch() error = %v", err)

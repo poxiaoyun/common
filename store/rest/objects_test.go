@@ -21,16 +21,12 @@ type objectAdapterStore struct {
 }
 
 func (s *objectAdapterStore) List(_ context.Context, _ store.ObjectList, options ...store.ListOption) error {
-	for _, option := range options {
-		option(&s.listOptions)
-	}
+	s.listOptions = store.ApplyListOptions(options)
 	return nil
 }
 
 func (s *objectAdapterStore) Watch(_ context.Context, _ store.ObjectList, options ...store.WatchOption) (store.Watcher, error) {
-	for _, option := range options {
-		option(&s.watchOptions)
-	}
+	s.watchOptions = store.ApplyWatchOptions(options)
 	return s.watcher, nil
 }
 
@@ -84,9 +80,16 @@ func TestListObjectsOrWatchPassesRequestFiltersToWatch(t *testing.T) {
 	events := make(chan store.WatchEvent, 1)
 	events <- store.WatchEvent{Error: watchError}
 	storage := &objectAdapterStore{watcher: &objectAdapterWatcher{events: events}}
-	request := httptest.NewRequest(http.MethodGet, "/?watch=true&labelSelector=environment%3Dproduction&fieldSelector=enabled%3Dtrue&includeSubscopes=true&resourceVersion=7&sendInitialEvents=true", nil)
+	request := httptest.NewRequest(http.MethodGet, "/?watch=true&sendInitialEvents=true&labelSelector=environment%3Dproduction&fieldSelector=enabled%3Dtrue", nil)
 
-	_, err := ListObjectsOrWatch(httptest.NewRecorder(), request, storage, &store.List[objectAdapterFixture]{})
+	_, err := ListObjectsOrWatch(
+		httptest.NewRecorder(),
+		request,
+		storage,
+		&store.List[objectAdapterFixture]{},
+		store.WithSubScopes(),
+		store.WithResourceVersion(7),
+	)
 	if !stderrors.Is(err, watchError) {
 		t.Fatalf("ListObjectsOrWatch() error = %v, want %v", err, watchError)
 	}

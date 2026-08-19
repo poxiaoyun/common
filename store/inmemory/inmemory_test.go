@@ -309,7 +309,7 @@ func TestCountAndBatchOperationsUseSelectors(t *testing.T) {
 	count, err := storage.Count(
 		ctx,
 		&user{},
-		store.WithCountFieldRequirements(store.RequirementEqual("enabled", true)),
+		store.WithFieldRequirements(store.RequirementEqual("enabled", true)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -322,7 +322,7 @@ func TestCountAndBatchOperationsUseSelectors(t *testing.T) {
 		ctx,
 		&store.List[user]{},
 		store.MapMergePatchBacth{"team": "platform"},
-		store.WithPatchBatchFieldRequirements(store.RequirementEqual("enabled", true)),
+		store.WithFieldRequirements(store.RequirementEqual("enabled", true)),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +341,7 @@ func TestCountAndBatchOperationsUseSelectors(t *testing.T) {
 	if err := storage.DeleteBatch(
 		ctx,
 		&store.List[user]{},
-		store.WithDeleteBatchFieldRequirements(store.RequirementEqual("email", "carol@example.com")),
+		store.WithFieldRequirements(store.RequirementEqual("email", "carol@example.com")),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +374,7 @@ func TestWatchSendsInitialAndMutationEvents(t *testing.T) {
 		ctx,
 		&store.List[user]{},
 		store.WithSendInitialEvents(),
-		store.WithWatchFieldRequirements(store.RequirementEqual("enabled", true)),
+		store.WithFieldRequirements(store.RequirementEqual("enabled", true)),
 	)
 	if err != nil {
 		t.Fatal(err)

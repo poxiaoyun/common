@@ -8,7 +8,7 @@ import (
 )
 
 func TestListOptionsFromMeta(t *testing.T) {
-	options, err := ListOptionsFromMeta(meta.ListOptions{
+	modifiers, err := ListOptionsFromMeta(meta.ListOptions{
 		Page:          2,
 		Size:          25,
 		Search:        "worker",
@@ -20,6 +20,7 @@ func TestListOptionsFromMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	options := ApplyListOptions(modifiers)
 	wantLabels := Requirements{RequirementEqual("environment", "production")}
 	wantFields := Requirements{RequirementEqual("enabled", "true")}
 	if options.Page != 2 || options.Size != 25 || options.Search != "worker" || options.Sort != "name-" || options.Continue != "next-token" {

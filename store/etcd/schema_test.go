@@ -36,7 +36,7 @@ func TestWatchAppliesUnindexedFieldRequirements(t *testing.T) {
 	}
 	watcher, err := storage.Watch(ctx, &store.List[indexedObject]{},
 		store.WithSendInitialEvents(),
-		store.WithWatchFieldRequirements(store.Requirement{
+		store.WithFieldRequirements(store.Requirement{
 			Key: "email", Operator: store.Equals, Values: []any{"two@example.com"},
 		}),
 	)

@@ -42,25 +42,39 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 	s.on(w, r, func(ctx context.Context, ref store.ResourcedObjectReference) (any, error) {
 		log := log.FromContext(ctx)
 		if ref.ID == "" {
-			options, err := ListOptionsFromRequest(r)
+			listOptions, err := ListOptionsFromRequest(r)
 			if err != nil {
 				return nil, err
 			}
-
+			if api.Query(r, "includeSubscopes", false) {
+				listOptions = append(listOptions, store.WithSubScopes())
+			}
+			if resourceVersion := api.Query(r, "resourceVersion", ""); resourceVersion != "" {
+				parsed, err := strconv.ParseInt(resourceVersion, 10, 64)
+				if err != nil {
+					return nil, errors.NewBadRequest("resourceVersion must be an integer")
+				}
+				listOptions = append(listOptions, store.WithResourceVersion(parsed))
+			}
+			if fields := api.Query(r, "fields", ""); fields != "" {
+				listOptions = append(listOptions, store.WithFields(strings.Split(fields, ",")...))
+			}
 			list := store.List[store.Unstructured]{}
 			list.Resource = ref.Resource
 
 			// count
 			if count := api.Query(r, "count", false); count {
+				options := store.ApplyListOptions(listOptions)
 				obj := &store.Unstructured{}
 				obj.SetResource(ref.Resource)
-				count, err := s.Store.Scope(ref.Scopes...).Count(ctx, obj, func(co *store.CountOptions) {
-					*co = store.CountOptions{
-						LabelRequirements: options.LabelRequirements,
-						FieldRequirements: options.FieldRequirements,
-						IncludeSubScopes:  options.IncludeSubScopes,
-					}
-				})
+				countOptions := []store.CountOption{
+					store.WithLabelRequirements(options.LabelRequirements...),
+					store.WithFieldRequirements(options.FieldRequirements...),
+				}
+				if options.IncludeSubScopes {
+					countOptions = append(countOptions, store.WithSubScopes())
+				}
+				count, err := s.Store.Scope(ref.Scopes...).Count(ctx, obj, countOptions...)
 				if err != nil {
 					return nil, err
 				}
@@ -68,11 +82,12 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 			}
 			// watch
 			if watch := api.Query(r, "watch", false); watch {
-				watchOptions := WatchOptionsFromListOptions(options)
-				watchOptions.SendInitialEvents = api.Query(r, "sendInitialEvents", false)
-				watcher, err := s.Store.Scope(ref.Scopes...).Watch(ctx, &list, func(wo *store.WatchOptions) {
-					*wo = watchOptions
-				})
+				options := store.ApplyListOptions(listOptions)
+				watchOptions := watchOptionsFromListOptions(options)
+				if api.Query(r, "sendInitialEvents", false) {
+					watchOptions = append(watchOptions, store.WithSendInitialEvents())
+				}
+				watcher, err := s.Store.Scope(ref.Scopes...).Watch(ctx, &list, watchOptions...)
 				if err != nil {
 					return nil, err
 				}
@@ -100,24 +115,27 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			// list
-			if err := s.Store.Scope(ref.Scopes...).List(ctx, &list, func(lo *store.ListOptions) {
-				*lo = options
-			}); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).List(ctx, &list, listOptions...); err != nil {
 				return nil, err
 			}
 			return list, nil
 
 		} else {
 			// get
-			getoptions := store.GetOptions{
-				Fields: strings.Split(api.Query(r, "fields", ""), ","),
-			}
-			option := func(o *store.GetOptions) {
-				*o = getoptions
-			}
 			obj := &store.Unstructured{}
 			obj.SetResource(ref.Resource)
-			if err := s.Store.Scope(ref.Scopes...).Get(ctx, ref.ID, obj, option); err != nil {
+			var options []store.GetOption
+			if resourceVersion := api.Query(r, "resourceVersion", ""); resourceVersion != "" {
+				parsed, err := strconv.ParseInt(resourceVersion, 10, 64)
+				if err != nil {
+					return nil, errors.NewBadRequest("resourceVersion must be an integer")
+				}
+				options = append(options, store.WithResourceVersion(parsed))
+			}
+			if fields := api.Query(r, "fields", ""); fields != "" {
+				options = append(options, store.WithFields(strings.Split(fields, ",")...))
+			}
+			if err := s.Store.Scope(ref.Scopes...).Get(ctx, ref.ID, obj, options...); err != nil {
 				return nil, err
 			}
 			return obj, nil
@@ -134,10 +152,7 @@ func (s *Server) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		obj.SetResource(ref.Resource)
 
-		options := store.CreateOptions{TTL: api.Query(r, "ttl", time.Duration(0))}
-		if err := s.Store.Scope(ref.Scopes...).Create(ctx, obj, func(co *store.CreateOptions) {
-			*co = options
-		}); err != nil {
+		if err := s.Store.Scope(ref.Scopes...).Create(ctx, obj, store.WithTTL(api.Query(r, "ttl", time.Duration(0)))); err != nil {
 			return nil, err
 		}
 		return obj, nil
@@ -164,14 +179,9 @@ func (s *Server) Patch(w http.ResponseWriter, r *http.Request) {
 		if ref.ID == "" {
 			// batch patch
 			batchPatch := store.RawPatchBatch(store.PatchType(patchtype), patchdata)
-			options := store.PatchBatchOptions{
-				LabelRequirements: labelsel,
-				FieldRequirements: fildsel,
-			}
 			opts := []store.PatchBatchOption{
-				func(bpo *store.PatchBatchOptions) {
-					*bpo = options
-				},
+				store.WithLabelRequirements(labelsel...),
+				store.WithFieldRequirements(fildsel...),
 			}
 			list := store.List[store.Unstructured]{}
 			list.Resource = ref.Resource
@@ -183,25 +193,21 @@ func (s *Server) Patch(w http.ResponseWriter, r *http.Request) {
 
 		patch := store.RawPatch(store.PatchType(patchtype), patchdata)
 
-		options := store.PatchOptions{}
-
-		options.LabelRequirements = labelsel
-		options.FieldRequirements = fildsel
+		options := []store.PatchOption{
+			store.WithLabelRequirements(labelsel...),
+			store.WithFieldRequirements(fildsel...),
+		}
 
 		obj := &store.Unstructured{}
 		obj.SetResource(ref.Resource)
 		obj.SetID(ref.ID)
 
 		if status := api.Query(r, "status", false); status {
-			if err := s.Store.Scope(ref.Scopes...).Status().Patch(ctx, obj, patch, func(po *store.PatchOptions) {
-				*po = options
-			}); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).Status().Patch(ctx, obj, patch, options...); err != nil {
 				return nil, err
 			}
 		} else {
-			if err := s.Store.Scope(ref.Scopes...).Patch(ctx, obj, patch, func(po *store.PatchOptions) {
-				*po = options
-			}); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).Patch(ctx, obj, patch, options...); err != nil {
 				return nil, err
 			}
 		}
@@ -214,15 +220,15 @@ func (s *Server) Update(w http.ResponseWriter, r *http.Request) {
 		if ref.ID == "" {
 			return nil, errors.NewBadRequest("id is required")
 		}
-		options := store.UpdateOptions{
-			TTL: api.Query(r, "ttl", time.Duration(0)),
-		}
 		labelsel, fildsel, err := decodeSelector(r)
 		if err != nil {
 			return nil, err
 		}
-		options.LabelRequirements = labelsel
-		options.FieldRequirements = fildsel
+		options := []store.UpdateOption{
+			store.WithTTL(api.Query(r, "ttl", time.Duration(0))),
+			store.WithLabelRequirements(labelsel...),
+			store.WithFieldRequirements(fildsel...),
+		}
 		obj := &store.Unstructured{}
 		if err := api.Body(r, obj); err != nil {
 			return nil, err
@@ -233,15 +239,11 @@ func (s *Server) Update(w http.ResponseWriter, r *http.Request) {
 		obj.SetResource(ref.Resource)
 
 		if status := api.Query(r, "status", false); status {
-			if err := s.Store.Scope(ref.Scopes...).Status().Update(ctx, obj, func(uo *store.UpdateOptions) {
-				*uo = options
-			}); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).Status().Update(ctx, obj, options...); err != nil {
 				return nil, err
 			}
 		} else {
-			if err := s.Store.Scope(ref.Scopes...).Update(ctx, obj, func(uo *store.UpdateOptions) {
-				*uo = options
-			}); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).Update(ctx, obj, options...); err != nil {
 				return nil, err
 			}
 		}
@@ -257,15 +259,12 @@ func (s *Server) Delete(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return nil, err
 			}
-			options := store.DeleteBatchOptions{
-				LabelRequirements: labelsel,
-				FieldRequirements: fildsel,
-			}
 			list := store.List[store.Unstructured]{}
 			list.Resource = ref.Resource
-			if err := s.Store.Scope(ref.Scopes...).DeleteBatch(ctx, &list, func(do *store.DeleteBatchOptions) {
-				*do = options
-			}); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).DeleteBatch(ctx, &list,
+				store.WithLabelRequirements(labelsel...),
+				store.WithFieldRequirements(fildsel...),
+			); err != nil {
 				return nil, err
 			}
 			return list, nil
@@ -274,36 +273,30 @@ func (s *Server) Delete(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		options := store.DeleteOptions{
-			LabelRequirements: labelRequirements,
-			FieldRequirements: fieldRequirements,
+		options := []store.DeleteOption{
+			store.WithLabelRequirements(labelRequirements...),
+			store.WithFieldRequirements(fieldRequirements...),
 		}
 		uid, uidProvided := r.URL.Query()["uid"]
 		resourceVersion, resourceVersionProvided := r.URL.Query()["resourceVersion"]
-		if uidProvided || resourceVersionProvided {
-			options.Preconditions = &store.Preconditions{}
-		}
 		if uidProvided {
-			options.Preconditions.UID = &uid[0]
+			options = append(options, store.WithUID(uid[0]))
 		}
 		if resourceVersionProvided {
 			parsed, err := strconv.ParseInt(resourceVersion[0], 10, 64)
 			if err != nil {
 				return nil, errors.NewBadRequest("resourceVersion must be an integer")
 			}
-			options.Preconditions.ResourceVersion = &parsed
+			options = append(options, store.WithResourceVersion(parsed))
 		}
 		if propagationPolicy := api.Query(r, "propagationPolicy", ""); propagationPolicy != "" {
-			policy := store.DeletionPropagation(propagationPolicy)
-			options.PropagationPolicy = &policy
+			options = append(options, store.WithPropagation(store.DeletionPropagation(propagationPolicy)))
 		}
 		obj := &store.Unstructured{}
 		obj.SetResource(ref.Resource)
 		obj.SetID(ref.ID)
 		storage := s.Store.Scope(ref.Scopes...)
-		if err := storage.Delete(ctx, obj, func(do *store.DeleteOptions) {
-			*do = options
-		}); err != nil {
+		if err := storage.Delete(ctx, obj, options...); err != nil {
 			return nil, err
 		}
 		return obj, nil
@@ -319,10 +312,11 @@ func (s *Server) on(w http.ResponseWriter, r *http.Request,
 }
 
 func decodeSelector(r *http.Request) (store.Requirements, store.Requirements, error) {
-	options, err := store.ListOptionsFromMeta(api.GetListOptions(r))
+	modifiers, err := ListOptionsFromRequest(r)
 	if err != nil {
-		return nil, nil, errors.NewBadRequest(err.Error())
+		return nil, nil, err
 	}
+	options := store.ApplyListOptions(modifiers)
 	return options.LabelRequirements, options.FieldRequirements, nil
 }
 

@@ -65,10 +65,7 @@ func (c *CacheStore) Count(ctx context.Context, obj store.Object, opts ...store.
 	if err != nil {
 		return 0, err
 	}
-	options := &store.CountOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
+	options := store.ApplyCountOptions(opts)
 	// filter
 	items, _, err := c.core.
 		resource(resource).
@@ -95,10 +92,7 @@ func (g *CacheStore) Get(ctx context.Context, name string, obj store.Object, opt
 	if err != nil {
 		return err
 	}
-	options := &store.GetOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
+	options := store.ApplyGetOptions(opts)
 	if obj == nil {
 		return errors.NewBadRequest("object is nil")
 	}
@@ -128,10 +122,7 @@ func (g *CacheStore) List(ctx context.Context, list store.ObjectList, opts ...st
 	if err != nil {
 		return err
 	}
-	options := &store.ListOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
+	options := store.ApplyListOptions(opts)
 	if list == nil {
 		return errors.NewBadRequest("object list is nil")
 	}
@@ -334,7 +325,7 @@ func (c *cachedResource) waitUntilReady(ctx context.Context) error {
 func (c *cachedResource) run(ctx context.Context, storage store.Store) {
 	log.Info("start syncing cache resource", "resource", c.resource)
 	list := &store.List[store.Unstructured]{Resource: c.resource}
-	reflector := NewReflector(storage, list, store.WithWatchSubscopes())
+	reflector := NewReflector(storage, list, store.WithSubScopes())
 	handler := ReflectorHandlerFuncs[store.Unstructured]{
 		ReplaceFunc:    c.replace,
 		ApplyFunc:      c.apply,

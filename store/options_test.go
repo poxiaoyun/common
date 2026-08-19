@@ -1,0 +1,143 @@
+package store
+
+import (
+	"reflect"
+	"testing"
+	"time"
+)
+
+func TestApplyListOptionsComposesInOrder(t *testing.T) {
+	first := RequirementEqual("state", "active")
+	second := RequirementEqual("tenant", "tenant-1")
+
+	options := ApplyListOptions([]ListOption{
+		WithPageSize(1, 10),
+		WithFieldRequirements(first),
+		WithPageSize(2, 20),
+		WithFieldRequirements(second),
+	})
+
+	if options.Page != 2 || options.Size != 20 {
+		t.Fatalf("pagination = (%d, %d), want (2, 20)", options.Page, options.Size)
+	}
+	if want := (Requirements{first, second}); !reflect.DeepEqual(options.FieldRequirements, want) {
+		t.Fatalf("FieldRequirements = %#v, want %#v", options.FieldRequirements, want)
+	}
+}
+
+func TestApplyListOptionsEmptyReturnsZeroValue(t *testing.T) {
+	if options := ApplyListOptions(nil); !reflect.DeepEqual(options, ListOptions{}) {
+		t.Fatalf("ApplyListOptions(nil) = %#v", options)
+	}
+}
+
+func TestSharedOptionsApplyAcrossOperations(t *testing.T) {
+	resourceVersion := WithResourceVersion(7)
+	get := ApplyGetOptions([]GetOption{resourceVersion})
+	list := ApplyListOptions([]ListOption{resourceVersion, WithSubScopes()})
+	watch := ApplyWatchOptions([]WatchOption{resourceVersion, WithSubScopes()})
+	deleted := ApplyDeleteOptions([]DeleteOption{resourceVersion})
+
+	if get.ResourceVersion == nil || *get.ResourceVersion != 7 {
+		t.Fatalf("Get ResourceVersion = %#v", get.ResourceVersion)
+	}
+	if list.ResourceVersion == nil || *list.ResourceVersion != 7 || !list.IncludeSubScopes {
+		t.Fatalf("List options = %#v", list)
+	}
+	if watch.ResourceVersion == nil || *watch.ResourceVersion != 7 || !watch.IncludeSubScopes {
+		t.Fatalf("Watch options = %#v", watch)
+	}
+	if deleted.Preconditions == nil || deleted.Preconditions.ResourceVersion == nil || *deleted.Preconditions.ResourceVersion != 7 {
+		t.Fatalf("Delete options = %#v", deleted)
+	}
+
+	ttl := WithTTL(time.Minute)
+	create := ApplyCreateOptions([]CreateOption{ttl})
+	update := ApplyUpdateOptions([]UpdateOption{ttl})
+	if create.TTL != time.Minute || update.TTL != time.Minute {
+		t.Fatalf("TTL create=%s update=%s", create.TTL, update.TTL)
+	}
+
+	dryRun := WithDryRun()
+	if !ApplyCreateOptions([]CreateOption{dryRun}).DryRun || !ApplyPatchOptions([]PatchOption{dryRun}).DryRun {
+		t.Fatal("WithDryRun did not enable every supported operation")
+	}
+}
+
+func TestPreconditionsOptionOverwritesOnlyPresentValues(t *testing.T) {
+	resourceVersion := int64(7)
+	options := ApplyDeleteOptions([]DeleteOption{
+		WithUID("uid-1"),
+		WithPreconditions(Preconditions{ResourceVersion: &resourceVersion}),
+		WithUID("uid-2"),
+	})
+
+	if options.Preconditions == nil || options.Preconditions.UID == nil || *options.Preconditions.UID != "uid-2" {
+		t.Fatalf("UID precondition = %#v", options.Preconditions)
+	}
+	if options.Preconditions.ResourceVersion == nil || *options.Preconditions.ResourceVersion != 7 {
+		t.Fatalf("ResourceVersion precondition = %#v", options.Preconditions)
+	}
+}
+
+var benchmarkListOptions ListOptions
+
+type legacyListOption func(*ListOptions)
+
+//go:noinline
+func applyLegacyListOptions(options []legacyListOption) ListOptions {
+	resolved := ListOptions{}
+	for _, option := range options {
+		option(&resolved)
+	}
+	return resolved
+}
+
+//go:noinline
+func legacyResolvedListOptions(options ListOptions) []legacyListOption {
+	return []legacyListOption{func(target *ListOptions) {
+		*target = options
+	}}
+}
+
+// BenchmarkResolvedListOptions isolates option construction and application;
+// selector parsing and backend query work are deliberately outside its scope.
+func BenchmarkResolvedListOptions(b *testing.B) {
+	public := ListOptions{
+		Page:     2,
+		Size:     20,
+		Search:   "worker",
+		Sort:     "creationTimestamp-",
+		Continue: "next-token",
+	}
+
+	b.Run("captured-functional-option", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			benchmarkListOptions = applyLegacyListOptions(legacyResolvedListOptions(public))
+		}
+	})
+
+	b.Run("concrete-options", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			options := []ListOption{
+				metaListOption{
+					Page:     public.Page,
+					Size:     public.Size,
+					Search:   public.Search,
+					Sort:     public.Sort,
+					Continue: public.Continue,
+				},
+			}
+			benchmarkListOptions = ApplyListOptions(options)
+		}
+	})
+}
+
+func BenchmarkApplyListOptionsEmpty(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		benchmarkListOptions = ApplyListOptions(nil)
+	}
+}

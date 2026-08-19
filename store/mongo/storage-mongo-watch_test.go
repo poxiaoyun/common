@@ -28,12 +28,9 @@ func TestMongoStorageWatchIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
-	watcher, err := storage.Watch(ctx, &store.List[Message]{}, func(options *store.WatchOptions) {
-		options.LabelRequirements = append(
-			options.LabelRequirements,
-			store.NewRequirement("example.com/team", store.Equals, "platform"),
-		)
-	})
+	watcher, err := storage.Watch(ctx, &store.List[Message]{},
+		store.WithLabelRequirements(store.NewRequirement("example.com/team", store.Equals, "platform")),
+	)
 	if err != nil {
 		t.Fatalf("watch messages: %v", err)
 	}
@@ -87,12 +84,7 @@ func TestMongoStorageWatchInitialEventsAndSelectorTransitions(t *testing.T) {
 		t.Context(),
 		&store.List[Message]{},
 		store.WithSendInitialEvents(),
-		func(options *store.WatchOptions) {
-			options.LabelRequirements = append(
-				options.LabelRequirements,
-				store.NewRequirement("team", store.Equals, "platform"),
-			)
-		},
+		store.WithLabelRequirements(store.NewRequirement("team", store.Equals, "platform")),
 	)
 	if err != nil {
 		t.Fatalf("watch messages: %v", err)
@@ -174,7 +166,7 @@ func TestMongoStorageInitialBookmarkIncludesChangesDuringSnapshot(t *testing.T) 
 func TestMongoStorageWatchReturnsResourceExpiredForUnavailableVersion(t *testing.T) {
 	storage := &MongoStorage{}
 
-	_, err := storage.Watch(t.Context(), &store.List[Message]{}, store.WithWatchResourceVersion(1))
+	_, err := storage.Watch(t.Context(), &store.List[Message]{}, store.WithResourceVersion(1))
 	if !commonerrors.IsResourceExpired(err) {
 		t.Fatalf("Watch() error = %v, want ResourceExpired", err)
 	}

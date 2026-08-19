@@ -66,10 +66,7 @@ func (i *InMemory) Ping(context.Context) error {
 
 // PatchBatch implements store.Store.
 func (i *InMemory) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
-	options := store.PatchBatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyPatchBatchOptions(opts)
 	resource, err := store.GetResource(obj)
 	if err != nil {
 		return err
@@ -93,10 +90,7 @@ func (i *InMemory) PatchBatch(ctx context.Context, obj store.ObjectList, patch s
 }
 
 func (i *InMemory) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
-	options := store.CountOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyCountOptions(opts)
 	resource, err := store.GetResource(obj)
 	if err != nil {
 		return 0, err
@@ -116,10 +110,6 @@ func (i *InMemory) Count(ctx context.Context, obj store.Object, opts ...store.Co
 }
 
 func (i *InMemory) Create(ctx context.Context, obj store.Object, opts ...store.CreateOption) error {
-	options := store.CreateOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
 	resource, err := store.GetResource(obj)
 	if err != nil {
 		return err
@@ -137,10 +127,7 @@ func (i *InMemory) Create(ctx context.Context, obj store.Object, opts ...store.C
 }
 
 func (i *InMemory) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
-	options := store.DeleteOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyDeleteOptions(opts)
 	return i.core.on(ctx, obj, func(ctx context.Context, resources string) error {
 		i.core.eventMu.Lock()
 		defer i.core.eventMu.Unlock()
@@ -162,10 +149,7 @@ func (i *InMemory) Delete(ctx context.Context, obj store.Object, opts ...store.D
 }
 
 func (i *InMemory) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
-	options := store.DeleteBatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyDeleteBatchOptions(opts)
 	resource, err := store.GetResource(obj)
 	if err != nil {
 		return err
@@ -188,10 +172,7 @@ func (i *InMemory) DeleteBatch(ctx context.Context, obj store.ObjectList, opts .
 }
 
 func (i *InMemory) Get(ctx context.Context, name string, obj store.Object, opts ...store.GetOption) error {
-	options := store.GetOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyGetOptions(opts)
 	return i.core.on(ctx, obj, func(ctx context.Context, resources string) error {
 		if err := i.core.get(resources, i.scopes, name, obj); err != nil {
 			return err
@@ -213,10 +194,7 @@ func (i *InMemory) List(ctx context.Context, list store.ObjectList, opts ...stor
 	if err != nil {
 		return err
 	}
-	options := store.ListOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyListOptions(opts)
 	items, newItem, err := store.NewItemFuncFromList(list)
 	if err != nil {
 		return err
@@ -269,10 +247,7 @@ func (i *InMemory) List(ctx context.Context, list store.ObjectList, opts ...stor
 }
 
 func (i *InMemory) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	options := store.PatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyPatchOptions(opts)
 	return i.core.on(ctx, obj, func(ctx context.Context, resource string) error {
 		i.core.eventMu.Lock()
 		defer i.core.eventMu.Unlock()
@@ -294,10 +269,7 @@ func (i *InMemory) Patch(ctx context.Context, obj store.Object, patch store.Patc
 }
 
 func (i *InMemory) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
-	options := store.UpdateOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyUpdateOptions(opts)
 	return i.core.on(ctx, obj, func(ctx context.Context, resources string) error {
 		i.core.eventMu.Lock()
 		defer i.core.eventMu.Unlock()
@@ -323,10 +295,7 @@ func (i *InMemory) Watch(ctx context.Context, obj store.ObjectList, opts ...stor
 	if err != nil {
 		return nil, err
 	}
-	options := store.WatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyWatchOptions(opts)
 	if options.ResourceVersion != nil && *options.ResourceVersion > 0 {
 		return nil, errors.NewResourceExpired(resource, "watch history is unavailable")
 	}

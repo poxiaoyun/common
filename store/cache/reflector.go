@@ -97,17 +97,12 @@ func (r *Reflector[T]) watch(
 	firstSync *bool,
 ) error {
 	initial := *checkpoint == 0
-	resumeVersion := *checkpoint
 	options := append([]store.WatchOption{}, r.options...)
-	options = append(options, func(current *store.WatchOptions) {
-		if initial {
-			current.ResourceVersion = nil
-			current.SendInitialEvents = true
-			return
-		}
-		current.ResourceVersion = &resumeVersion
-		current.SendInitialEvents = false
-	})
+	if initial {
+		options = append(options, store.WithSendInitialEvents())
+	} else {
+		options = append(options, store.WithResourceVersion(*checkpoint))
+	}
 	watcher, err := r.storage.Watch(ctx, r.list, options...)
 	if err != nil {
 		return err

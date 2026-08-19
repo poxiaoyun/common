@@ -71,10 +71,7 @@ func (c *Client) PatchBatch(ctx context.Context, obj store.ObjectList, patch sto
 	patchdata := patch.Data()
 	patchtype := patch.Type()
 
-	options := store.PatchBatchOptions{}
-	for _, o := range opts {
-		o(&options)
-	}
+	options := store.ApplyPatchBatchOptions(opts)
 	queries := url.Values{}
 	if len(options.LabelRequirements) != 0 {
 		queries.Add("labelSelector", options.LabelRequirements.String())
@@ -96,10 +93,7 @@ func (c *Client) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	options := store.DeleteBatchOptions{}
-	for _, o := range opts {
-		o(&options)
-	}
+	options := store.ApplyDeleteBatchOptions(opts)
 	queries := url.Values{}
 	if len(options.LabelRequirements) != 0 {
 		queries.Add("labelSelector", options.LabelRequirements.String())
@@ -116,10 +110,7 @@ func (c Client) Count(ctx context.Context, obj store.Object, opts ...store.Count
 	if err != nil {
 		return 0, errors.NewBadRequest(err.Error())
 	}
-	options := store.CountOptions{}
-	for _, o := range opts {
-		o(&options)
-	}
+	options := store.ApplyCountOptions(opts)
 	queries := url.Values{}
 	if len(options.LabelRequirements) != 0 {
 		queries.Add("labelSelector", options.LabelRequirements.String())
@@ -141,10 +132,7 @@ func (c Client) Create(ctx context.Context, obj store.Object, opts ...store.Crea
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	options := store.CreateOptions{}
-	for _, o := range opts {
-		o(&options)
-	}
+	options := store.ApplyCreateOptions(opts)
 	queries := url.Values{}
 	if options.TTL != 0 {
 		queries.Add("ttl", options.TTL.String())
@@ -158,10 +146,7 @@ func (c Client) Delete(ctx context.Context, obj store.Object, opts ...store.Dele
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	options := store.DeleteOptions{}
-	for _, o := range opts {
-		o(&options)
-	}
+	options := store.ApplyDeleteOptions(opts)
 	queries := url.Values{}
 	if len(options.LabelRequirements) != 0 {
 		queries.Add("labelSelector", options.LabelRequirements.String())
@@ -193,10 +178,7 @@ func (c Client) Get(ctx context.Context, name string, obj store.Object, opts ...
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	options := store.GetOptions{}
-	for _, o := range opts {
-		o(&options)
-	}
+	options := store.ApplyGetOptions(opts)
 	queries := url.Values{}
 	if options.ResourceVersion != nil {
 		queries.Add("resourceVersion", strconv.FormatInt(*options.ResourceVersion, 10))
@@ -213,10 +195,7 @@ func (c Client) List(ctx context.Context, list store.ObjectList, opts ...store.L
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	options := store.ListOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyListOptions(opts)
 	queries := url.Values{}
 	if len(options.LabelRequirements) != 0 {
 		queries.Add("labelSelector", options.LabelRequirements.String())
@@ -267,10 +246,7 @@ func (c Client) Watch(ctx context.Context, obj store.ObjectList, opts ...store.W
 	if err != nil {
 		return nil, errors.NewBadRequest(err.Error())
 	}
-	options := store.WatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyWatchOptions(opts)
 	queries := url.Values{}
 	if len(options.LabelRequirements) != 0 {
 		queries.Add("labelSelector", options.LabelRequirements.String())
@@ -355,10 +331,7 @@ func (s Client) update(ctx context.Context, obj store.Object, status bool, opts 
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	options := store.UpdateOptions{}
-	for _, o := range opts {
-		o(&options)
-	}
+	options := store.ApplyUpdateOptions(opts)
 	queries := url.Values{}
 	if options.TTL != 0 {
 		queries.Add("ttl", options.TTL.String())
@@ -389,10 +362,7 @@ func (c Client) patch(ctx context.Context, obj store.Object, status bool, patch 
 	}
 	patchtype := patch.Type()
 
-	options := store.PatchOptions{}
-	for _, o := range opts {
-		o(&options)
-	}
+	options := store.ApplyPatchOptions(opts)
 	queries := url.Values{}
 	if len(options.LabelRequirements) != 0 {
 		queries.Add("labelSelector", options.LabelRequirements.String())
@@ -426,20 +396,7 @@ type statusClient struct {
 
 // Patch implements store.StatusStorage.
 func (s *statusClient) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	resource, err := store.GetResource(obj)
-	if err != nil {
-		return errors.NewBadRequest(err.Error())
-	}
-	patchdata, err := patch.Data(obj)
-	if err != nil {
-		return errors.NewBadRequest(err.Error())
-	}
-	patchtype := patch.Type()
-	return s.cli.
-		Patch(s.getPath(resource, obj.GetID())).
-		Query("status", "true").
-		Body(bytes.NewReader(patchdata), string(patchtype)).
-		Return(obj).Send(ctx)
+	return s.Client.patch(ctx, obj, true, patch, opts...)
 }
 
 // Update implements store.StatusStorage.

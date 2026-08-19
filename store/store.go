@@ -3,11 +3,6 @@ package store
 import (
 	"context"
 	"time"
-
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/utils/ptr"
-	"xiaoshiai.cn/common/meta"
 )
 
 const (
@@ -28,7 +23,11 @@ type (
 		// Fields is a list of fields to return.  If empty, all fields are returned.
 		Fields []string
 	}
-	GetOption func(*GetOptions)
+	// GetOption configures one Get operation.
+	GetOption interface {
+		// ApplyToGet applies this option to a Get request.
+		ApplyToGet(*GetOptions)
+	}
 
 	ListOptions struct {
 		// Page selects the pagination model. Values greater than zero use
@@ -59,20 +58,32 @@ type (
 		// Fields is a list of fields to return.  If empty, all fields are returned.
 		Fields []string
 	}
-	ListOption func(*ListOptions)
+	// ListOption configures one List operation.
+	ListOption interface {
+		// ApplyToList applies this option to a List request.
+		ApplyToList(*ListOptions)
+	}
 
 	CountOptions struct {
 		LabelRequirements Requirements
 		FieldRequirements Requirements
 		IncludeSubScopes  bool
 	}
-	CountOption func(*CountOptions)
+	// CountOption configures one Count operation.
+	CountOption interface {
+		// ApplyToCount applies this option to a Count request.
+		ApplyToCount(*CountOptions)
+	}
 
 	CreateOptions struct {
 		TTL    time.Duration
 		DryRun bool
 	}
-	CreateOption func(*CreateOptions)
+	// CreateOption configures one Create operation.
+	CreateOption interface {
+		// ApplyToCreate applies this option to a Create request.
+		ApplyToCreate(*CreateOptions)
+	}
 
 	DeleteOptions struct {
 		LabelRequirements Requirements
@@ -82,7 +93,11 @@ type (
 		PropagationPolicy *DeletionPropagation
 		DryRun            bool
 	}
-	DeleteOption func(*DeleteOptions)
+	// DeleteOption configures one Delete operation.
+	DeleteOption interface {
+		// ApplyToDelete applies this option to a Delete request.
+		ApplyToDelete(*DeleteOptions)
+	}
 	// Preconditions restrict deletion to one caller-observed object identity.
 	Preconditions struct {
 		// UID prevents deleting a replacement object that reused the same ID.
@@ -96,7 +111,11 @@ type (
 		FieldRequirements Requirements
 		DryRun            bool
 	}
-	DeleteBatchOption func(*DeleteBatchOptions)
+	// DeleteBatchOption configures one batch Delete operation.
+	DeleteBatchOption interface {
+		// ApplyToDeleteBatch applies this option to a batch Delete request.
+		ApplyToDeleteBatch(*DeleteBatchOptions)
+	}
 
 	UpdateOptions struct {
 		TTL time.Duration
@@ -106,14 +125,22 @@ type (
 		LabelRequirements Requirements
 		DryRun            bool
 	}
-	UpdateOption func(*UpdateOptions)
+	// UpdateOption configures one Update operation.
+	UpdateOption interface {
+		// ApplyToUpdate applies this option to an Update request.
+		ApplyToUpdate(*UpdateOptions)
+	}
 
 	PatchOptions struct {
 		FieldRequirements Requirements
 		LabelRequirements Requirements
 		DryRun            bool
 	}
-	PatchOption func(*PatchOptions)
+	// PatchOption configures one Patch operation.
+	PatchOption interface {
+		// ApplyToPatch applies this option to a Patch request.
+		ApplyToPatch(*PatchOptions)
+	}
 
 	PatchBatchOptions struct {
 		// FieldRequirements is a list of conditions that must be true for the update to occur.
@@ -122,7 +149,11 @@ type (
 		LabelRequirements Requirements
 		DryRun            bool
 	}
-	PatchBatchOption func(*PatchBatchOptions)
+	// PatchBatchOption configures one batch Patch operation.
+	PatchBatchOption interface {
+		// ApplyToPatchBatch applies this option to a batch Patch request.
+		ApplyToPatchBatch(*PatchBatchOptions)
+	}
 
 	WatchOptions struct {
 		ID                string
@@ -132,305 +163,12 @@ type (
 		IncludeSubScopes  bool
 		SendInitialEvents bool
 	}
-	WatchOption func(*WatchOptions)
+	// WatchOption configures one Watch operation.
+	WatchOption interface {
+		// ApplyToWatch applies this option to a Watch request.
+		ApplyToWatch(*WatchOptions)
+	}
 )
-
-// WithSendInitialEvents requests an initial Watch. All events before the first
-// Bookmark build an authoritative snapshot; later events are live changes.
-func WithSendInitialEvents() WatchOption {
-	return func(o *WatchOptions) {
-		o.SendInitialEvents = true
-	}
-}
-
-func WithWatchSubscopes() WatchOption {
-	return func(o *WatchOptions) {
-		o.IncludeSubScopes = true
-	}
-}
-
-func WithWatchID(id string) WatchOption {
-	return func(o *WatchOptions) {
-		o.ID = id
-	}
-}
-
-// WithWatchResourceVersion requests events after the supplied global watch
-// version. Stores return ResourceExpired when that position cannot be served;
-// callers can then rebuild from initial events.
-func WithWatchResourceVersion(resourceVersion int64) WatchOption {
-	return func(o *WatchOptions) {
-		o.ResourceVersion = ptr.To(resourceVersion)
-	}
-}
-
-func WithWatchFieldRequirements(reqs ...Requirement) WatchOption {
-	return func(o *WatchOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, reqs...)
-	}
-}
-
-func WithCountFieldRequirementsFromSelector(selector fields.Selector) CountOption {
-	return func(o *CountOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, FieldsSelectorToReqirements(selector)...)
-	}
-}
-
-func WithCountFieldRequirements(reqs ...Requirement) CountOption {
-	return func(o *CountOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, reqs...)
-	}
-}
-
-func WithCountLabelRequirements(reqs ...Requirement) CountOption {
-	return func(o *CountOptions) {
-		o.LabelRequirements = append(o.LabelRequirements, reqs...)
-	}
-}
-
-func WithCountSubScopes() CountOption {
-	return func(o *CountOptions) {
-		o.IncludeSubScopes = true
-	}
-}
-
-func WithGetFieldRequirements(reqs ...Requirement) GetOption {
-	return func(o *GetOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, reqs...)
-	}
-}
-
-func WithGetLabelRequirements(reqs ...Requirement) GetOption {
-	return func(o *GetOptions) {
-		o.LabelRequirements = append(o.LabelRequirements, reqs...)
-	}
-}
-
-func WithGetFields(fields ...string) GetOption {
-	return func(o *GetOptions) {
-		o.Fields = append(o.Fields, fields...)
-	}
-}
-
-func WithGetResourceVersion(rv int64) GetOption {
-	return func(o *GetOptions) {
-		o.ResourceVersion = ptr.To(rv)
-	}
-}
-
-func WithUpdateFieldRequirements(reqs ...Requirement) UpdateOption {
-	return func(o *UpdateOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, reqs...)
-	}
-}
-
-func WithUpdateLabelRequirements(reqs ...Requirement) UpdateOption {
-	return func(o *UpdateOptions) {
-		o.LabelRequirements = append(o.LabelRequirements, reqs...)
-	}
-}
-
-func WithUpdateDryRun(dryRun bool) UpdateOption {
-	return func(o *UpdateOptions) {
-		o.DryRun = dryRun
-	}
-}
-
-func WithCountFieldRequirementsFromSet(kvs map[string]string) CountOption {
-	return func(o *CountOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, RequirementsFromMap(kvs)...)
-	}
-}
-
-func WithFieldRequirementsFromSelector(selector fields.Selector) ListOption {
-	return func(o *ListOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, FieldsSelectorToReqirements(selector)...)
-	}
-}
-
-func WithContinue(token string) ListOption {
-	return func(o *ListOptions) {
-		o.Continue = token
-	}
-}
-
-func WithFieldRequirementsFromSet(kvs map[string]string) ListOption {
-	return func(o *ListOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, RequirementsFromMap(kvs)...)
-	}
-}
-
-func WithFieldRequirements(reqs ...Requirement) ListOption {
-	return func(o *ListOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, reqs...)
-	}
-}
-
-func WithFields(fields ...string) ListOption {
-	return func(o *ListOptions) {
-		o.Fields = append(o.Fields, fields...)
-	}
-}
-
-// WithResourceVersion set 0 to read from latest cache
-// WithResourceVersion set to -1 to read from backend
-func WithResourceVersion(rv int64) ListOption {
-	return func(o *ListOptions) {
-		if rv < 0 {
-			o.ResourceVersion = nil
-		} else {
-			o.ResourceVersion = ptr.To(rv)
-		}
-	}
-}
-
-func WithPatchFieldRequirements(reqs ...Requirement) PatchOption {
-	return func(o *PatchOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, reqs...)
-	}
-}
-
-func WithPatchLabelRequirements(reqs ...Requirement) PatchOption {
-	return func(o *PatchOptions) {
-		o.LabelRequirements = append(o.LabelRequirements, reqs...)
-	}
-}
-
-func WithPatchBatchFieldRequirements(reqs ...Requirement) PatchBatchOption {
-	return func(o *PatchBatchOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, reqs...)
-	}
-}
-
-func WithPatchBatchLabelRequirements(reqs ...Requirement) PatchBatchOption {
-	return func(o *PatchBatchOptions) {
-		o.LabelRequirements = append(o.LabelRequirements, reqs...)
-	}
-}
-
-func WithDeleteBatchFieldRequirements(reqs ...Requirement) DeleteBatchOption {
-	return func(o *DeleteBatchOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, reqs...)
-	}
-}
-
-func WithDeleteBatchLabelRequirements(reqs ...Requirement) DeleteBatchOption {
-	return func(o *DeleteBatchOptions) {
-		o.LabelRequirements = append(o.LabelRequirements, reqs...)
-	}
-}
-
-func WithDeleteFieldRequirements(reqs ...Requirement) DeleteOption {
-	return func(o *DeleteOptions) {
-		o.FieldRequirements = append(o.FieldRequirements, reqs...)
-	}
-}
-
-func WithDeleteLabelRequirements(reqs ...Requirement) DeleteOption {
-	return func(o *DeleteOptions) {
-		o.LabelRequirements = append(o.LabelRequirements, reqs...)
-	}
-}
-
-// WithDeletePreconditions applies non-zero caller-facing identity conditions.
-// Empty UID and zero ResourceVersion mean the caller omitted that condition.
-func WithDeletePreconditions(preconditions meta.Preconditions) DeleteOption {
-	return func(o *DeleteOptions) {
-		if preconditions.UID != "" {
-			if o.Preconditions == nil {
-				o.Preconditions = &Preconditions{}
-			}
-			o.Preconditions.UID = ptr.To(preconditions.UID)
-		}
-		if preconditions.ResourceVersion != 0 {
-			if o.Preconditions == nil {
-				o.Preconditions = &Preconditions{}
-			}
-			o.Preconditions.ResourceVersion = ptr.To(preconditions.ResourceVersion)
-		}
-	}
-}
-
-// WithDeleteUID restricts deletion to an object with uid.
-func WithDeleteUID(uid string) DeleteOption {
-	return func(o *DeleteOptions) {
-		if o.Preconditions == nil {
-			o.Preconditions = &Preconditions{}
-		}
-		o.Preconditions.UID = ptr.To(uid)
-	}
-}
-
-// WithDeleteResourceVersion restricts deletion to an observed object version.
-func WithDeleteResourceVersion(resourceVersion int64) DeleteOption {
-	return func(o *DeleteOptions) {
-		if o.Preconditions == nil {
-			o.Preconditions = &Preconditions{}
-		}
-		o.Preconditions.ResourceVersion = ptr.To(resourceVersion)
-	}
-}
-
-func WithTTL(ttl time.Duration) CreateOption {
-	return func(o *CreateOptions) {
-		o.TTL = ttl
-	}
-}
-
-func WithDryRun(dryRun bool) CreateOption {
-	return func(o *CreateOptions) {
-		o.DryRun = dryRun
-	}
-}
-
-func WithPageSize(page, size int) ListOption {
-	return func(o *ListOptions) {
-		o.Page = page
-		o.Size = size
-	}
-}
-
-func WithSort(sort string) ListOption {
-	return func(o *ListOptions) {
-		o.Sort = sort
-	}
-}
-
-func WithSearch(search string) ListOption {
-	return func(o *ListOptions) {
-		o.Search = search
-	}
-}
-
-func WithSearchFields(fields ...string) ListOption {
-	return func(o *ListOptions) {
-		o.SearchFields = append(o.SearchFields, fields...)
-	}
-}
-
-func WithMatchLabels(kvs map[string]string) ListOption {
-	return func(o *ListOptions) {
-		o.LabelRequirements = append(o.LabelRequirements, RequirementsFromMap(kvs)...)
-	}
-}
-
-func WithLabelRequirementsFromSelector(selector labels.Selector) ListOption {
-	return func(o *ListOptions) {
-		o.LabelRequirements = append(o.LabelRequirements, LabelsSelectorToReqirements(selector)...)
-	}
-}
-
-func WithLabelRequirements(reqs ...Requirement) ListOption {
-	return func(o *ListOptions) {
-		o.LabelRequirements = append(o.LabelRequirements, reqs...)
-	}
-}
-
-func WithSubScopes() ListOption {
-	return func(o *ListOptions) {
-		o.IncludeSubScopes = true
-	}
-}
 
 // DeletionPropagation decides if a deletion will propagate to the dependents of
 // the object, and how the garbage collector will handle the propagation.
@@ -486,12 +224,6 @@ type WatchEvent struct {
 	Error           error
 }
 
-func WithDeletePropagation(policy DeletionPropagation) DeleteOption {
-	return func(o *DeleteOptions) {
-		o.PropagationPolicy = &policy
-	}
-}
-
 // Store persists scoped resources and owns their lifecycle metadata.
 type Store interface {
 	// Schema returns an independent snapshot of the resource schema. Mutating
@@ -534,7 +266,7 @@ type Store interface {
 	// an initial Watch: callers apply every event before the first Bookmark to
 	// staging state, then atomically publish it; later events are live changes.
 	// A positive WatchEvent ResourceVersion is a global checkpoint accepted by
-	// WithWatchResourceVersion. Stores that cannot serve a requested position
+	// WithResourceVersion. Stores that cannot serve a requested position
 	// return ResourceExpired so callers can start a new initial Watch.
 	Watch(ctx context.Context, obj ObjectList, opts ...WatchOption) (Watcher, error)
 	// Status returns the status-subresource writer. Its mutations can only change
@@ -593,18 +325,10 @@ type TransactionOptions struct {
 	MaxRetries int
 }
 
-type TransactionOption func(*TransactionOptions)
-
-func WithTransactionTimeout(timeout time.Duration) TransactionOption {
-	return func(o *TransactionOptions) {
-		o.Timeout = timeout
-	}
-}
-
-func WithTransactionMaxRetries(retries int) TransactionOption {
-	return func(o *TransactionOptions) {
-		o.MaxRetries = retries
-	}
+// TransactionOption configures one Store transaction.
+type TransactionOption interface {
+	// ApplyToTransaction applies this option to a transaction request.
+	ApplyToTransaction(*TransactionOptions)
 }
 
 type TransactionStore interface {

@@ -160,7 +160,7 @@ func (s *StoreDynamicConfig) Delete(ctx context.Context, key string, options Del
 		return commonerrors.NewConflict("setting", key, fmt.Errorf("resourceVersion %d does not match", *options.ExpectedVersion))
 	}
 	if options.ExpectedVersion != nil {
-		return s.Storage.Delete(ctx, setting, store.WithDeleteFieldRequirements(
+		return s.Storage.Delete(ctx, setting, store.WithFieldRequirements(
 			store.RequirementEqual("resourceVersion", *options.ExpectedVersion),
 		))
 	}

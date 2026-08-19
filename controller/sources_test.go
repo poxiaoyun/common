@@ -50,9 +50,7 @@ func (*sourceTestStore) Capabilities() store.Capabilities {
 }
 
 func (s *sourceTestStore) Watch(_ context.Context, _ store.ObjectList, options ...store.WatchOption) (store.Watcher, error) {
-	for _, option := range options {
-		option(&s.options)
-	}
+	s.options = store.ApplyWatchOptions(options)
 	results := make(chan store.WatchEvent, len(s.events))
 	for _, event := range s.events {
 		results <- event

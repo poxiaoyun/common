@@ -24,10 +24,7 @@ func init() {
 
 // Watch implements store.Store.
 func (c *generic) Watch(ctx context.Context, obj store.ObjectList, opts ...store.WatchOption) (store.Watcher, error) {
-	options := &store.WatchOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
+	options := store.ApplyWatchOptions(opts)
 	preficate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
 	if err != nil {
 		return nil, err

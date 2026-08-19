@@ -192,20 +192,20 @@ func TestEtcdCacherStore(t *testing.T) {
 		assertListIDs(t, ctx, storage, []string{"root-blue", "root-red"})
 		assertListIDs(t, ctx, orgA, []string{"scope-blue", "scope-red"})
 		assertListIDs(t, ctx, storage, []string{"root-blue", "root-red", "scope-blue", "scope-red"}, store.WithSubScopes())
-		assertListIDs(t, ctx, storage, []string{"root-blue"}, store.WithMatchLabels(map[string]string{"team": "blue"}))
+		assertListIDs(t, ctx, storage, []string{"root-blue"}, store.WithLabelRequirementsFromSet(map[string]string{"team": "blue"}))
 		assertListIDs(t, ctx, storage, []string{"root-blue"}, store.WithFieldRequirements(store.RequirementEqual("enabled", true)))
 		assertListIDs(t, ctx, storage, []string{"root-blue"}, store.WithSearch("blue"), store.WithSearchFields("name"))
 
 		if count, err := storage.Count(ctx, &MyObject{}); err != nil || count != 2 {
 			t.Fatalf("Count() = %d, %v, want 2, nil", count, err)
 		}
-		if count, err := storage.Count(ctx, &MyObject{}, store.WithCountSubScopes()); err != nil || count != 4 {
+		if count, err := storage.Count(ctx, &MyObject{}, store.WithSubScopes()); err != nil || count != 4 {
 			t.Fatalf("Count(subscopes) = %d, %v, want 4, nil", count, err)
 		}
-		if count, err := storage.Count(ctx, &MyObject{}, store.WithCountLabelRequirements(store.RequirementEqual("team", "red"))); err != nil || count != 1 {
+		if count, err := storage.Count(ctx, &MyObject{}, store.WithLabelRequirements(store.RequirementEqual("team", "red"))); err != nil || count != 1 {
 			t.Fatalf("Count(red) = %d, %v, want 1, nil", count, err)
 		}
-		if err := storage.Get(ctx, "root-red", &MyObject{}, store.WithGetLabelRequirements(store.RequirementEqual("team", "blue"))); !commonerrors.IsNotFound(err) {
+		if err := storage.Get(ctx, "root-red", &MyObject{}, store.WithLabelRequirements(store.RequirementEqual("team", "blue"))); !commonerrors.IsNotFound(err) {
 			t.Fatalf("Get() with non-matching selector error = %v, want not found", err)
 		}
 

@@ -28,10 +28,7 @@ func (e *EtcdStore) Watch(ctx context.Context, obj store.ObjectList, opts ...sto
 	if err != nil {
 		return nil, err
 	}
-	options := &store.WatchOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
+	options := store.ApplyWatchOptions(opts)
 
 	if err := e.core.validateObjectList(obj); err != nil {
 		return nil, err

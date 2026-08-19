@@ -39,9 +39,9 @@ type DeleteOptions struct {
 }
 ```
 
-`WithDeleteUID` 和 `WithDeleteResourceVersion` 分别设置对应 precondition，并且可以与 `WithDeleteLabelRequirements`、`WithDeleteFieldRequirements` 组合。
+`WithUID` 和 `WithResourceVersion` 分别设置对应 precondition，并且可以与 `WithLabelRequirements`、`WithFieldRequirements` 组合。
 
-HTTP 和领域客户端使用值类型 `meta.Preconditions` 时，通过 `WithDeletePreconditions` 一次转换 UID 与 ResourceVersion；空 UID 和零 ResourceVersion 表示该条件未提供。
+`WithPreconditions` 直接接受 Store 的 `Preconditions`；协议边界负责按字段是否出现构造对应指针。`PreconditionsOption` 只覆盖自身非空字段，不清除先前设置的其他条件，因此非 nil 的零值仍是需要精确匹配的有效条件。
 
 Delete 按以下顺序判断，并使用固定的错误语义：精确 Scope 和 ID 下没有对象时返回 NotFound；对象存在但任一 UID 或 ResourceVersion precondition 不匹配时返回 Conflict；preconditions 匹配但任一 Label 或 Field requirement 不匹配时返回 NotFound。两类条件同时提供时使用 AND 关系。只有 `DeleteOptions.Preconditions` 中的值构成并发前置条件，传入对象自身的 UID 和 ResourceVersion 不产生隐式条件。nil 表示未提供对应 precondition；非 nil 值必须精确匹配，零值也不表示无条件。
 
@@ -66,6 +66,29 @@ List 在未指定排序时不保证顺序。所有实现必须支持 `id+` 和 `
 
 `Page>0` 且 `Size>0` 使用页码分页。`Page=0` 且 `Size>0` 或 Continue 非空时使用 continuation 分页；Continue 是实现方生成的不透明 token。Page、Continue 和 ContinueWithSort 分别声明能力。Page、Size 和 Continue 都为空时是不分页查询。
 
+Store 操作使用 variadic option interface。每个 option 是实现
+`ApplyToXxx(*XxxOptions)` 的具体值；标准 option 不得使用捕获闭包。
+`XxxOptions` 只表示已解析的最终值，不实现 option interface。完整 Options
+作为 option 时，整体替换、仅覆盖有值字段和合并集合三种行为都可能合理，
+语义并不明确，因此不提供完整 Options option。标量具体 option 按顺序覆盖，
+requirements 具体 option 按顺序追加。
+
+同一领域语义跨多个 Store 操作时只保留一个 `WithXxx` 入口，由同一个具体
+option 类型实现所需的多个 `ApplyToXxx`。Option 类型和构造函数按字段或行为
+命名，不重复目标操作，例如 `WithID`、`WithTimeout` 和 `WithPreconditions`。
+
+`ApplyXxxOptions` 是 option slice 到最终 `XxxOptions` 的唯一展开入口。
+各 Store adapter 调用该入口，不重复实现 option 循环。每个入口在同一函数内
+对空 option slice 直接返回零值，避免 interface 展开使 accumulator 逃逸；
+非空 slice 仍在该函数中线性展开，不拆出第二套 helper。
+
+`ListOptionsFromMeta` 是公开列表契约到 `[]ListOption` 的唯一转换入口。
+它将 Page、Size、Search、Sort、Continue 和已解析 selector 表示为一个只含
+公开列表字段的具体 option，再追加调用方 option。它不解析
+Store HTTP 协议字段，也不选择默认分页模式。边界默认值在转换前通过
+`meta.ListOption` 应用，使请求默认值留在公开请求契约中；业务和协议约束
+在转换后作为 Store option 追加。
+
 Labels 和 Annotations 必须无损保存，包括含 `.`, `/` 或 `$` 的键。声明 `LabelSelector` 的实现必须直接按 Requirement 的键匹配，不能因底层数据库路径语法或 Kubernetes label parser 改变键的含义。Annotations 不自动成为 label selector。
 
 声明 DryRun 后，Create、Update、Patch、Delete、Batch 和 Status 写入都必须完成正常校验并返回模拟结果，但不能落库、产生 Watch 事件、创建 TTL 或修改索引。
@@ -86,9 +109,9 @@ watcher, err := storage.Watch(ctx, list, store.WithSendInitialEvents())
 
 Delete 必须携带删除前的完整对象。Update 需要同时判断旧对象和新对象是否匹配 ID、Scope、Label 和 Field selector，并按以下规则转换事件：旧状态不匹配而新状态匹配为 Create；两者都匹配为 Update；旧状态匹配而新状态不匹配为 Delete；两者都不匹配则不发送事件。
 
-Watch 不区分能力层级。`WatchEvent.ResourceVersion` 是可选的全局 Watch checkpoint，不是 `Object.ResourceVersion`。实现能够公开恢复位置时发送正数 checkpoint；调用方可以通过 `WithWatchResourceVersion(R)` 请求其后的全部事件。实现没有历史、历史已过期或无法识别该位置时都返回 ResourceExpired，调用方转为新的 initial Watch。全局 Watch ResourceVersion 只是可选的断线恢复优化，不是缓存正确性的前提。
+Watch 不区分能力层级。`WatchEvent.ResourceVersion` 是可选的全局 Watch checkpoint，不是 `Object.ResourceVersion`。实现能够公开恢复位置时发送正数 checkpoint；调用方可以通过 `WithResourceVersion(R)` 请求其后的全部事件。实现没有历史、历史已过期或无法识别该位置时都返回 ResourceExpired，调用方转为新的 initial Watch。全局 Watch ResourceVersion 只是可选的断线恢复优化，不是缓存正确性的前提。
 
-MongoDB 声明 `Watch=true`。它以 `batchSize=0` 建立 Change Stream，并在 Find 前消费明确为空的 initial batch。Initial Find 使用 snapshot read concern，在单一时间点取得一致快照并产生 synthetic Create；Find 后的第一次 TryNext 因当前批次已耗尽，按 Go driver 的公开契约必然执行一次 getMore。实现处理该 getMore 的完整批次后才发送 Bookmark，因此切换点由一致快照和服务端 post-batch resume token 共同确定，而不是由轮询次数、延时或缓冲区状态猜测。调用方通过 UID 和对象 ResourceVersion 合并快照与该批次的重叠状态。MongoDB 不提供 Store 的整数全局 checkpoint，传入正数 WithWatchResourceVersion 时返回 ResourceExpired。
+MongoDB 声明 `Watch=true`。它以 `batchSize=0` 建立 Change Stream，并在 Find 前消费明确为空的 initial batch。Initial Find 使用 snapshot read concern，在单一时间点取得一致快照并产生 synthetic Create；Find 后的第一次 TryNext 因当前批次已耗尽，按 Go driver 的公开契约必然执行一次 getMore。实现处理该 getMore 的完整批次后才发送 Bookmark，因此切换点由一致快照和服务端 post-batch resume token 共同确定，而不是由轮询次数、延时或缓冲区状态猜测。调用方通过 UID 和对象 ResourceVersion 合并快照与该批次的重叠状态。MongoDB 不提供 Store 的整数全局 checkpoint，传入正数 WithResourceVersion 时返回 ResourceExpired。
 
 ## 实现与测试
 

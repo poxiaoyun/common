@@ -50,7 +50,7 @@ func (c *GarbageCollector) Run(ctx context.Context) error {
 	handlers := make([]*garbageCollectorReflectorHandler, 0, len(c.resources))
 	for _, resource := range c.resources {
 		list := &store.List[store.Unstructured]{Resource: resource}
-		reflectors = append(reflectors, storecache.NewReflector(c.storage, list, store.WithWatchSubscopes()))
+		reflectors = append(reflectors, storecache.NewReflector(c.storage, list, store.WithSubScopes()))
 		handlers = append(handlers, &garbageCollectorReflectorHandler{Collector: c, Resource: resource})
 	}
 
@@ -575,10 +575,10 @@ func (gc *GarbageCollector) patchObject(ctx context.Context, item objectIdentity
 func (gc *GarbageCollector) deleteObject(ctx context.Context, item objectIdentity, policy store.DeletionPropagation) error {
 	options := []store.DeleteOption{}
 	if policy != "" {
-		options = append(options, store.WithDeletePropagation(policy))
+		options = append(options, store.WithPropagation(policy))
 	} else {
 		// directly delete the object if no policy is specified
-		options = append(options, store.WithDeletePropagation(store.DeletePropagationBackground))
+		options = append(options, store.WithPropagation(store.DeletePropagationBackground))
 	}
 	storage := gc.storage.Scope(item.Scopes...)
 	desc := &store.Unstructured{}

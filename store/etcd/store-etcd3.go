@@ -186,10 +186,7 @@ func (e *EtcdStore) DeleteBatch(ctx context.Context, obj store.ObjectList, opts 
 
 // Count implements Store.
 func (e *EtcdStore) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
-	options := store.CountOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyCountOptions(opts)
 	resource, err := store.GetResource(obj)
 	if err != nil {
 		return 0, err
@@ -214,10 +211,7 @@ func (e *EtcdStore) Create(ctx context.Context, obj store.Object, opts ...store.
 	if err != nil {
 		return err
 	}
-	creatoptions := &store.CreateOptions{}
-	for _, opt := range opts {
-		opt(creatoptions)
-	}
+	creatoptions := store.ApplyCreateOptions(opts)
 	if err := e.core.validateObject(obj); err != nil {
 		return err
 	}
@@ -264,10 +258,7 @@ func keyHasRevision(key string, rev int64) clientv3.Cmp {
 
 // Delete implements Store.
 func (e *EtcdStore) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
-	deleteoptions := &store.DeleteOptions{PropagationPolicy: ptr.To(store.DeletePropagationBackground)}
-	for _, opt := range opts {
-		opt(deleteoptions)
-	}
+	deleteoptions := store.ApplyDeleteOptions(opts)
 	if err := e.core.validateObject(obj); err != nil {
 		return err
 	}
@@ -316,10 +307,7 @@ func (e *EtcdStore) Get(ctx context.Context, name string, obj store.Object, opts
 	if err != nil {
 		return err
 	}
-	options := &store.GetOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
+	options := store.ApplyGetOptions(opts)
 	if err := e.core.validateObject(obj); err != nil {
 		return err
 	}
@@ -347,10 +335,7 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 	if err != nil {
 		return err
 	}
-	options := &store.ListOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
+	options := store.ApplyListOptions(opts)
 	if err := e.core.validateObjectList(list); err != nil {
 		return err
 	}
@@ -498,10 +483,7 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 
 // Patch implements Store.
 func (e *EtcdStore) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	options := &store.PatchOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
+	_ = store.ApplyPatchOptions(opts)
 	updatefunc := func(current store.Object) (store.Object, error) {
 		desired := store.NewObject(obj)
 		if err := store.CopyObject(current, desired); err != nil {
@@ -528,10 +510,7 @@ func (e *EtcdStore) Status() store.StatusStorage {
 
 // Update implements Store.
 func (e *EtcdStore) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
-	options := &store.UpdateOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
+	options := store.ApplyUpdateOptions(opts)
 	requested := store.NewObject(obj)
 	if err := store.CopyObject(obj, requested); err != nil {
 		return err
@@ -562,10 +541,7 @@ type EtcdStatusStore struct {
 
 // Patch implements StatusStorage.
 func (e *EtcdStatusStore) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	options := &store.PatchOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
+	_ = store.ApplyPatchOptions(opts)
 	updatefunc := func(current store.Object) (store.Object, error) {
 		desired := store.NewObject(obj)
 		if err := store.CopyObject(current, desired); err != nil {
@@ -586,10 +562,7 @@ func (e *EtcdStatusStore) Update(ctx context.Context, obj store.Object, opts ...
 	if err != nil {
 		return err
 	}
-	options := &store.UpdateOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
+	options := store.ApplyUpdateOptions(opts)
 	requested := store.NewObject(obj)
 	if err := store.CopyObject(obj, requested); err != nil {
 		return err

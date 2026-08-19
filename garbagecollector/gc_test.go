@@ -102,10 +102,7 @@ func (s *watchGateStore) Capabilities() store.Capabilities {
 }
 
 func (s *watchGateStore) Watch(_ context.Context, list store.ObjectList, options ...store.WatchOption) (store.Watcher, error) {
-	configured := store.WatchOptions{}
-	for _, option := range options {
-		option(&configured)
-	}
+	configured := store.ApplyWatchOptions(options)
 	if !configured.SendInitialEvents {
 		return nil, stderrors.New("GC watch did not request initial events")
 	}
@@ -252,7 +249,7 @@ func TestNewChildrenGarbageCollector(t *testing.T) {
 	// delete main zoo
 	todelete := objfrom(store.ObjectMeta{Name: "main", Resource: "zoos"})
 	if err := storage.Scope(todelete.GetScopes()...).Delete(ctx, todelete,
-		store.WithDeletePropagation(store.DeletePropagationForeground)); err != nil {
+		store.WithPropagation(store.DeletePropagationForeground)); err != nil {
 		t.Fatalf("Failed to delete main zoo: %v", err)
 	}
 

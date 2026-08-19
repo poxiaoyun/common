@@ -94,7 +94,7 @@ func Run(t *testing.T, fixture Fixture) {
 				t.Context(),
 				&commonstore.List[Object]{Resource: "storetests"},
 				commonstore.WithSendInitialEvents(),
-				commonstore.WithWatchFieldRequirements(commonstore.RequirementEqual("rank", 8)),
+				commonstore.WithFieldRequirements(commonstore.RequirementEqual("rank", 8)),
 			)
 		})
 		defer watcher.Stop()
@@ -153,7 +153,7 @@ func Run(t *testing.T, fixture Fixture) {
 			watcher, err := storage.Watch(
 				t.Context(),
 				&commonstore.List[Object]{Resource: "storetests"},
-				commonstore.WithWatchResourceVersion(1),
+				commonstore.WithResourceVersion(1),
 			)
 			if watcher != nil {
 				watcher.Stop()
@@ -168,7 +168,7 @@ func Run(t *testing.T, fixture Fixture) {
 			return storage.Watch(
 				t.Context(),
 				&commonstore.List[Object]{Resource: "storetests"},
-				commonstore.WithWatchResourceVersion(bookmark.ResourceVersion),
+				commonstore.WithResourceVersion(bookmark.ResourceVersion),
 			)
 		})
 		defer resumed.Stop()
@@ -340,27 +340,27 @@ func Run(t *testing.T, fixture Fixture) {
 		if err := storage.Create(t.Context(), object); err != nil {
 			t.Fatalf("Create() error = %v", err)
 		}
-		if err := storage.Delete(t.Context(), object, commonstore.WithDeleteUID("stale")); !commonerrors.IsConflict(err) {
+		if err := storage.Delete(t.Context(), object, commonstore.WithUID("stale")); !commonerrors.IsConflict(err) {
 			t.Fatalf("stale UID Delete() error = %v, want Conflict", err)
 		}
-		if err := storage.Delete(t.Context(), object, commonstore.WithDeleteResourceVersion(object.ResourceVersion+1)); !commonerrors.IsConflict(err) {
+		if err := storage.Delete(t.Context(), object, commonstore.WithResourceVersion(object.ResourceVersion+1)); !commonerrors.IsConflict(err) {
 			t.Fatalf("stale ResourceVersion Delete() error = %v, want Conflict", err)
 		}
 		if err := storage.Delete(t.Context(), object,
-			commonstore.WithDeleteUID("stale"),
-			commonstore.WithDeleteLabelRequirements(commonstore.RequirementEqual("team", "red")),
+			commonstore.WithUID("stale"),
+			commonstore.WithLabelRequirements(commonstore.RequirementEqual("team", "red")),
 		); !commonerrors.IsConflict(err) {
 			t.Fatalf("precondition ordering Delete() error = %v, want Conflict", err)
 		}
 		if err := storage.Delete(t.Context(), object,
-			commonstore.WithDeleteUID(object.UID),
-			commonstore.WithDeleteLabelRequirements(commonstore.RequirementEqual("team", "red")),
+			commonstore.WithUID(object.UID),
+			commonstore.WithLabelRequirements(commonstore.RequirementEqual("team", "red")),
 		); !commonerrors.IsNotFound(err) {
 			t.Fatalf("requirement mismatch Delete() error = %v, want NotFound", err)
 		}
 		if err := storage.Delete(t.Context(), object,
-			commonstore.WithDeleteUID(object.UID),
-			commonstore.WithDeleteResourceVersion(object.ResourceVersion),
+			commonstore.WithUID(object.UID),
+			commonstore.WithResourceVersion(object.ResourceVersion),
 		); err != nil {
 			t.Fatalf("conditional Delete() error = %v", err)
 		}
@@ -792,7 +792,7 @@ func RunQueryCapabilities(t *testing.T, fixture Fixture, storage commonstore.Sto
 	}
 	if fixture.Capabilities.Projection {
 		projected := &Object{}
-		if err := storage.Get(t.Context(), "a", projected, commonstore.WithGetFields("id", "value")); err != nil {
+		if err := storage.Get(t.Context(), "a", projected, commonstore.WithFields("id", "value")); err != nil {
 			t.Fatalf("projection Get() error = %v", err)
 		}
 		if projected.ID != "a" || projected.Value != "first" || projected.Name != "" || projected.Rank != 0 {

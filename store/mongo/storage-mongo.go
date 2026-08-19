@@ -283,10 +283,7 @@ func (m *MongoStorage) Scope(scopes ...store.Scope) store.Store {
 
 // Count implements Storage.
 func (m *MongoStorage) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
-	options := store.CountOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyCountOptions(opts)
 	var count int
 	err := m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
@@ -303,10 +300,7 @@ func (m *MongoStorage) Count(ctx context.Context, obj store.Object, opts ...stor
 
 // Create implements Storage.
 func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...store.CreateOption) error {
-	creationopt := store.CreateOptions{}
-	for _, opt := range opts {
-		opt(&creationopt)
-	}
+	_ = store.ApplyCreateOptions(opts)
 	return m.on(ctx, into, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		store.PrepareObjectForCreate(into, col.Name(), m.scopes)
 		into.SetResourceVersion(1)
@@ -375,10 +369,7 @@ func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...sto
 	if id == "" {
 		return errors.NewBadRequest("id is required")
 	}
-	options := store.DeleteOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyDeleteOptions(opts)
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: id})
 		for {
@@ -429,10 +420,7 @@ func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...sto
 
 // DeleteAllOf implements Storage.
 func (m *MongoStorage) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
-	options := store.DeleteBatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyDeleteBatchOptions(opts)
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
 		m.core.logger.V(5).Info("delete all", "collection", col.Name(), "filter", filter)
@@ -448,10 +436,7 @@ func (m *MongoStorage) Get(ctx context.Context, id string, obj store.Object, opt
 	if id == "" {
 		return errors.NewBadRequest("id is required")
 	}
-	options := store.GetOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyGetOptions(opts)
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: id})
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
@@ -475,10 +460,7 @@ func (m *MongoStorage) Get(ctx context.Context, id string, obj store.Object, opt
 
 // Update implements Storage.
 func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
-	options := store.UpdateOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyUpdateOptions(opts)
 	return m.replace(ctx, obj, options.LabelRequirements, options.FieldRequirements, false, obj.GetResourceVersion(), func(current, desired store.Object) error {
 		return store.CopyObject(obj, desired)
 	})
@@ -486,10 +468,7 @@ func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...sto
 
 // Patch implements Storage.
 func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	options := store.PatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyPatchOptions(opts)
 	return m.replace(ctx, obj, options.LabelRequirements, options.FieldRequirements, false, 0, func(current, desired store.Object) error {
 		if err := store.CopyObject(current, desired); err != nil {
 			return err
@@ -500,10 +479,7 @@ func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.
 
 // PatchBatch implements store.Store.
 func (m *MongoStorage) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
-	options := store.PatchBatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyPatchBatchOptions(opts)
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
 		update, err := convertBatchPatch(patch, []string{"creator", "creationTimestamp", "resourceVersion", "status", "generation"}, nil)
@@ -521,10 +497,7 @@ func (m *MongoStorage) PatchBatch(ctx context.Context, obj store.ObjectList, pat
 
 // List implements Storage.
 func (m *MongoStorage) List(ctx context.Context, list store.ObjectList, opts ...store.ListOption) error {
-	options := store.ListOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyListOptions(opts)
 	list.SetPage(options.Page)
 	list.SetSize(options.Size)
 
@@ -875,10 +848,7 @@ type MongoStorageStatus struct {
 
 // Patch implements StatusStorage.
 func (m *MongoStorageStatus) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	options := store.PatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyPatchOptions(opts)
 	return m.replace(ctx, obj, options.LabelRequirements, options.FieldRequirements, true, 0, func(current, desired store.Object) error {
 		if err := store.CopyObject(current, desired); err != nil {
 			return err
@@ -889,10 +859,7 @@ func (m *MongoStorageStatus) Patch(ctx context.Context, obj store.Object, patch 
 
 // Update implements StatusStorage.
 func (m *MongoStorageStatus) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
-	options := store.UpdateOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyUpdateOptions(opts)
 	return m.replace(ctx, obj, options.LabelRequirements, options.FieldRequirements, true, obj.GetResourceVersion(), func(current, desired store.Object) error {
 		return store.CopyObject(obj, desired)
 	})

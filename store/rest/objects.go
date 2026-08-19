@@ -17,7 +17,8 @@ func ListObjectsOrWatch[T store.ObjectList](w http.ResponseWriter, r *http.Reque
 		return nil, err
 	}
 	if api.Query(r, "watch", false) {
-		return nil, watchObjects(w, r, storage, list, resolved)
+		listOptions := store.ApplyListOptions(resolved)
+		return nil, watchObjects(w, r, storage, list, listOptions)
 	}
 	return listObjects(r, storage, list, resolved)
 }
@@ -32,21 +33,16 @@ func ListObjects[T store.ObjectList](r *http.Request, storage store.Store, list 
 	return listObjects(r, storage, list, resolved)
 }
 
-func listOptionsFromRequest(r *http.Request, modifiers ...store.ListOption) (store.ListOptions, error) {
+func listOptionsFromRequest(r *http.Request, modifiers ...store.ListOption) ([]store.ListOption, error) {
 	options, err := ListOptionsFromRequest(r)
 	if err != nil {
-		return store.ListOptions{}, err
+		return nil, err
 	}
-	for _, modifier := range modifiers {
-		modifier(&options)
-	}
-	return options, nil
+	return append(options, modifiers...), nil
 }
 
-func listObjects[T store.ObjectList](r *http.Request, storage store.Store, list T, options store.ListOptions) (T, error) {
-	if err := storage.List(r.Context(), list, func(target *store.ListOptions) {
-		*target = options
-	}); err != nil {
+func listObjects[T store.ObjectList](r *http.Request, storage store.Store, list T, options []store.ListOption) (T, error) {
+	if err := storage.List(r.Context(), list, options...); err != nil {
 		return *new(T), err
 	}
 	return list, nil
@@ -61,12 +57,12 @@ func watchObjects[T store.ObjectList](w http.ResponseWriter, r *http.Request, st
 	if err != nil {
 		return err
 	}
-	watchOptions := WatchOptionsFromListOptions(listOptions)
-	watchOptions.SendInitialEvents = api.Query(r, "sendInitialEvents", false)
+	watchOptions := watchOptionsFromListOptions(listOptions)
+	if api.Query(r, "sendInitialEvents", false) {
+		watchOptions = append(watchOptions, store.WithSendInitialEvents())
+	}
 	unstructured := &store.List[store.Unstructured]{Resource: resource}
-	watcher, err := storage.Watch(r.Context(), unstructured, func(target *store.WatchOptions) {
-		*target = watchOptions
-	})
+	watcher, err := storage.Watch(r.Context(), unstructured, watchOptions...)
 	if err != nil {
 		return err
 	}
@@ -88,6 +84,23 @@ func watchObjects[T store.ObjectList](w http.ResponseWriter, r *http.Request, st
 			}
 		}
 	}
+}
+
+func watchOptionsFromListOptions(options store.ListOptions) []store.WatchOption {
+	var result []store.WatchOption
+	if len(options.LabelRequirements) != 0 {
+		result = append(result, store.WithLabelRequirements(options.LabelRequirements...))
+	}
+	if len(options.FieldRequirements) != 0 {
+		result = append(result, store.WithFieldRequirements(options.FieldRequirements...))
+	}
+	if options.ResourceVersion != nil {
+		result = append(result, store.WithResourceVersion(*options.ResourceVersion))
+	}
+	if options.IncludeSubScopes {
+		result = append(result, store.WithSubScopes())
+	}
+	return result
 }
 
 // GetObject loads id into obj.

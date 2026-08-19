@@ -83,10 +83,7 @@ func (*initialWatchStore) Capabilities() store.Capabilities {
 }
 
 func (s *initialWatchStore) Watch(_ context.Context, _ store.ObjectList, opts ...store.WatchOption) (store.Watcher, error) {
-	options := store.WatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyWatchOptions(opts)
 	s.mu.Lock()
 	s.options = append(s.options, options)
 	call := len(s.options)

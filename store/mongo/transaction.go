@@ -12,10 +12,7 @@ func (s *MongoStorage) Transaction(ctx context.Context,
 	fn func(ctx context.Context, store store.Store) error,
 	opts ...store.TransactionOption,
 ) error {
-	transactionOptions := &store.TransactionOptions{}
-	for _, opt := range opts {
-		opt(transactionOptions)
-	}
+	transactionOptions := store.ApplyTransactionOptions(opts)
 	if transactionOptions.Timeout > 0 {
 		timoutctx, cancel := context.WithTimeout(ctx, transactionOptions.Timeout)
 		defer cancel()

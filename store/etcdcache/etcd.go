@@ -223,10 +223,7 @@ func (c *generic) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ..
 
 // Count implements store.Store.
 func (c *generic) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
-	options := store.CountOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyCountOptions(opts)
 	predicate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
 	if err != nil {
 		return 0, err
@@ -254,10 +251,7 @@ func (c *generic) Count(ctx context.Context, obj store.Object, opts ...store.Cou
 
 // Create implements store.Store.
 func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.CreateOption) error {
-	options := store.CreateOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyCreateOptions(opts)
 	return c.core.on(ctx, obj, func(ctx context.Context, db *resourceDB) error {
 		store.PrepareObjectForCreate(obj, db.resource.String(), c.scopes)
 		uns, err := ConvertToUnstructured(obj)
@@ -276,10 +270,7 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 
 // Delete implements store.Store.
 func (c *generic) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
-	options := store.DeleteOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyDeleteOptions(opts)
 	preconditions := &storage.Preconditions{}
 	if options.Preconditions != nil {
 		if options.Preconditions.UID != nil {
@@ -311,10 +302,7 @@ func (c *generic) Delete(ctx context.Context, obj store.Object, opts ...store.De
 
 // Get implements store.Store.
 func (c *generic) Get(ctx context.Context, name string, obj store.Object, opts ...store.GetOption) error {
-	options := store.GetOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyGetOptions(opts)
 	predicate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
 	if err != nil {
 		return err
@@ -345,10 +333,7 @@ func (c *generic) Get(ctx context.Context, name string, obj store.Object, opts .
 
 // List implements store.Store.
 func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store.ListOption) error {
-	options := store.ListOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyListOptions(opts)
 	preficate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
 	if err != nil {
 		return err
@@ -474,10 +459,7 @@ func formatResourceVersion(i *int64) string {
 
 // Patch implements store.Store.
 func (c *generic) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	options := store.PatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyPatchOptions(opts)
 	preconditions := &storage.Preconditions{}
 	if obj.GetUID() != "" {
 		preconditions.UID = ptr.To(types.UID(obj.GetUID()))
@@ -507,10 +489,7 @@ var errShouldDelete = fmt.Errorf("should delete")
 
 // Update implements store.Store.
 func (c *generic) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
-	options := store.UpdateOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyUpdateOptions(opts)
 	updatefunc := func(ctx context.Context, oldObj *store.Unstructured) (store.Object, error) {
 		return obj, nil
 	}
@@ -546,10 +525,7 @@ type status struct {
 
 // Patch implements store.StatusStorage.
 func (s *status) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	options := store.PatchOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyPatchOptions(opts)
 	preconditions := &storage.Preconditions{}
 	if obj.GetUID() != "" {
 		preconditions.UID = ptr.To(types.UID(obj.GetUID()))
@@ -573,10 +549,7 @@ func (s *status) update(ctx context.Context, obj store.Object, preconditions *st
 
 // Update implements store.StatusStorage.
 func (s *status) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
-	options := store.UpdateOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := store.ApplyUpdateOptions(opts)
 	preconditions := &storage.Preconditions{}
 	if obj.GetUID() != "" {
 		preconditions.UID = ptr.To(types.UID(obj.GetUID()))
