@@ -5,6 +5,9 @@ startup configuration, help, streams, and process lifecycle.
 
 ```go
 program := command.Program{
+    GlobalOptions: func() any {
+        return &GlobalOptions{}
+    },
     Command: command.Command{
         Name:    "tool",
         Summary: "Administration tool",
@@ -25,11 +28,13 @@ command.Main(program)
 ```
 
 `Program` and `Command` are specifications. `Exec` interprets the specification
-for one execution. `Command.Options` returns fresh defaults; `Exec` applies
-external Sources from low to high priority and exposes the result through
-`command.Options[T](Invocation)` before calling `Run`. Defaults are the mandatory
-lowest-priority source; external Sources default to discovered or explicitly
-selected files, environment variables, and command-line configuration.
+for one execution. `Program.GlobalOptions` and `Command.Options` return fresh
+defaults; `Exec` applies external Sources from low to high priority and exposes
+the results through `command.GlobalOptions[T](Invocation)` and
+`command.Options[T](Invocation)` before calling `Run`. Defaults are the
+mandatory lowest-priority values; external Sources default to discovered or
+explicitly selected files, environment variables, and command-line
+configuration.
 
 `Main` connects the process lifecycle: the first `SIGINT` or `SIGTERM` cancels
 `Invocation.Context` for graceful shutdown, while a second signal exits
@@ -70,10 +75,13 @@ type Source interface {
 ```
 
 A source that owns options also implements `FlagSource`, which derives its
-declarations from the selected action's semantic configuration tree. Each
-source sees the complete arguments, environment, selected command path, file
-reader, and configuration tree. `Exec` supplies the flag occurrences belonging
-to that source without hiding the original arguments.
+declarations from each configured target's semantic configuration tree. Global
+option flags work before or after subcommands; action flags belong to the
+selected action. Each source sees the complete arguments, environment,
+selected command path, file reader, and configuration tree. A Source runs once
+for global options and once for action options when both exist;
+`SourceInput.Target.Global` identifies the former. `Exec` supplies the flag
+occurrences belonging to that source without hiding the original arguments.
 
 A Source control option that must work before action selection implements
 `GlobalFlagSource`. `ConfigurationFilesSource` uses it for `--config-file`, so
@@ -123,7 +131,8 @@ intentionally differs from JSON. It takes complete precedence over `json`:
 when `config` is present, its name and options are authoritative and `json` is
 ignored. For example, `json:"token,omitempty" config:"token,sensitive"`
 redacts the value. `config:"-"` excludes a runtime-only field, and
-`config:",inline"` flattens a struct. Help text uses the independent
+`config:",inline"` flattens a struct. `config:"file,short=f"` additionally
+declares `-f` for the generated `--file` flag. Help text uses the independent
 `description:"Help text"` tag. The serialization-specific `omitempty` option
 is ignored in both `json` and `config` tags.
 
@@ -143,8 +152,9 @@ config/<executable>.json
 <executable>.json
 ```
 
-`--config-file` is global, overrides `CONFIG_FILE`, and disables discovery. Nested actions
-read the object at their command path. Structs and maps merge recursively,
+`--config-file` is global, overrides `CONFIG_FILE`, and disables discovery.
+Program global options read the top-level `global` object; nested actions read
+the object at their command path. Structs and maps merge recursively,
 slices replace, and null clears nullable fields or deletes map keys.
 
 CLI configuration accepts `--name=value`, `--name value`, declared short

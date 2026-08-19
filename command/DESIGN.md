@@ -30,19 +30,23 @@ and the current prefix. This is passive specification data until a completion
 interpreter is added; it does not add completion behavior to `Exec` or make
 completion a Plugin lifecycle hook.
 
-A `Program` embeds its root `Command` and declares Plugins, Sources, and
-unknown-property policy. Nil Plugins and Sources select their defaults; an
+A `Program` embeds its root `Command` and declares optional global options,
+Plugins, Sources, and unknown-property policy. `Program.GlobalOptions` returns
+a fresh pointer for each execution. Global options are available to every
+action through `GlobalOptions[T](Invocation)` and use the same typed Source
+pipeline as action options. Nil Plugins and Sources select their defaults; an
 explicit empty slice disables them. `Exec` derives all routing, flags, and
 configuration schema state for that execution.
 
 An `Execution` supplies one run's arguments, environment, file reader, and
-streams. After routing selects an action, configured actions create fresh
-defaults and apply the Program's `Source` values from low to high priority.
-The resulting options are stored privately on `Invocation` and exposed to the
-action through `Options[T](Invocation)`. The command tree necessarily erases
-their concrete types because different actions may use different option
-structs; the generic accessor keeps that assertion inside the command module.
-Ordinary actions do not run configuration sources.
+streams. After routing selects an action, `Exec` creates fresh global and action
+defaults and applies the Program's `Source` values from low to high priority to
+each configured target independently. The resulting options are stored
+privately on `Invocation` and exposed through `GlobalOptions[T](Invocation)`
+and `Options[T](Invocation)`. The command tree necessarily erases their
+concrete types because different actions may use different option structs; the
+generic accessors keep those assertions inside the command module. Programs or
+actions without the corresponding options do not create that Source target.
 
 `Invocation` contains an explicit context, remaining positional arguments,
 resolved options, and streams. It is not itself a `context.Context`.
@@ -77,10 +81,12 @@ The built-in adapters are exported concrete Source types so callers may create,
 embed, compose, or wrap them like external implementations.
 
 Sources that accept command-line flags additionally implement `FlagSource`.
-This capability consumes the selected action's semantic configuration tree to
-supply flag declarations for parsing and help; `Exec` never detects concrete
-source types. All sources receive the full original arguments. A `FlagSource`
-also receives the occurrences matched to its own declarations.
+This capability consumes a target's semantic configuration tree to supply flag
+declarations for parsing and help; global-option flags are accepted at every
+command level, while action-option flags belong to the selected action. `Exec`
+never detects concrete source types. All sources receive the full original
+arguments. A `FlagSource` also receives the occurrences matched to its own
+declarations.
 
 A Source control flag that must be recognized before action selection uses the
 separate `GlobalFlagSource` capability. Its values are still delivered to that
@@ -107,11 +113,12 @@ Source and semantic configuration tree.
 
 The default source order is configuration files, environment variables, then
 command-line configuration. Nil Sources select this order; an explicit empty
-slice disables external configuration. Action defaults remain the mandatory
-lowest-priority source and are logged before these replaceable external
-Sources. Sources only run after
-successful routing and syntax parsing; help never applies a source. A source
-failure stops later sources and the action.
+slice disables external configuration. Global and action defaults remain the
+mandatory lowest-priority values and are logged before these replaceable
+external Sources. A Source runs once for each configured target and can
+distinguish the global target through `SourceInput.Target.Global`. Sources only
+run after successful routing and syntax parsing; help never applies a source.
+A source failure stops later sources and the action.
 
 Program and per-command settings are fields on their specifications; they do
 not use option or builder layers.
@@ -127,8 +134,10 @@ the independent `description` tag. Flags are the lower-case canonical path with
 dots replaced by hyphens; environment names are the corresponding upper-case
 names with underscores. Naming is exact and does not use relaxed matching.
 
-`config:"-"` excludes a field, `config:",inline"` flattens a struct, and
-`config:",sensitive"` marks its values as sensitive. `omitempty` belongs to
+`config:"-"` excludes a field, `config:",inline"` flattens a struct,
+`config:",sensitive"` marks its values as sensitive, and
+`config:"file,short=f"` declares the short command-line form `-f`.
+`omitempty` belongs to
 serialization and is ignored for both `json` and `config` tags. Maps have
 string keys.
 Structs and maps compile into property changes, slices replace, and null clears
@@ -146,10 +155,16 @@ execution; canonical paths, sensitivity, field lists, and flag, environment,
 and map lookups are derived from the tree where they are used.
 
 Flag declarations use exact long names, an optional short name, or one `{key}`
-placeholder. `Exec` compiles Plugin and `GlobalFlagSource` flags globally, then
-the selected action's `FlagSource` declarations. It rejects overlap and assigns
-occurrences to their owners during the single argument scan. Source order
-affects configuration precedence only, not routing or flag ownership.
+placeholder. `Exec` compiles Plugin, `GlobalFlagSource`, and global-options
+`FlagSource` flags globally, then the selected action's `FlagSource`
+declarations. It rejects overlap and assigns occurrences to their owners during
+the single argument scan. Source order affects configuration precedence only,
+not routing or flag ownership.
+
+Configuration files keep the two targets explicit: global options come from
+the top-level `global` object and action options come from the object at the
+selected command path. This avoids merging action-specific fields into every
+command while keeping one file usable by the whole Program.
 
 ## Lifecycle and ownership
 

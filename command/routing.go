@@ -19,22 +19,26 @@ func (err *UnknownCommandError) Error() string {
 }
 
 type parsedCommand struct {
-	command     Command
-	path        []string
-	selected    bool
-	arguments   []string
-	options     any
-	schema      *libreflect.Node
-	flags       []compiledFlag
-	sourceFlags map[int][]FlagValue
-	pluginFlags map[int][]FlagValue
+	command            Command
+	path               []string
+	selected           bool
+	arguments          []string
+	options            any
+	schema             *libreflect.Node
+	flags              []compiledFlag
+	sourceFlags        map[int][]FlagValue
+	globalSourceFlags  map[int][]FlagValue
+	controlSourceFlags map[int][]FlagValue
+	pluginFlags        map[int][]FlagValue
 }
 
 func parseCommand(root Command, arguments []string, sources []Source, globalFlags []compiledGlobalFlag) (parsedCommand, error) {
 	result := parsedCommand{
-		command:     root,
-		sourceFlags: map[int][]FlagValue{},
-		pluginFlags: map[int][]FlagValue{},
+		command:            root,
+		sourceFlags:        map[int][]FlagValue{},
+		globalSourceFlags:  map[int][]FlagValue{},
+		controlSourceFlags: map[int][]FlagValue{},
+		pluginFlags:        map[int][]FlagValue{},
 	}
 	for index := 0; index < len(arguments); index++ {
 		argument := arguments[index]
@@ -111,7 +115,9 @@ func recordGlobalFlag(result *parsedCommand, flag *compiledGlobalFlag, value Fla
 	case pluginGlobalFlag:
 		result.pluginFlags[flag.ownerIndex] = append(result.pluginFlags[flag.ownerIndex], value)
 	case sourceGlobalFlag:
-		result.sourceFlags[flag.ownerIndex] = append(result.sourceFlags[flag.ownerIndex], value)
+		result.controlSourceFlags[flag.ownerIndex] = append(result.controlSourceFlags[flag.ownerIndex], value)
+	case configurationGlobalFlag:
+		result.globalSourceFlags[flag.ownerIndex] = append(result.globalSourceFlags[flag.ownerIndex], value)
 	}
 }
 

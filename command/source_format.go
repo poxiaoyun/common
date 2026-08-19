@@ -25,6 +25,9 @@ func configurationTypeName(typ reflect.Type) string {
 	if typ == reflect.TypeFor[time.Duration]() {
 		return "duration"
 	}
+	if typ == reflect.TypeFor[time.Time]() {
+		return "RFC3339"
+	}
 	switch typ.Kind() {
 	case reflect.Slice:
 		return "list"

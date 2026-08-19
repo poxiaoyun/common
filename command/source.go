@@ -16,7 +16,7 @@ import (
 	libreflect "xiaoshiai.cn/common/reflect"
 )
 
-// Source loads ordered configuration values for one execution.
+// Source loads ordered configuration values for one configured target.
 // Implementations must be reusable and safe for concurrent Program executions.
 type Source interface {
 	// Name identifies the source in diagnostics.
@@ -45,6 +45,9 @@ type GlobalFlagSource interface {
 type Target struct {
 	Executable  string
 	CommandPath []string
+	// Global identifies the Program's global-options target. Its CommandPath is
+	// empty and configuration files use the top-level global section.
+	Global bool
 }
 
 // SourceValue is one named configuration value loaded by a Source.
@@ -263,9 +266,16 @@ func (ConfigurationFilesSource) Load(_ context.Context, input SourceInput) ([]So
 			}
 			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
-		decoded, err := decodeConfigurationFile(data, path, input.Target.CommandPath)
+		commandPath := input.Target.CommandPath
+		if input.Target.Global {
+			commandPath = []string{"global"}
+		}
+		decoded, err := decodeConfigurationFile(data, path, commandPath)
 		if err != nil {
 			return nil, fmt.Errorf("decode %s: %w", path, err)
+		}
+		if !input.Target.Global && len(input.Target.CommandPath) == 0 {
+			delete(decoded, "global")
 		}
 		values = append(values, SourceValue{Name: path, Value: decoded})
 	}
@@ -365,8 +375,13 @@ func (CommandLineArgumentsSource) Flags(configuration *libreflect.Node) ([]Flag,
 }
 
 func configurationFlag(field projectedConfigurationField) (Flag, error) {
+	short, err := configurationShortName(field.Node.Tag.Get("config"))
+	if err != nil {
+		return Flag{}, err
+	}
 	flag := Flag{
 		Pattern:   configurationFlagName(field.Canonical),
+		Short:     short,
 		ValueMode: flagValueMode(field.Node.Type),
 		ValueName: configurationTypeName(field.Node.Type),
 		Summary:   field.Node.Tag.Get("description"),
@@ -388,6 +403,21 @@ func configurationFlag(field projectedConfigurationField) (Flag, error) {
 		}
 	}
 	return flag, nil
+}
+
+func configurationShortName(tag string) (string, error) {
+	short := ""
+	for _, option := range strings.Split(tag, ",")[1:] {
+		value, found := strings.CutPrefix(option, "short=")
+		if !found {
+			continue
+		}
+		if short != "" {
+			return "", fmt.Errorf("multiple short names")
+		}
+		short = value
+	}
+	return short, nil
 }
 
 func configurationFlagName(canonical string) string {

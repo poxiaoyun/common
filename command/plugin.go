@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"slices"
+
+	libreflect "xiaoshiai.cn/common/reflect"
 )
 
 // Plugin extends Program execution without becoming a configuration Source.
@@ -110,9 +112,10 @@ type globalFlagOwner uint8
 const (
 	pluginGlobalFlag globalFlagOwner = iota
 	sourceGlobalFlag
+	configurationGlobalFlag
 )
 
-func compileGlobalFlags(plugins []Plugin, sources []Source) ([]compiledGlobalFlag, error) {
+func compileGlobalFlags(plugins []Plugin, sources []Source, globalConfiguration *libreflect.Node) ([]compiledGlobalFlag, error) {
 	flags := []compiledGlobalFlag{}
 	appendFlag := func(flag compiledGlobalFlag) error {
 		for _, existing := range flags {
@@ -158,6 +161,21 @@ func compileGlobalFlags(plugins []Plugin, sources []Source) ([]compiledGlobalFla
 				compiledFlag: flag,
 				owner:        sourceGlobalFlag,
 				ownerIndex:   sourceIndex,
+			}); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if globalConfiguration != nil {
+		declared, err := compileSourceFlags(sources, globalConfiguration)
+		if err != nil {
+			return nil, fmt.Errorf("global configuration flags: %w", err)
+		}
+		for _, flag := range declared {
+			if err := appendFlag(compiledGlobalFlag{
+				compiledFlag: flag,
+				owner:        configurationGlobalFlag,
+				ownerIndex:   flag.sourceIndex,
 			}); err != nil {
 				return nil, err
 			}

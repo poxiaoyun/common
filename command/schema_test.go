@@ -4,12 +4,101 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"io/fs"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"xiaoshiai.cn/common/command"
 )
+
+type globalOptions struct {
+	Server string `json:"server"`
+	Token  string `json:"token" config:"token,sensitive"`
+}
+
+type listOptions struct {
+	Output    string    `json:"output" config:"output,short=o"`
+	ExpiresAt time.Time `json:"expiresAt" config:"expires-at"`
+}
+
+func TestProgramResolvesGlobalAndActionOptions(t *testing.T) {
+	var gotGlobal *globalOptions
+	var gotAction *listOptions
+	program := command.Program{
+		GlobalOptions: func() any { return &globalOptions{Server: "default"} },
+		Command: command.Command{
+			Name: "tool",
+			Children: []command.Command{{
+				Name: "users",
+				Children: []command.Command{{
+					Name:    "list",
+					Options: func() any { return &listOptions{Output: "table"} },
+					Run: func(invocation command.Invocation) error {
+						gotGlobal = command.GlobalOptions[globalOptions](invocation)
+						gotAction = command.Options[listOptions](invocation)
+						return nil
+					},
+				}},
+			}},
+		},
+	}
+	configuration := []byte("global:\n  server: file\n  token: file-secret\nusers:\n  list:\n    output: yaml\n")
+	err := command.Exec(context.Background(), program, command.Execution{
+		Arguments:   []string{"--config-file", "tool.yaml", "users", "list", "-o", "json", "--token", "cli-secret"},
+		Environment: map[string]string{"SERVER": "environment"},
+		ReadFile: func(path string) ([]byte, error) {
+			if path == "tool.yaml" {
+				return configuration, nil
+			}
+			return nil, fs.ErrNotExist
+		},
+		Streams: schemaTestStreams(io.Discard),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (&globalOptions{Server: "environment", Token: "cli-secret"}); !reflect.DeepEqual(gotGlobal, want) {
+		t.Fatalf("global options = %#v, want %#v", gotGlobal, want)
+	}
+	if want := (&listOptions{Output: "json"}); !reflect.DeepEqual(gotAction, want) {
+		t.Fatalf("action options = %#v, want %#v", gotAction, want)
+	}
+}
+
+func TestHelpShowsGlobalAndActionConfigurationFlags(t *testing.T) {
+	program := command.Program{
+		GlobalOptions: func() any { return &globalOptions{Token: "global-secret"} },
+		Command: command.Command{
+			Name: "tool",
+			Children: []command.Command{{
+				Name:    "list",
+				Options: func() any { return &listOptions{} },
+				Run:     func(command.Invocation) error { return nil },
+			}},
+		},
+		Sources: []command.Source{command.CommandLineArguments()},
+	}
+	for _, arguments := range [][]string{{"--help"}, {"list", "--help"}} {
+		output := &bytes.Buffer{}
+		if err := command.Exec(context.Background(), program, command.Execution{
+			Arguments: arguments,
+			Streams:   schemaTestStreams(output),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.String(), "--server") {
+			t.Fatalf("global flag missing from help:\n%s", output)
+		}
+		if strings.Contains(output.String(), "global-secret") {
+			t.Fatalf("sensitive global default included in help:\n%s", output)
+		}
+		if len(arguments) > 1 && (!strings.Contains(output.String(), "-o, --output") || !strings.Contains(output.String(), "--expires-at RFC3339")) {
+			t.Fatalf("action flags missing from help:\n%s", output)
+		}
+	}
+}
 
 func schemaTestStreams(output io.Writer) command.Streams {
 	return command.Streams{Input: strings.NewReader(""), Output: output, ErrorOutput: io.Discard}

@@ -44,10 +44,16 @@ type Streams struct {
 
 // Invocation contains runtime values available to an action.
 type Invocation struct {
-	Context   context.Context
-	Arguments []string
-	options   any
-	Streams   Streams
+	Context       context.Context
+	Arguments     []string
+	globalOptions any
+	options       any
+	Streams       Streams
+}
+
+// GlobalOptions returns the Program's resolved global startup options.
+func GlobalOptions[T any](invocation Invocation) *T {
+	return invocation.globalOptions.(*T)
 }
 
 // Options returns the selected command's resolved startup options.
@@ -66,6 +72,9 @@ type Execution struct {
 // Program specifies a complete executable program.
 type Program struct {
 	Command
+	// GlobalOptions returns fresh startup options shared by every action for
+	// each execution. Nil means the Program has no global configuration.
+	GlobalOptions func() any
 	// Plugins extends execution behavior. Nil selects DefaultPlugins; an empty
 	// slice disables plugins.
 	Plugins []Plugin
@@ -137,7 +146,17 @@ func Exec(ctx context.Context, program Program, execution Execution) error {
 	if err := validateCommand(root); err != nil {
 		return err
 	}
-	globalFlags, err := compileGlobalFlags(plugins, sources)
+	var globalOptions any
+	var globalSchema *libreflect.Node
+	var err error
+	if program.GlobalOptions != nil {
+		globalOptions = program.GlobalOptions()
+		globalSchema, err = compileConfigurationSchema(globalOptions)
+		if err != nil {
+			return fmt.Errorf("global configuration: %w", err)
+		}
+	}
+	globalFlags, err := compileGlobalFlags(plugins, sources, globalSchema)
 	if err != nil {
 		return err
 	}
@@ -175,29 +194,51 @@ func Exec(ctx context.Context, program Program, execution Execution) error {
 		Arguments: parsed.arguments,
 		Streams:   execution.Streams,
 	}
-	if parsed.schema == nil {
-		return parsed.command.Run(invocation)
+	if globalSchema != nil {
+		if err := configureOptions(ctx, program, execution, sources, globalOptions, globalSchema, Target{
+			Executable: program.Name,
+			Global:     true,
+		}, parsed.globalSourceFlags, parsed.controlSourceFlags); err != nil {
+			return err
+		}
+		invocation.globalOptions = globalOptions
 	}
-	configuredOptions := parsed.options
-	if err := logDefaultConfiguration(
-		ctx,
-		configuredOptions,
-		parsed.schema,
-		program.UnknownProperties,
-	); err != nil {
+	if parsed.schema != nil {
+		if err := configureOptions(ctx, program, execution, sources, parsed.options, parsed.schema, Target{
+			Executable:  program.Name,
+			CommandPath: slices.Clone(parsed.path),
+		}, parsed.sourceFlags, parsed.controlSourceFlags); err != nil {
+			return err
+		}
+		invocation.options = parsed.options
+	}
+	return parsed.command.Run(invocation)
+}
+
+func configureOptions(
+	ctx context.Context,
+	program Program,
+	execution Execution,
+	sources []Source,
+	options any,
+	schema *libreflect.Node,
+	target Target,
+	targetFlags map[int][]FlagValue,
+	controlFlags map[int][]FlagValue,
+) error {
+	if err := logDefaultConfiguration(ctx, options, schema, program.UnknownProperties); err != nil {
 		return err
 	}
 	for sourceIndex, source := range sources {
+		flags := slices.Clone(controlFlags[sourceIndex])
+		flags = append(flags, targetFlags[sourceIndex]...)
 		input := SourceInput{
-			Target: Target{
-				Executable:  program.Name,
-				CommandPath: slices.Clone(parsed.path),
-			},
+			Target:        target,
 			Arguments:     slices.Clone(execution.Arguments),
 			Environment:   maps.Clone(execution.Environment),
 			ReadFile:      execution.ReadFile,
-			Flags:         slices.Clone(parsed.sourceFlags[sourceIndex]),
-			Configuration: parsed.schema,
+			Flags:         flags,
+			Configuration: schema,
 		}
 		values, err := source.Load(ctx, input)
 		if err != nil {
@@ -206,8 +247,8 @@ func Exec(ctx context.Context, program Program, execution Execution) error {
 		for _, value := range values {
 			if err := applyConfigurationSourceValue(
 				ctx,
-				configuredOptions,
-				parsed.schema,
+				options,
+				schema,
 				source.Name(),
 				value,
 				program.UnknownProperties,
@@ -216,8 +257,7 @@ func Exec(ctx context.Context, program Program, execution Execution) error {
 			}
 		}
 	}
-	invocation.options = configuredOptions
-	return parsed.command.Run(invocation)
+	return nil
 }
 
 func handleCommandError(plugins []Plugin, err error) error {

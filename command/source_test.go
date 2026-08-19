@@ -74,11 +74,83 @@ func TestDefaultSourcesResolveFilesEnvironmentAndArguments(t *testing.T) {
 	}
 }
 
+func TestConfigurationFileKeepsRootActionSeparateFromGlobalOptions(t *testing.T) {
+	values, err := (command.ConfigurationFilesSource{}).Load(t.Context(), command.SourceInput{
+		Target: command.Target{Executable: "tool"},
+		ReadFile: func(path string) ([]byte, error) {
+			if path == "tool.yaml" {
+				return []byte("global:\n  server: https://example.test\nvalue: action\n"), nil
+			}
+			return nil, fs.ErrNotExist
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 1 {
+		t.Fatalf("Load() = %#v", values)
+	}
+	value := values[0].Value.(map[string]any)
+	if _, exists := value["global"]; exists || value["value"] != "action" {
+		t.Fatalf("root action value = %#v", value)
+	}
+}
+
 type valueSource struct {
 	name   string
 	values []command.SourceValue
 	err    error
 	calls  *[]string
+}
+
+type targetSource struct {
+	targets *[]command.Target
+}
+
+func (targetSource) Name() string {
+	return "targets"
+}
+
+func (source targetSource) Load(_ context.Context, input command.SourceInput) ([]command.SourceValue, error) {
+	*source.targets = append(*source.targets, input.Target)
+	if input.Target.Global {
+		return []command.SourceValue{{Name: "global", Value: map[string]any{"server": "https://iam.example"}}}, nil
+	}
+	return []command.SourceValue{{Name: "action", Value: map[string]any{"output": "json"}}}, nil
+}
+
+func TestSourceLoadsGlobalAndActionTargetsIndependently(t *testing.T) {
+	targets := []command.Target{}
+	var gotGlobal *globalOptions
+	var gotAction *listOptions
+	program := command.Program{
+		GlobalOptions: func() any { return &globalOptions{} },
+		Command: command.Command{
+			Name: "tool",
+			Children: []command.Command{{
+				Name:    "list",
+				Options: func() any { return &listOptions{} },
+				Run: func(invocation command.Invocation) error {
+					gotGlobal = command.GlobalOptions[globalOptions](invocation)
+					gotAction = command.Options[listOptions](invocation)
+					return nil
+				},
+			}},
+		},
+		Sources: []command.Source{targetSource{targets: &targets}},
+	}
+	if err := command.Exec(context.Background(), program, command.Execution{
+		Arguments: []string{"list"},
+		Streams:   sourceTestStreams(io.Discard),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 2 || !targets[0].Global || targets[1].Global || !reflect.DeepEqual(targets[1].CommandPath, []string{"list"}) {
+		t.Fatalf("targets = %#v", targets)
+	}
+	if gotGlobal.Server != "https://iam.example" || gotAction.Output != "json" {
+		t.Fatalf("global = %#v, action = %#v", gotGlobal, gotAction)
+	}
 }
 
 func (source valueSource) Name() string {
