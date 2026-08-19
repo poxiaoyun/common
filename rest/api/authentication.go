@@ -165,6 +165,17 @@ func AuthenticationFromContext(ctx context.Context) AuthenticationInfo {
 	return GetContextValue[AuthenticationInfo](ctx, "authentication")
 }
 
+// WithAuthenticationAudiences returns a context carrying the audiences a
+// token authenticator is expected to validate.
+func WithAuthenticationAudiences(ctx context.Context, audiences []string) context.Context {
+	return SetContextValue(ctx, "authentication-audiences", audiences)
+}
+
+// AuthenticationAudiencesFromContext returns the expected token audiences.
+func AuthenticationAudiencesFromContext(ctx context.Context) []string {
+	return GetContextValue[[]string](ctx, "authentication-audiences")
+}
+
 // NewBearerTokenAuthenticationFilter authenticates Bearer credentials and
 // returns RFC 6750 challenges when authentication fails.
 func NewBearerTokenAuthenticationFilter(authenticator TokenAuthenticator) Filter {

@@ -112,7 +112,13 @@ func NewWebhookAuditSink(opts *WebhookAuditSinkOptions) (*WebhookAuditSink, erro
 }
 
 func NewWebhookAuditSinkWithContext(ctx context.Context, opts *WebhookAuditSinkOptions) (*WebhookAuditSink, error) {
-	config := &httpclient.Config{
+	return NewWebhookAuditSinkWithTransport(ctx, opts, nil)
+}
+
+// NewWebhookAuditSinkWithTransport creates an audit sink whose requests use
+// wrapper around the WebhookOptions transport.
+func NewWebhookAuditSinkWithTransport(ctx context.Context, opts *WebhookAuditSinkOptions, wrapper WebhookTransportWrapper) (*WebhookAuditSink, error) {
+	client, err := newHTTPClientFromWebhookOptions(ctx, &WebhookOptions{
 		Server:                opts.Server,
 		ProxyURL:              opts.ProxyURL,
 		Token:                 opts.Token,
@@ -122,12 +128,11 @@ func NewWebhookAuditSinkWithContext(ctx context.Context, opts *WebhookAuditSinkO
 		KeyFile:               opts.KeyFile,
 		CAFile:                opts.CAFile,
 		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
-	}
-	cli, err := httpclient.NewClientFromConfig(ctx, config)
+	}, wrapper)
 	if err != nil {
 		return nil, err
 	}
-	return &WebhookAuditSink{httpclient: cli, timeout: opts.Timeout}, nil
+	return &WebhookAuditSink{httpclient: client, timeout: opts.Timeout}, nil
 }
 
 func (w *WebhookAuditSink) Save(log *AuditLog) error {

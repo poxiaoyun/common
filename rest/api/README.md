@@ -8,7 +8,12 @@ Callers compose authenticators and install the result through `NewAuthentication
 
 `AuthenticationChallengeError` carries a public response status and `WWW-Authenticate` value through authenticator and authorizer composition. Provider adapters log diagnostic errors before translating them into this shared response error. The final HTTP error writer writes the challenge only after the request is rejected. `NewBearerTokenAuthenticationFilter` returns a bare `Bearer` challenge when no more specific challenge is present. Invalid OAuth access tokens add `error="invalid_token"`, while insufficient scope produces HTTP 403 with `error="insufficient_scope"`.
 
-Authorizers receive the complete `AuthenticationInfo`. OAuth scopes are access-token authorization information. `OAuth2ScopeAuthorizer` may be composed with other complete, alternative policies through `AuthorizerChain`; deployments that require both scopes and local policy must provide an Authorizer with those explicit combining semantics before installing `NewAuthorizationFilter`.
+Authorizers receive the complete `AuthenticationInfo`. OAuth scopes are access-token authorization rules. `OAuth2ScopeAuthorizer{}` parses the default `<action>:<resource>` convention and matches each granted scope against request `Attributes`. Arbitrary actions such as `create` or `publish` match exactly; `read` covers `get` and `list`, while `write` covers other actions. `NewOAuth2ScopeMatcher` composes a different aggregate-action matcher or logical-resource matcher without reversing the authorization flow into request-to-scope generation. The default resource matcher uses only the final request resource, so parent resources do not authorize nested targets. `OAuth2ScopeAuthorizer` may be composed with other complete, alternative policies through `AuthorizerChain`; deployments that require both scopes and local policy must provide an Authorizer with those explicit combining semantics before installing `NewAuthorizationFilter`.
+
+Wrap a route extractor with `ServiceAttributesExtractor("cloud", extractor)`
+when authorization and audit policy must identify the target Resource Server.
+The wrapper sets `Attributes.Service`; the wrapped extractor continues to own
+action and resource parsing.
 
 Authorization reasons are descriptive only. To intentionally return a specific denial status, such as hiding a resource with HTTP 404, an Authorizer returns the corresponding `common/errors.Status`; untyped evaluation errors are returned as HTTP 403.
 
@@ -17,6 +22,14 @@ Authentication and authorization errors are diagnostic by default: filters recor
 Authentication and authorization filters do not write trace data. OpenTelemetry behavior is owned by `trace.go` and composed explicitly: install `NewEndUserTraceFilter` after authentication and `NewAuthorizationTraceFilter` after request attributes only when those potentially sensitive or high-cardinality attributes are required. Route tracing records the low-cardinality `http.route` template and does not record dynamic path-variable values.
 
 `StaticTokenAuthenticator` maps one opaque token to a fixed `AuthenticationInfo`. Request-header and webhook adapters transport the same canonical value without provider-specific attribute maps.
+
+`AuthenticationReview` and `AuthorizationReview` are shared wire contracts.
+The webhook authenticator, authorizer, and audit sink can receive a
+`WebhookTransportWrapper`, allowing a service to apply one OAuth Client
+Credentials transport to all calls to an IAM Resource Server while retaining
+each endpoint's own timeout, proxy, and TLS settings. Token authentication
+reviews may request audiences; the response must contain at least one validated
+requested audience. Basic and SSH reviews are audience-unaware.
 
 Resource List APIs use `meta.Page[T]` and `meta.ListOptions`. The query field
 for batch length is `size`; `limit` is not a second spelling. A non-empty

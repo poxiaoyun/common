@@ -24,17 +24,32 @@ Authentication failures separate public response data from diagnostic errors. An
 
 `StaticTokenAuthenticator` compares one opaque token and returns one fixed authentication value. It stores only a SHA-256 digest, copies mutable authentication fields, and compares digests in constant time. Deployment-specific subjects, groups, and authorization policy remain with the caller.
 
+AuthenticationReview and AuthorizationReview are common transport contracts,
+not IAM domain models. Their clients accept an optional transport wrapper so a
+resource server can compose its OAuth Client Credentials identity around the
+endpoint-specific TLS/proxy transport. AuthenticationReview audiences follow
+TokenReview semantics: only token credentials may request them, the server
+validates them through the authentication context, and the response reports
+the validated intersection. A requested audience with no returned match is an
+authentication failure.
+
 `AuthenticationInfo.Clone` is an ownership operation for implementations that retain authentication across requests. Static-token and authentication-cache implementations use it before returning retained values so request-local mutation cannot alter future authentication results. Ordinary request propagation, context storage, audit, and decoded webhook or header values do not clone.
 
 ## OAuth resource server seam
 
 An OAuth resource server accepts access tokens, not OIDC ID tokens. The JWT access-token adapter follows the RFC 9068 profile and keeps its protocol claims separate from `AuthenticationInfo`. A client-credentials token maps its verified `sub` to the subject. A delegated token maps the top-level `sub` to the subject and the outermost RFC 8693 `act` claim to the current actor. The OAuth `client_id` remains protocol information and is not used to classify a subject or infer an actor.
 
-`Access` is non-nil only for an OAuth access token, including a token with no scopes. Audience validation happens during token verification. Scopes are authorization information enforced by the resource server. `OAuth2ScopeAuthorizer` handles access-token requests and returns NoOpinion for other authentication modes, allowing callers to use it as one complete policy in an authorization chain. A missing required scope returns a challenged denial that the authorization filter renders as HTTP 403 with the RFC 6750 `insufficient_scope` challenge. The access-token adapter translates a provider's invalid-token error into a challenged authentication error that the authentication filter renders as HTTP 401 with `invalid_token`.
+`Access` is non-nil only for an OAuth access token, including a token with no scopes. Audience validation happens during token verification. Scopes are authorization rules enforced by the resource server. `OAuth2ScopeAuthorizer` handles access-token requests and returns NoOpinion for other authentication modes, allowing callers to use it as one complete policy in an authorization chain. It authorizes when any granted scope matches the request attributes. The matcher parses `<action>:<resource>`, matches arbitrary actions exactly, then allows an action matcher to interpret aggregate actions such as `read` and `write`. A separate resource matcher compares the granted resource with the request's logical target. The default resource matcher uses only the final `Attributes.Resources` entry, so a parent resource does not implicitly authorize a nested target. Domains with aliases or virtual resource groups compose the standard matcher with their own resource matcher instead of generating a required scope from the request. The audience identifies the Resource Server, so the scope does not repeat a service prefix. A malformed scope or an operation without a matching target denies the access-token request. A missing matching scope returns a challenged denial that the authorization filter renders as HTTP 403 with the RFC 6750 `insufficient_scope` challenge. The access-token adapter translates a provider's invalid-token error into a challenged authentication error that the authentication filter renders as HTTP 401 with `invalid_token`.
 
 ## Authorization seam
 
 `Authorizer` consumes the complete `AuthenticationInfo` and request `Attributes`. This preserves subject, actor, groups, audiences, and scopes through the authorization decision. Business authorizers use stable subject IDs; policies that care about delegation inspect the current actor explicitly.
+
+`Attributes.Service` identifies the Resource Server whose operation is being
+authorized and audited. `ServiceAttributesExtractor` decorates an existing
+extractor at server assembly time so route parsing remains generic while each
+service supplies its own stable name. Cross-service policy must not infer the
+service from URL shape or leave it implicit.
 
 `Decision` expresses only Allow, Deny, or NoOpinion. The accompanying reason is human-readable and never controls the HTTP response. An Authorizer that intentionally requires a specific denial response returns a structured `errors.Status`; the authorization filter preserves it, while ordinary evaluation errors become Forbidden. This allows resource-hiding policies to return NotFound without a magic reason string.
 

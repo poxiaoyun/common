@@ -14,7 +14,7 @@ type Authority struct {
 }
 
 func (a Authority) MatchAttributes(attr Attributes) bool {
-	return a.MatchService(a.Service) &&
+	return a.MatchService(attr.Service) &&
 		a.MatchActionResource(attr.Action, ResourcesToWildcard(attr.Resources))
 }
 

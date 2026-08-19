@@ -37,6 +37,18 @@ func PrefixedAttributesExtractor(prefix string) AttributeExtractor {
 	}
 }
 
+// ServiceAttributesExtractor sets the target service on attributes returned by
+// extractor.
+func ServiceAttributesExtractor(service string, extractor AttributeExtractor) AttributeExtractor {
+	return func(r *http.Request) (*Attributes, error) {
+		attributes, err := extractor(r)
+		if attributes != nil {
+			attributes.Service = service
+		}
+		return attributes, err
+	}
+}
+
 // plural
 var MethodActionMapPlural = map[string]string{
 	"GET":    "list",

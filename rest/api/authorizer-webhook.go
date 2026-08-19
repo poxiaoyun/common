@@ -11,39 +11,18 @@ type WebhookAuthorizerOptions struct {
 	WebhookOptions `json:",inline"`
 }
 
-type WebhookAuthorizationRequest struct {
-	Authentication AuthenticationInfo `json:"authentication"`
-	Attributes     Attributes         `json:"attributes"`
-
-	// optional, the resource object being accessed
-	// it can be used in conditional evaluation
-	// Resource must be a object like map[string]any or struct
-	Resource any `json:"resource,omitempty"`
-}
-
-type WebhookAuthorizationResponse struct {
-	Decision Decision `json:"decision"` // "allow" or "deny"
-	Reason   string   `json:"reason,omitempty"`
-	Error    string   `json:"error,omitempty"`
-}
-
 func NewWebhookAuthorizer(opts *WebhookAuthorizerOptions) (*WebhookAuthorizer, error) {
-	config := &httpclient.Config{
-		Server:                opts.Server,
-		ProxyURL:              opts.ProxyURL,
-		Token:                 opts.Token,
-		Username:              opts.Username,
-		Password:              opts.Password,
-		CertFile:              opts.CertFile,
-		KeyFile:               opts.KeyFile,
-		CAFile:                opts.CAFile,
-		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
-	}
-	cli, err := httpclient.NewClientFromConfig(context.Background(), config)
+	return NewWebhookAuthorizerWithTransport(opts, nil)
+}
+
+// NewWebhookAuthorizerWithTransport creates a Review authorizer whose requests
+// use wrapper around the WebhookOptions transport.
+func NewWebhookAuthorizerWithTransport(opts *WebhookAuthorizerOptions, wrapper WebhookTransportWrapper) (*WebhookAuthorizer, error) {
+	client, err := newHTTPClientFromWebhookOptions(context.Background(), &opts.WebhookOptions, wrapper)
 	if err != nil {
 		return nil, err
 	}
-	return &WebhookAuthorizer{httpclient: cli}, nil
+	return &WebhookAuthorizer{httpclient: client}, nil
 }
 
 var _ Authorizer = &WebhookAuthorizer{}
@@ -53,16 +32,19 @@ type WebhookAuthorizer struct {
 }
 
 func (t WebhookAuthorizer) Authorize(ctx context.Context, authentication AuthenticationInfo, attr Attributes) (authorized Decision, reason string, err error) {
-	req := &WebhookAuthorizationRequest{
+	review := &AuthorizationReview{Spec: &AuthorizationReviewSpec{
 		Authentication: authentication,
 		Attributes:     attr,
-	}
-	resp := &WebhookAuthorizationResponse{}
-	if err := t.httpclient.Post("").JSON(req).Return(resp).Send(ctx); err != nil {
+	}}
+	response := &AuthorizationReview{}
+	if err := t.httpclient.Post("").JSON(review).Return(response).Send(ctx); err != nil {
 		return DecisionNoOpinion, "", err
 	}
-	if resp.Error != "" {
-		return DecisionNoOpinion, resp.Reason, stderrors.New(resp.Error)
+	if response.Status == nil {
+		return DecisionNoOpinion, "", stderrors.New("authorization review returned no status")
 	}
-	return resp.Decision, resp.Reason, nil
+	if response.Status.Error != "" {
+		return DecisionNoOpinion, response.Status.Reason, stderrors.New(response.Status.Error)
+	}
+	return response.Status.Decision, response.Status.Reason, nil
 }

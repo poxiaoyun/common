@@ -3,11 +3,15 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"golang.org/x/crypto/ssh"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/httpclient"
 )
+
+// WebhookTransportWrapper decorates the transport created from WebhookOptions.
+type WebhookTransportWrapper func(http.RoundTripper) http.RoundTripper
 
 // WebhookOptions is the basic options for webhook operations
 type WebhookOptions struct {
@@ -24,6 +28,10 @@ type WebhookOptions struct {
 
 // NewHTTPClientFromWebhookOptions returns a client configured for a webhook.
 func NewHTTPClientFromWebhookOptions(opts *WebhookOptions) (*httpclient.Client, error) {
+	return newHTTPClientFromWebhookOptions(context.Background(), opts, nil)
+}
+
+func newHTTPClientFromWebhookOptions(ctx context.Context, opts *WebhookOptions, wrapper WebhookTransportWrapper) (*httpclient.Client, error) {
 	config := &httpclient.Config{
 		Server:                opts.Server,
 		ProxyURL:              opts.ProxyURL,
@@ -35,19 +43,38 @@ func NewHTTPClientFromWebhookOptions(opts *WebhookOptions) (*httpclient.Client, 
 		CAFile:                opts.CAFile,
 		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
 	}
-	return httpclient.NewClientFromConfig(context.Background(), config)
+	client, err := httpclient.NewClientFromConfig(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	if wrapper != nil {
+		client.RoundTripper = wrapper(client.RoundTripper)
+	}
+	return client, nil
 }
 
 type WebhookAuthenticatorOptions struct {
 	WebhookOptions `json:",inline"`
+	// Audiences delegates audience validation to the authentication review
+	// service. Resource Servers that validate OAuth tokens locally leave it empty.
+	Audiences []string `json:"audiences,omitempty" description:"Audiences requested when reviewing bearer tokens"`
 }
 
 func NewWebhookAuthenticator(opts *WebhookAuthenticatorOptions) (*WebhookAuthenticator, error) {
-	processor, err := NewWebhookAuthenticatorProcessor(&opts.WebhookOptions)
+	return NewWebhookAuthenticatorWithTransport(opts, nil)
+}
+
+// NewWebhookAuthenticatorWithTransport creates a Review authenticator whose
+// requests use wrapper around the WebhookOptions transport.
+func NewWebhookAuthenticatorWithTransport(opts *WebhookAuthenticatorOptions, wrapper WebhookTransportWrapper) (*WebhookAuthenticator, error) {
+	client, err := newHTTPClientFromWebhookOptions(context.Background(), &opts.WebhookOptions, wrapper)
 	if err != nil {
 		return nil, err
 	}
-	return &WebhookAuthenticator{Process: processor}, nil
+	return &WebhookAuthenticator{
+		Process:   &WebhookAuthenticatorProcessor{httpclient: client},
+		Audiences: opts.Audiences,
+	}, nil
 }
 
 var (
@@ -58,7 +85,8 @@ var (
 )
 
 type WebhookAuthenticator struct {
-	Process *WebhookAuthenticatorProcessor
+	Process   *WebhookAuthenticatorProcessor
+	Audiences []string
 }
 
 var _ Authenticator = &WebhookAuthenticator{}
@@ -79,15 +107,15 @@ func (w *WebhookAuthenticator) Authenticate(wr http.ResponseWriter, r *http.Requ
 }
 
 func (w *WebhookAuthenticator) AuthenticateToken(ctx context.Context, token string) (*AuthenticationInfo, error) {
-	return w.Process.Process(ctx, &WebhookAuthenticationRequest{Token: token})
+	return w.Process.Process(ctx, &AuthenticationReviewSpec{Token: token, Audiences: w.Audiences})
 }
 
 func (w *WebhookAuthenticator) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticationInfo, error) {
-	return w.Process.Process(ctx, &WebhookAuthenticationRequest{Username: username, Password: password})
+	return w.Process.Process(ctx, &AuthenticationReviewSpec{Username: username, Password: password})
 }
 
 func (w *WebhookAuthenticator) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticationInfo, error) {
-	return w.Process.Process(ctx, &WebhookAuthenticationRequest{SSHCert: string(ssh.MarshalAuthorizedKey(pubkey))})
+	return w.Process.Process(ctx, &AuthenticationReviewSpec{SSHPublicKey: string(ssh.MarshalAuthorizedKey(pubkey))})
 }
 
 func NewWebhookAuthenticatorProcessor(opts *WebhookOptions) (*WebhookAuthenticatorProcessor, error) {
@@ -102,45 +130,28 @@ type WebhookAuthenticatorProcessor struct {
 	httpclient *httpclient.Client
 }
 
-type WebhookAuthenticationRequest struct {
-	// token auth
-	Token string `json:"token"`
-
-	// basic auth
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
-
-	// ssh auth
-	// SSHCert is the SSH certificate used for authentication
-	// It should be in OpenSSH certificate format
-	// example:
-	// -----BEGIN OPENSSH CERTIFICATE-----
-	// ...
-	// -----END OPENSSH CERTIFICATE-----
-	SSHCert string `json:"sshCert,omitempty"`
-
-	Audiences []string `json:"audiences,omitempty"`
-}
-
-type WebhookAuthenticationResponse struct {
-	Authenticated  bool                `json:"authenticated"`
-	Authentication *AuthenticationInfo `json:"authentication,omitempty"`
-	Error          string              `json:"error,omitempty"`
-}
-
-func (w *WebhookAuthenticatorProcessor) Process(ctx context.Context, req *WebhookAuthenticationRequest) (*AuthenticationInfo, error) {
-	resp := &WebhookAuthenticationResponse{}
-	if err := w.httpclient.Post("").JSON(req).Return(resp).Send(ctx); err != nil {
+func (w *WebhookAuthenticatorProcessor) Process(ctx context.Context, spec *AuthenticationReviewSpec) (*AuthenticationInfo, error) {
+	review := &AuthenticationReview{Spec: spec}
+	response := &AuthenticationReview{}
+	if err := w.httpclient.Post("").JSON(review).Return(response).Send(ctx); err != nil {
 		return nil, err
 	}
-	if !resp.Authenticated {
-		return nil, errors.NewUnauthorized(resp.Error)
+	if response.Status == nil {
+		return nil, errors.NewUnauthorized("authentication review returned no status")
 	}
-	if resp.Authentication == nil {
-		return nil, errors.NewUnauthorized("authentication webhook returned no authentication")
+	if !response.Status.Authenticated {
+		return nil, errors.NewUnauthorized(response.Status.Error)
 	}
-	if err := ValidateAuthenticationInfo(*resp.Authentication); err != nil {
+	if response.Status.Authentication == nil {
+		return nil, errors.NewUnauthorized("authentication review returned no authentication")
+	}
+	if len(spec.Audiences) > 0 && !slices.ContainsFunc(response.Status.Audiences, func(audience string) bool {
+		return slices.Contains(spec.Audiences, audience)
+	}) {
+		return nil, errors.NewUnauthorized("authentication review returned no compatible audience")
+	}
+	if err := ValidateAuthenticationInfo(*response.Status.Authentication); err != nil {
 		return nil, errors.NewUnauthorized(err.Error())
 	}
-	return resp.Authentication, nil
+	return response.Status.Authentication, nil
 }
