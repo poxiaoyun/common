@@ -147,10 +147,8 @@ func DownloadChart(ctx context.Context, repourl, name, version string, into stri
 	logwriter := &LogWriter{Logger: klog.FromContext(ctx)}
 	settings := cli.New()
 	dl := downloader.ChartDownloader{
-		Out:              logwriter,
-		Getters:          getter.All(settings),
-		RepositoryConfig: settings.RepositoryConfig,
-		RepositoryCache:  settings.RepositoryCache,
+		Out:     logwriter,
+		Getters: getter.All(settings),
 		Options: []getter.Option{
 			getter.WithInsecureSkipVerifyTLS(true),
 			getter.WithPlainHTTP(options.PlainHTTP),

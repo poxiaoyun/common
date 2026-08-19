@@ -26,6 +26,18 @@ const (
 )
 
 func TestDownloadChartFromHTTPRepository(t *testing.T) {
+	helmDirectory := t.TempDir()
+	repositoryConfig := filepath.Join(helmDirectory, "repositories.yaml")
+	if err := os.WriteFile(repositoryConfig, []byte(`apiVersion: v1
+repositories:
+  - name: configured
+    url: https://example.com/charts
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HELM_REPOSITORY_CONFIG", repositoryConfig)
+	t.Setenv("HELM_REPOSITORY_CACHE", filepath.Join(helmDirectory, "repository"))
+
 	metadata, chartData := buildTestChart(t)
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
