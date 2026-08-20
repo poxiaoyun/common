@@ -4,14 +4,37 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
+	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/httpclient"
 	"xiaoshiai.cn/common/log"
 )
 
 type AuditSink interface {
+	// Save delivers one completed immutable audit event to the sink.
 	Save(log *AuditLog) error
+}
+
+// FanoutAuditSink saves each immutable audit event to every configured sink in
+// parallel. A failure from one sink does not prevent other sinks from receiving
+// the event.
+type FanoutAuditSink []AuditSink
+
+// Save implements AuditSink.
+func (sinks FanoutAuditSink) Save(log *AuditLog) error {
+	errlist := make([]error, len(sinks))
+	wait := sync.WaitGroup{}
+	wait.Add(len(sinks))
+	for i, sink := range sinks {
+		go func() {
+			defer wait.Done()
+			errlist[i] = sink.Save(log)
+		}()
+	}
+	wait.Wait()
+	return errors.NewAggregate(errlist)
 }
 
 type LoggerAuditSink struct {

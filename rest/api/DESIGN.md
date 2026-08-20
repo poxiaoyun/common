@@ -33,6 +33,16 @@ validates them through the authentication context, and the response reports
 the validated intersection. A requested audience with no returned match is an
 authentication failure.
 
+## Audit seam
+
+`AuditSink` is the audit delivery seam. `FanoutAuditSink` invokes every sink in
+parallel for each immutable event and aggregates errors only after all
+destinations have been attempted; it is fan-out rather than an ordered decision
+chain. Services own which sink adapters are available in their configuration.
+When delivery is asynchronous, each destination is wrapped in its own
+`CachedAuditSink` before fan-out so backpressure and failure remain isolated per
+destination.
+
 `AuthenticationInfo.Clone` is an ownership operation for implementations that retain authentication across requests. Static-token and authentication-cache implementations use it before returning retained values so request-local mutation cannot alter future authentication results. Ordinary request propagation, context storage, audit, and decoded webhook or header values do not clone.
 
 ## OAuth resource server seam

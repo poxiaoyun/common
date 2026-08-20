@@ -31,6 +31,12 @@ each endpoint's own timeout, proxy, and TLS settings. Token authentication
 reviews may request audiences; the response must contain at least one validated
 requested audience. Basic and SSH reviews are audience-unaware.
 
+`FanoutAuditSink` delivers an immutable event to every configured audit sink in
+parallel and aggregates their errors after all sinks have been attempted.
+Services that use best-effort asynchronous audit delivery should wrap each
+destination in its own `CachedAuditSink` before composing the fan-out so each
+destination has independent backpressure.
+
 Resource List APIs use `meta.Page[T]` and `meta.ListOptions`. The query field
 for batch length is `size`; `limit` is not a second spelling. A non-empty
 `continue` selects continuation pagination and takes precedence over `page`.
