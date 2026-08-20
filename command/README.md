@@ -130,7 +130,11 @@ Use `config` only for command-specific behavior or when startup configuration
 intentionally differs from JSON. It takes complete precedence over `json`:
 when `config` is present, its name and options are authoritative and `json` is
 ignored. For example, `json:"token,omitempty" config:"token,sensitive"`
-redacts the value. `config:"-"` excludes a runtime-only field, and
+redacts the value. An option-only tag does not inherit the name from `json`:
+`json:"clientSecret" config:",sensitive"` uses the Go field name
+`ClientSecret`. Preserve the JSON name by writing
+`json:"clientSecret" config:"clientSecret,sensitive"` explicitly.
+`config:"-"` excludes a runtime-only field, and
 `config:",inline"` flattens a struct. `config:"file,short=f"` additionally
 declares `-f` for the generated `--file` flag. Help text uses the independent
 `description:"Help text"` tag. The serialization-specific `omitempty` option

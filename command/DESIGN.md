@@ -129,7 +129,10 @@ Configuration normally reuses the caller's `json` field contract. A caller uses
 `config` only when startup configuration needs command-specific semantics, such
 as `config:"token,sensitive"`, or a shape that intentionally differs from JSON.
 When present, `config` is the complete authoritative contract and `json` is
-ignored. Help text uses
+ignored. Names and options never compose across tags: an empty name in
+`config:",sensitive"` uses the Go field name rather than inheriting the name
+from `json`; preserving a JSON name requires repeating it, such as
+`json:"clientSecret" config:"clientSecret,sensitive"`. Help text uses
 the independent `description` tag. Flags are the lower-case canonical path with
 dots replaced by hyphens; environment names are the corresponding upper-case
 names with underscores. Naming is exact and does not use relaxed matching.
