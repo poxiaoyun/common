@@ -39,7 +39,9 @@ defaults := []meta.ListOption{
 `DefaultPage` 在没有非空 `Continue` 或正数 `Limit` 表达 continuation 意图时分别
 填充零值 `Page` 和 `Size`；`DefaultContinuation` 在 `Limit` 为零且没有非零
 `Page` 或正数 `Size` 表达 page 意图时填充 `Limit`。两者都不会用默认值覆盖另一
-组显式分页字段。`DefaultSort` 只填充空 `Sort`。请求 adapter 应先解析请求值，再
+组显式分页字段。`DefaultPage(1, size)` 明确将第一页作为默认页码；
+`DefaultPage(0, size)` 保持页码未指定，并在正数 `Size` 选择 page 行为后由执行层
+归一为第一页。`DefaultSort` 只填充空 `Sort`。请求 adapter 应先解析请求值，再
 按声明顺序应用这些 option，使默认项填充解析后的零值。若同时配置 page 和
 continuation 默认值，声明在前的分页默认值选择行为。`ApplyListOptions` 用于从零值
 开始按声明顺序展开一组 option。

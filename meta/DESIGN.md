@@ -26,7 +26,9 @@ helper 和 Store adapter 不应分别发明冲突规则或重复校验。后端�
 `ApplyToList(*ListOptions)` 按声明顺序应用：
 
 - `DefaultPageOption` 在 `Continue` 为空且 `Limit` 不为正数时分别填充零值
-  `Page` 和 `Size`，防止默认 page 覆盖显式 continuation 意图。
+  `Page` 和 `Size`，防止默认 page 覆盖显式 continuation 意图。默认 `Page=1`
+  明确选择第一页；默认 `Page=0` 保持页码未指定，由正数 `Size` 选择 page 行为后
+  在执行层归一为第一页。
 - `DefaultContinuationOption` 在 `Limit` 为零、`Page` 为零且 `Size` 不为正数时
   填充 `Limit`，防止默认 continuation 覆盖显式 page 意图。
 - `DefaultSortOption` 只填充空 `Sort`。

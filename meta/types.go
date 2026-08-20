@@ -60,7 +60,10 @@ func ConvertPage[T any, R any](page Page[T], convert func(T) R) Page[R] {
 // page pagination, with Page values below one treated as one. When neither is
 // positive, the owning service chooses its unpaginated behavior.
 type ListOptions struct {
-	// Page is the one-based page number for page pagination.
+	// Page is the one-based page number for page pagination. Zero means the
+	// caller did not select a page number and may be filled by DefaultPage;
+	// once page pagination is selected, execution treats values below one as
+	// the first page.
 	Page int `json:"page,omitempty"`
 	// Size is the number of items per page for page pagination.
 	Size int `json:"size,omitempty"`
@@ -100,7 +103,9 @@ type ListOption interface {
 
 // DefaultPageOption supplies default page and size values.
 type DefaultPageOption struct {
-	// Page is the one-based default page number.
+	// Page is the one-based default page number. Use one to make the first page
+	// an explicit default; zero leaves the page number unspecified while Size
+	// may still select page pagination.
 	Page int
 	// Size is the default number of items per page.
 	Size int
@@ -121,7 +126,9 @@ func (option DefaultPageOption) ApplyToList(options *ListOptions) {
 	}
 }
 
-// DefaultPage supplies default page and size values.
+// DefaultPage supplies default page and size values. A page of one explicitly
+// defaults to the first page; a page of zero leaves Page unspecified and lets
+// page execution normalize it to the first page when Size selects that behavior.
 func DefaultPage(page, size int) DefaultPageOption {
 	return DefaultPageOption{Page: page, Size: size}
 }
