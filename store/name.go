@@ -31,6 +31,12 @@ func GetResource(obj any) (string, error) {
 			return "", err
 		}
 		t = reflect.TypeOf(itemsPointer).Elem().Elem()
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		if val, ok := reflect.New(t).Interface().(ResourceName); ok {
+			return val.ResourceName(), nil
+		}
 	}
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
