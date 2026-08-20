@@ -244,8 +244,8 @@ func TestAddOpenAPIOperationTreatsAnyRouteAsGet(t *testing.T) {
 	assert.Equal(t, "get_fallback", operation.OperationID)
 }
 
-func newTestDocument() *openapi3.T {
-	return &openapi3.T{
+func newTestDocument() *Document {
+	return &Document{
 		OpenAPI:    "3.1.1",
 		Info:       &openapi3.Info{Title: "Test", Version: "1.0.0"},
 		Components: &openapi3.Components{Schemas: openapi3.Schemas{}},

@@ -12,19 +12,21 @@ import (
 
 var _ api.RoutePlugin = &OpenAPIPlugin{}
 
+// Document is an OpenAPI 3 document.
+type Document = openapi3.T
+
+const defaultPath = "/openapi"
+
 type OpenAPIPlugin struct {
-	Basepath string
-	OpenAPI  *openapi3.T
-	Builder  *Builder
-	UI       OpenAPIUI
+	OpenAPI *Document
+	Builder *Builder
+	UI      OpenAPIUI
+	Path    string
 }
 
-// NewAPIDocPlugin creates an OpenAPI 3.1 documentation plugin.
-// The configure callback runs before routes are projected into the document.
-func NewAPIDocPlugin(basepath string, configure func(document *openapi3.T)) *OpenAPIPlugin {
-	if basepath == "" {
-		basepath = "/docs"
-	}
+// NewAPIDocPlugin creates an OpenAPI 3.1 documentation plugin served under
+// /openapi.
+func NewAPIDocPlugin() *OpenAPIPlugin {
 	document := &openapi3.T{
 		OpenAPI: "3.1.1",
 		Info: &openapi3.Info{
@@ -35,35 +37,30 @@ func NewAPIDocPlugin(basepath string, configure func(document *openapi3.T)) *Ope
 		Components: &openapi3.Components{Schemas: openapi3.Schemas{}},
 		Paths:      openapi3.NewPaths(),
 	}
-	if configure != nil {
-		configure(document)
-	}
-	if document.Info == nil {
-		document.Info = &openapi3.Info{Title: "API Documentation", Version: version.Get().String()}
-	}
-	if document.Components == nil {
-		document.Components = &openapi3.Components{}
-	}
-	if document.Components.Schemas == nil {
-		document.Components.Schemas = openapi3.Schemas{}
-	}
-	if document.Paths == nil {
-		document.Paths = openapi3.NewPaths()
-	}
-
-	plugin := &OpenAPIPlugin{
-		Basepath: basepath,
-		OpenAPI:  document,
-		Builder:  NewBuilder(InterfaceBuildOptionDefault, document.Components.Schemas),
-	}
+	plugin := &OpenAPIPlugin{OpenAPI: document, Path: defaultPath}
+	plugin.Builder = NewBuilder(InterfaceBuildOptionDefault, document.Components.Schemas)
 	plugin.UI = NewOpenAPIUI(StaticOpenAPIHandler(func(r *http.Request) (any, error) {
 		return plugin.OpenAPI, nil
 	}))
 	return plugin
 }
 
+// WithPath sets the route prefix for the OpenAPI UI and document and returns
+// the same plugin for construction-time chaining.
+func (p *OpenAPIPlugin) WithPath(path string) *OpenAPIPlugin {
+	p.Path = path
+	return p
+}
+
+// ConfigureDocument updates the plugin document in place and returns the same
+// plugin for construction-time chaining. Call it before installing the plugin.
+func (p *OpenAPIPlugin) ConfigureDocument(configure func(document *Document)) *OpenAPIPlugin {
+	configure(p.OpenAPI)
+	return p
+}
+
 func (p *OpenAPIPlugin) Install(m *api.API) error {
-	m.Group(p.UI.Group(p.Basepath))
+	m.Group(p.UI.Group(p.Path))
 	return nil
 }
 

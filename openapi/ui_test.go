@@ -26,7 +26,7 @@ func TestVendoredScalarIntegrity(t *testing.T) {
 }
 
 func TestOpenAPIPluginServesOAS31AndScalarUI(t *testing.T) {
-	plugin := NewAPIDocPlugin("/docs", func(document *openapi3.T) {
+	plugin := NewAPIDocPlugin().ConfigureDocument(func(document *Document) {
 		document.Info.Title = "Widget API"
 	})
 	handler := api.New().
@@ -37,7 +37,7 @@ func TestOpenAPIPluginServesOAS31AndScalarUI(t *testing.T) {
 		Build()
 
 	t.Run("document", func(t *testing.T) {
-		response := request(t, handler, "/docs/openapi.json")
+		response := request(t, handler, "/openapi/openapi.json")
 		assert.Equal(t, http.StatusOK, response.Code)
 
 		var document map[string]any
@@ -54,7 +54,7 @@ func TestOpenAPIPluginServesOAS31AndScalarUI(t *testing.T) {
 	})
 
 	t.Run("index", func(t *testing.T) {
-		response := request(t, handler, "/docs/?provider=swagger")
+		response := request(t, handler, "/openapi/?provider=swagger")
 		assert.Equal(t, http.StatusOK, response.Code)
 		assert.Contains(t, response.Body.String(), "static/scalar/scalar.js")
 		assert.Contains(t, response.Body.String(), "static/scalar/config.js")
@@ -62,14 +62,14 @@ func TestOpenAPIPluginServesOAS31AndScalarUI(t *testing.T) {
 	})
 
 	t.Run("vendored scalar configuration", func(t *testing.T) {
-		response := request(t, handler, "/docs/static/scalar/config.js")
+		response := request(t, handler, "/openapi/static/scalar/config.js")
 		assert.Equal(t, http.StatusOK, response.Code)
 		assert.Contains(t, response.Body.String(), `url: "openapi.json"`)
 		assert.Contains(t, response.Body.String(), "telemetry: false")
 	})
 
 	t.Run("legacy swagger asset removed", func(t *testing.T) {
-		response := request(t, handler, "/docs/static/swagger-ui/swagger-ui.css")
+		response := request(t, handler, "/openapi/static/swagger-ui/swagger-ui.css")
 		assert.Equal(t, http.StatusNotFound, response.Code)
 	})
 }

@@ -21,7 +21,7 @@ const (
 )
 
 // AddOpenAPIOperation projects one route directly into an OpenAPI 3.1 document.
-func AddOpenAPIOperation(document *openapi3.T, route api.Route, builder *Builder) error {
+func AddOpenAPIOperation(document *Document, route api.Route, builder *Builder) error {
 	if route.NotDoc {
 		return nil
 	}
