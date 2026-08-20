@@ -5,11 +5,24 @@ import (
 	"strings"
 	"testing"
 
+	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/store"
 	"xiaoshiai.cn/common/store/storetest"
 	testmysql "xiaoshiai.cn/common/testkit/mysql"
 	testpostgresql "xiaoshiai.cn/common/testkit/postgresql"
 )
+
+func TestSQLStoreRejectsContinuationPagination(t *testing.T) {
+	storage := &Storage{}
+	err := storage.List(
+		t.Context(),
+		&store.List[store.Unstructured]{Resource: "testobjects"},
+		store.WithContinuation("", 10),
+	)
+	if !commonerrors.IsUnsupported(err) {
+		t.Fatalf("List() error = %v, want Unsupported", err)
+	}
+}
 
 func TestMySQLStoreConformance(t *testing.T) {
 	RunSQLStoreConformance(t, DBDriverMySQL, testmysql.RequireURI(t))

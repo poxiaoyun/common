@@ -35,10 +35,11 @@ func (g *CacheStore) Schema() *store.Schema {
 	return g.core.store.Schema()
 }
 
-// Capabilities implements store.Store. The wrapper reports only Watch because
-// its other optional query behaviors are not part of the cache contract.
+// Capabilities implements store.Store. The cache owns page pagination and
+// otherwise reports only the optional Watch behavior it delegates to the
+// underlying store.
 func (g *CacheStore) Capabilities() store.Capabilities {
-	return store.Capabilities{Watch: g.core.store.Capabilities().Watch}
+	return store.Capabilities{Page: true, Watch: g.core.store.Capabilities().Watch}
 }
 
 func (g *CacheStore) Ping(ctx context.Context) error {
@@ -123,6 +124,9 @@ func (g *CacheStore) List(ctx context.Context, list store.ObjectList, opts ...st
 		return err
 	}
 	options := store.ApplyListOptions(opts)
+	if options.Limit > 0 {
+		return errors.NewUnsupported("cache store does not support continuation pagination")
+	}
 	if list == nil {
 		return errors.NewBadRequest("object list is nil")
 	}
@@ -150,18 +154,15 @@ func (g *CacheStore) List(ctx context.Context, list store.ObjectList, opts ...st
 	})
 	// page
 	total := len(items)
-	if options.Page > 0 && options.Size > 0 {
-		skip := (options.Page - 1) * options.Size
-		if skip < len(items) {
-			items = items[skip:]
-		} else {
-			items = []*store.Unstructured{}
+	page := max(options.Page, 1)
+	if options.Size > 0 {
+		pageIndex := page - 1
+		start := total
+		if pageIndex <= total/options.Size {
+			start = pageIndex * options.Size
 		}
-	}
-	if limit := options.Size; limit > 0 {
-		if limit < len(items) {
-			items = items[:limit]
-		}
+		end := start + min(options.Size, total-start)
+		items = items[start:end]
 	}
 
 	// decode
@@ -176,9 +177,11 @@ func (g *CacheStore) List(ctx context.Context, list store.ObjectList, opts ...st
 		v.Set(reflect.Append(v, reflect.ValueOf(obj).Elem()))
 	}
 	list.SetResourceVersion(rev)
-	list.SetTotal(total)
-	list.SetPage(options.Page)
-	list.SetSize(options.Size)
+	if options.Size > 0 {
+		store.SetPageListMetadata(list, page, options.Size, total)
+	} else {
+		store.SetUnpaginatedListMetadata(list, total)
+	}
 	return nil
 }
 

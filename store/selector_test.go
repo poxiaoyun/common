@@ -13,7 +13,6 @@ func TestListOptionsFromMeta(t *testing.T) {
 		Size:          25,
 		Search:        "worker",
 		Sort:          "name-",
-		Continue:      "next-token",
 		LabelSelector: "environment=production",
 		FieldSelector: "enabled=true",
 	})
@@ -23,7 +22,7 @@ func TestListOptionsFromMeta(t *testing.T) {
 	options := ApplyListOptions(modifiers)
 	wantLabels := Requirements{RequirementEqual("environment", "production")}
 	wantFields := Requirements{RequirementEqual("enabled", "true")}
-	if options.Page != 2 || options.Size != 25 || options.Search != "worker" || options.Sort != "name-" || options.Continue != "next-token" {
+	if options.Page != 2 || options.Size != 25 || options.Search != "worker" || options.Sort != "name-" {
 		t.Fatalf("scalar options = %#v", options)
 	}
 	if !reflect.DeepEqual(options.LabelRequirements, wantLabels) {

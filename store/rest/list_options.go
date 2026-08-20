@@ -12,7 +12,11 @@ import (
 // ListOptionsFromRequest converts public request list options, including
 // caller-owned request defaults, into Store modifiers.
 func ListOptionsFromRequest(r *http.Request, defaults ...meta.ListOption) ([]store.ListOption, error) {
-	options, err := store.ListOptionsFromMeta(api.GetListOptions(r, defaults...))
+	requestOptions, err := api.GetListOptions(r, defaults...)
+	if err != nil {
+		return nil, err
+	}
+	options, err := store.ListOptionsFromMeta(requestOptions)
 	if err != nil {
 		return nil, errors.NewBadRequest(err.Error())
 	}

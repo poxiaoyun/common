@@ -10,6 +10,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
+	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/store"
 	"xiaoshiai.cn/common/store/storetest"
@@ -35,6 +36,18 @@ func TestMongoStorageCapabilities(t *testing.T) {
 	capabilities := (&MongoStorage{}).Capabilities()
 	if !capabilities.Watch {
 		t.Fatal("Capabilities().Watch = false, want true")
+	}
+}
+
+func TestMongoStorageRejectsContinuationPagination(t *testing.T) {
+	storage := &MongoStorage{}
+	err := storage.List(
+		t.Context(),
+		&store.List[TestObject]{},
+		store.WithContinuation("", 10),
+	)
+	if !commonerrors.IsUnsupported(err) {
+		t.Fatalf("List() error = %v, want Unsupported", err)
 	}
 }
 

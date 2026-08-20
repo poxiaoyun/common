@@ -498,8 +498,9 @@ func (m *MongoStorage) PatchBatch(ctx context.Context, obj store.ObjectList, pat
 // List implements Storage.
 func (m *MongoStorage) List(ctx context.Context, list store.ObjectList, opts ...store.ListOption) error {
 	options := store.ApplyListOptions(opts)
-	list.SetPage(options.Page)
-	list.SetSize(options.Size)
+	if options.Limit > 0 {
+		return errors.NewUnsupported("MongoDB store does not support continuation pagination")
+	}
 
 	// if projection is empty, set projection from list object
 	// currently, we don't use this feature
@@ -518,6 +519,15 @@ func (m *MongoStorage) List(ctx context.Context, list store.ObjectList, opts ...
 		}
 		// set empty list if no items instead of nil
 		setEmptyItemsIfNil(list)
+		total := 0
+		if decodedTotal := list.GetTotal(); decodedTotal != nil {
+			total = *decodedTotal
+		}
+		if options.Size > 0 {
+			store.SetPageListMetadata(list, max(options.Page, 1), options.Size, total)
+		} else {
+			store.SetUnpaginatedListMetadata(list, total)
+		}
 
 		// set resource for each item
 		store.ForEachItem(list, func(item store.Object) error {
@@ -571,10 +581,14 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, fields []stri
 	itemspipeline := bson.A{}
 	// pagination
 	if opts.Size > 0 {
-		page, limit := max(opts.Page, 1), opts.Size
-		skip := (page - 1) * limit
+		pageIndex := max(opts.Page, 1) - 1
+		maxOffset := int(^uint(0) >> 1)
+		skip := maxOffset
+		if pageIndex <= maxOffset/opts.Size {
+			skip = pageIndex * opts.Size
+		}
 		itemspipeline = append(itemspipeline, bson.M{"$skip": skip})
-		itemspipeline = append(itemspipeline, bson.M{"$limit": limit})
+		itemspipeline = append(itemspipeline, bson.M{"$limit": opts.Size})
 	}
 	// post conditions
 	pipeline = append(pipeline, post...)

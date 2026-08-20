@@ -184,8 +184,9 @@ func (m *Manager) Submit(ctx context.Context, work task.Task, submitOptions task
 	return doc.ID, nil
 }
 
-// List returns an isolated snapshot of matching tasks. It supports Page, Size,
-// Sort, FieldSelector, and LabelSelector. Search and Continue are unsupported.
+// List returns an isolated snapshot of matching tasks. It supports page
+// pagination, Sort, FieldSelector, and LabelSelector. Search and continuation
+// pagination are unsupported.
 func (m *Manager) List(ctx context.Context, listOptions meta.ListOptions) (meta.Page[task.TaskInfo], error) {
 	filter, sort, err := listQuery(listOptions)
 	if err != nil {
@@ -195,20 +196,17 @@ func (m *Manager) List(ctx context.Context, listOptions meta.ListOptions) (meta.
 	if err != nil {
 		return meta.Page[task.TaskInfo]{}, fmt.Errorf("count tasks: %w", err)
 	}
-	page := listOptions.Page
-	if page == 0 {
-		page = 1
-	}
-	size := listOptions.Size
-	if size == 0 {
-		size = int(total)
-	}
 	findOptions := mongooptions.Find().SetSort(sort)
-	if listOptions.Page > 1 && size > 0 {
-		findOptions.SetSkip(int64((listOptions.Page - 1) * size))
-	}
-	if size > 0 {
-		findOptions.SetLimit(int64(size))
+	page := max(listOptions.Page, 1)
+	if listOptions.Size > 0 {
+		pageIndex := int64(page - 1)
+		size := int64(listOptions.Size)
+		skip := total
+		if pageIndex <= total/size {
+			skip = pageIndex * size
+		}
+		findOptions.SetSkip(skip)
+		findOptions.SetLimit(size)
 	}
 	cursor, err := m.collection.Find(ctx, filter, findOptions)
 	if err != nil {
@@ -223,12 +221,13 @@ func (m *Manager) List(ctx context.Context, listOptions meta.ListOptions) (meta.
 	for _, doc := range documents {
 		items = append(items, doc.info())
 	}
-	return meta.Page[task.TaskInfo]{
-		Total: int(total),
-		Items: items,
-		Page:  page,
-		Size:  size,
-	}, nil
+	totalResult := int(total)
+	result := meta.Page[task.TaskInfo]{Total: &totalResult, Items: items}
+	if listOptions.Size > 0 {
+		result.Page = page
+		result.Size = listOptions.Size
+	}
+	return result, nil
 }
 
 // Get returns a task snapshot.
@@ -650,13 +649,10 @@ func defaultRetryBackoff(attempt int) time.Duration {
 }
 
 func listQuery(listOptions meta.ListOptions) (bson.D, bson.D, error) {
-	if listOptions.Page < 0 || listOptions.Size < 0 {
-		return nil, nil, fmt.Errorf("%w: page and size must not be negative", task.ErrInvalidArgument)
-	}
 	if listOptions.Search != "" {
 		return nil, nil, fmt.Errorf("%w: search is unsupported", task.ErrInvalidArgument)
 	}
-	if listOptions.Continue != "" {
+	if listOptions.Limit > 0 {
 		return nil, nil, fmt.Errorf("%w: continue is unsupported", task.ErrInvalidArgument)
 	}
 	conditions := bson.A{}

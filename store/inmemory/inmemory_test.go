@@ -226,12 +226,35 @@ func TestListFiltersSortsAndPagesScopedObjects(t *testing.T) {
 		store.WithSubScopes(),
 		store.WithFieldRequirements(store.RequirementEqual("enabled", true)),
 		store.WithSort("name-"),
-		store.WithPageSize(1, 1),
+		store.WithPage(0, 1),
+		store.WithContinuation("ignored", 0),
 	); err != nil {
 		t.Fatal(err)
 	}
-	if allEnabled.Total != 2 || len(allEnabled.Items) != 1 || allEnabled.Items[0].ID != "bob" {
-		t.Fatalf("enabled users = %#v, total = %d", allEnabled.Items, allEnabled.Total)
+	if allEnabled.Total == nil || *allEnabled.Total != 2 ||
+		allEnabled.Page != 1 || allEnabled.Size != 1 ||
+		allEnabled.Continue != "" || allEnabled.Limit != 0 ||
+		len(allEnabled.Items) != 1 || allEnabled.Items[0].ID != "bob" {
+		t.Fatalf("enabled users = %#v, metadata = page %d size %d total %v continue %q limit %d",
+			allEnabled.Items,
+			allEnabled.Page,
+			allEnabled.Size,
+			allEnabled.Total,
+			allEnabled.Continue,
+			allEnabled.Limit,
+		)
+	}
+}
+
+func TestListRejectsContinuationPagination(t *testing.T) {
+	storage := newUserStore(t)
+	err := storage.List(
+		context.Background(),
+		&store.List[user]{},
+		store.WithContinuation("", 10),
+	)
+	if !commonerrors.IsUnsupported(err) {
+		t.Fatalf("List() error = %v, want Unsupported", err)
 	}
 }
 
@@ -334,8 +357,8 @@ func TestCountAndBatchOperationsUseSelectors(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if patched.Total != 2 {
-		t.Fatalf("patched total = %d, want 2", patched.Total)
+	if patched.Total == nil || *patched.Total != 2 {
+		t.Fatalf("patched total = %v, want 2", patched.Total)
 	}
 
 	if err := storage.DeleteBatch(
@@ -349,8 +372,8 @@ func TestCountAndBatchOperationsUseSelectors(t *testing.T) {
 	if err := storage.List(ctx, remaining); err != nil {
 		t.Fatal(err)
 	}
-	if remaining.Total != 2 {
-		t.Fatalf("remaining total = %d, want 2", remaining.Total)
+	if remaining.Total == nil || *remaining.Total != 2 {
+		t.Fatalf("remaining total = %v, want 2", remaining.Total)
 	}
 }
 

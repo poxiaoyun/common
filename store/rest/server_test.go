@@ -42,8 +42,9 @@ func (s *optionCaptureStore) Scope(...store.Scope) store.Store {
 }
 
 func (s *optionCaptureStore) List(_ context.Context, list store.ObjectList, opts ...store.ListOption) error {
-	s.listOptions = store.ApplyListOptions(opts)
-	list.SetContinue("next-token")
+	options := store.ApplyListOptions(opts)
+	s.listOptions = options
+	store.SetContinuationListMetadata(list, "next-token", options.Limit)
 	return nil
 }
 
@@ -126,8 +127,8 @@ func TestRemoteStoreListPassesContinue(t *testing.T) {
 	fieldRequirement := store.RequirementEqual("enabled", "true")
 
 	if err := remote.List(context.Background(), list,
-		store.WithPageSize(0, 2),
-		store.WithContinue("current-token"),
+		store.WithPage(3, 10),
+		store.WithContinuation("current-token", 2),
 		store.WithLabelRequirements(labelRequirement),
 		store.WithFieldRequirements(fieldRequirement),
 		store.WithFields("id", "name"),
@@ -138,6 +139,12 @@ func TestRemoteStoreListPassesContinue(t *testing.T) {
 	}
 	if got := underlying.listOptions.Continue; got != "current-token" {
 		t.Fatalf("ListOptions.Continue = %q, want %q", got, "current-token")
+	}
+	if got := underlying.listOptions.Limit; got != 2 {
+		t.Fatalf("ListOptions.Limit = %d, want 2", got)
+	}
+	if underlying.listOptions.Page != 3 || underlying.listOptions.Size != 10 {
+		t.Fatalf("ListOptions page values = %#v", underlying.listOptions)
 	}
 	if !reflect.DeepEqual(underlying.listOptions.Fields, []string{"id", "name"}) {
 		t.Fatalf("ListOptions.Fields = %#v", underlying.listOptions.Fields)
@@ -156,6 +163,22 @@ func TestRemoteStoreListPassesContinue(t *testing.T) {
 	}
 	if got := list.Continue; got != "next-token" {
 		t.Fatalf("List.Continue = %q, want %q", got, "next-token")
+	}
+	if list.Limit != 2 || list.Total != nil || list.Page != 0 || list.Size != 0 {
+		t.Fatalf("List pagination metadata = %#v", list)
+	}
+}
+
+func TestRemoteStoreListPreservesPage(t *testing.T) {
+	underlying := &optionCaptureStore{}
+	remote := newCaptureRemoteStore(t, underlying)
+	list := &store.List[store.Unstructured]{Resource: "widgets"}
+
+	if err := remote.List(context.Background(), list, store.WithPage(-2, 2)); err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if underlying.listOptions.Page != -2 || underlying.listOptions.Size != 2 {
+		t.Fatalf("ListOptions pagination = %#v", underlying.listOptions)
 	}
 }
 

@@ -11,12 +11,11 @@ func TestApplyListOptionsComposesInOrder(t *testing.T) {
 	second := RequirementEqual("tenant", "tenant-1")
 
 	options := ApplyListOptions([]ListOption{
-		WithPageSize(1, 10),
+		WithPage(1, 10),
 		WithFieldRequirements(first),
-		WithPageSize(2, 20),
+		WithPage(2, 20),
 		WithFieldRequirements(second),
 	})
-
 	if options.Page != 2 || options.Size != 20 {
 		t.Fatalf("pagination = (%d, %d), want (2, 20)", options.Page, options.Size)
 	}
@@ -26,8 +25,55 @@ func TestApplyListOptionsComposesInOrder(t *testing.T) {
 }
 
 func TestApplyListOptionsEmptyReturnsZeroValue(t *testing.T) {
-	if options := ApplyListOptions(nil); !reflect.DeepEqual(options, ListOptions{}) {
+	options := ApplyListOptions(nil)
+	if !reflect.DeepEqual(options, ListOptions{}) {
 		t.Fatalf("ApplyListOptions(nil) = %#v", options)
+	}
+}
+
+func TestApplyListOptionsAcceptsPaginationForms(t *testing.T) {
+	tests := []struct {
+		name    string
+		options []ListOption
+		want    ListOptions
+	}{
+		{name: "unpaginated", want: ListOptions{}},
+		{
+			name:    "page",
+			options: []ListOption{WithPage(2, 25)},
+			want:    ListOptions{Page: 2, Size: 25},
+		},
+		{
+			name:    "first continuation batch",
+			options: []ListOption{WithContinuation("", 25)},
+			want:    ListOptions{Limit: 25},
+		},
+		{
+			name:    "later continuation batch",
+			options: []ListOption{WithContinuation("next", 25)},
+			want:    ListOptions{Continue: "next", Limit: 25},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options := ApplyListOptions(test.options)
+			if !reflect.DeepEqual(options, test.want) {
+				t.Fatalf("ApplyListOptions() = %#v, want %#v", options, test.want)
+			}
+		})
+	}
+}
+
+func TestApplyListOptionsExpandsMixedPaginationInOrder(t *testing.T) {
+	options := ApplyListOptions([]ListOption{
+		WithPage(1, 10),
+		WithContinuation("first", 20),
+		WithPage(2, 25),
+		WithContinuation("next", 30),
+	})
+	want := ListOptions{Page: 2, Size: 25, Continue: "next", Limit: 30}
+	if !reflect.DeepEqual(options, want) {
+		t.Fatalf("ApplyListOptions() = %#v, want %#v", options, want)
 	}
 }
 
@@ -104,11 +150,10 @@ func legacyResolvedListOptions(options ListOptions) []legacyListOption {
 // selector parsing and backend query work are deliberately outside its scope.
 func BenchmarkResolvedListOptions(b *testing.B) {
 	public := ListOptions{
-		Page:     2,
-		Size:     20,
-		Search:   "worker",
-		Sort:     "creationTimestamp-",
-		Continue: "next-token",
+		Page:   2,
+		Size:   20,
+		Search: "worker",
+		Sort:   "creationTimestamp-",
 	}
 
 	b.Run("captured-functional-option", func(b *testing.B) {

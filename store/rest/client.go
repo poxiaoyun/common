@@ -206,11 +206,17 @@ func (c Client) List(ctx context.Context, list store.ObjectList, opts ...store.L
 	if options.IncludeSubScopes {
 		queries.Add("includeSubscopes", "true")
 	}
+	if options.Page != 0 {
+		queries.Add("page", strconv.Itoa(options.Page))
+	}
 	if options.Size != 0 {
 		queries.Add("size", strconv.Itoa(options.Size))
 	}
-	if options.Page != 0 {
-		queries.Add("page", strconv.Itoa(options.Page))
+	if options.Continue != "" {
+		queries.Add("continue", options.Continue)
+	}
+	if options.Limit != 0 {
+		queries.Add("limit", strconv.Itoa(options.Limit))
 	}
 	if options.Search != "" {
 		queries.Add("search", options.Search)
@@ -220,9 +226,6 @@ func (c Client) List(ctx context.Context, list store.ObjectList, opts ...store.L
 	}
 	if options.ResourceVersion != nil {
 		queries.Add("resourceVersion", strconv.FormatInt(*options.ResourceVersion, 10))
-	}
-	if options.Continue != "" {
-		queries.Add("continue", options.Continue)
 	}
 	if options.Fields != nil {
 		queries.Add("fields", strings.Join(options.Fields, ","))

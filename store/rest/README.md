@@ -12,7 +12,7 @@
 ```go
 options, err := storerest.ListOptionsFromRequest(
 	r,
-	meta.DefaultSize(20),
+	meta.DefaultPage(1, 20),
 	meta.DefaultSort("creationTimestamp-"),
 )
 ```
@@ -30,13 +30,19 @@ options = append(options,
 Store option 覆盖：
 
 ```go
-requestOptions := api.GetListOptions(r, meta.DefaultSize(20))
+requestOptions, err := api.GetListOptions(r, meta.DefaultPage(1, 20))
+if err != nil {
+	return err
+}
 requestOptions.Sort = normalizeSort(requestOptions.Sort)
 options, err := store.ListOptionsFromMeta(requestOptions)
 ```
 
 `meta.ListOption` 只表达请求默认值，`store.ListOption` 表达 Store 查询条件。
-转换产生的 selector 错误在 HTTP 边界返回 BadRequest。未指定 `page` 时保持零值，
-未指定 `continue` 时保持空值；adapter 和 Store 都不替调用方选择或改写分页模式。
+selector 转换错误在 HTTP seam 返回 BadRequest。请求和 Store 都按
+`Limit>0`、`Size>0`、不分页的优先级选择行为；page 模式下 `Page<1` 按 1
+处理，未选中模式的字段静默忽略。Client adapter 不选择或规范化分页行为，只把
+非零 Store options 平铺到 HTTP query；接收端再按相同执行规则处理。没有分页值且
+调用方未提供默认策略时，由拥有请求的服务决定不分页行为。
 
 Update 不清除 ResourceVersion。请求对象携带非零版本时，底层 Store 按其乐观并发契约处理；只有调用方明确传入零值时才执行无条件更新。

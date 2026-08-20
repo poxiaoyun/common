@@ -218,10 +218,11 @@ func TestEtcdCacherStore(t *testing.T) {
 		}
 
 		page := &store.List[MyObject]{}
-		if err := storage.List(ctx, page, store.WithPageSize(1, 1), store.WithSort("-name")); err != nil {
+		if err := storage.List(ctx, page, store.WithPage(0, 1), store.WithSort("-name")); err != nil {
 			t.Fatalf("List(local page) error = %v", err)
 		}
-		if len(page.Items) != 1 || page.Items[0].ID != "root-red" || page.Total != 2 || page.Continue != "" {
+		if len(page.Items) != 1 || page.Items[0].ID != "root-red" || page.Total == nil || *page.Total != 2 ||
+			page.Page != 1 || page.Size != 1 || page.Continue != "" || page.Limit != 0 {
 			t.Fatalf("List(local page) = %#v", page)
 		}
 	})
@@ -248,13 +249,14 @@ func TestEtcdCacherStore(t *testing.T) {
 		for pageNumber := 0; ; pageNumber++ {
 			page := &store.List[MyObject]{}
 			if err := storage.List(ctx, page,
-				store.WithPageSize(0, 2),
-				store.WithContinue(continueToken),
+				store.WithPage(99, 1),
+				store.WithContinuation(continueToken, 2),
 				store.WithSearch("match"),
 			); err != nil {
 				t.Fatalf("List(page %d) error = %v", pageNumber, err)
 			}
-			if len(page.Items) == 0 || len(page.Items) > 2 || page.Total != 0 {
+			if len(page.Items) == 0 || len(page.Items) > 2 || page.Total != nil ||
+				page.Page != 0 || page.Size != 0 || page.Limit != 2 {
 				t.Fatalf("List(page %d) = %#v", pageNumber, page)
 			}
 			for _, object := range page.Items {

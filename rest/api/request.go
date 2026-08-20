@@ -32,14 +32,17 @@ import (
 	libreflect "xiaoshiai.cn/common/reflect"
 )
 
+// PageParams documents the flat page/size and continue/limit query contract.
+// Empty values are treated as omitted.
 var PageParams = []Param{
-	QueryParam("size", "maximum number of items in one response").Optional(),
-	QueryParam("page", "page number").Optional(),
+	QueryParam("page", "one-based page number; values below one select the first page").Optional(),
+	QueryParam("size", "positive number of items in a page").Optional(),
 	QueryParam("search", "Search string for searching").Optional(),
 	QueryParam("sort", "Sort string for sorting").In("name", "name-", "time", "time-").Optional(),
 	QueryParam("labelSelector", "Selector string for filtering").Optional(),
 	QueryParam("fieldSelector", "Selector string for filtering").Optional(),
-	QueryParam("continue", "Continue token for pagination").Optional(),
+	QueryParam("continue", "opaque token for a later continuation batch").Optional(),
+	QueryParam("limit", "positive maximum number of items in a continuation batch").Optional(),
 }
 
 type PathVar struct {
@@ -66,25 +69,28 @@ func (p PathVarList) Map() map[string]string {
 	return m
 }
 
+// ListOptions is the shared flat list request contract.
 type ListOptions = meta.ListOptions
 
-func GetListOptions(r *http.Request, modifiers ...meta.ListOption) ListOptions {
+// GetListOptions parses the flat list query contract, then applies caller-owned
+// options in declaration order. Empty query values parse to their zero values,
+// so Default options can fill them. Pagination behavior is selected by the
+// service that executes the list operation. The error result is reserved for
+// request parsing rules; pagination selection itself does not return an error.
+func GetListOptions(r *http.Request, modifiers ...meta.ListOption) (ListOptions, error) {
 	queries := r.URL.Query()
-	options := meta.ApplyListOptions(modifiers)
-	if queries.Has("page") {
-		options.Page = ValueOrDefault(queries.Get("page"), 0)
+	options := ListOptions{}
+	if value := queries.Get("page"); value != "" {
+		options.Page = ValueOrDefault(value, 0)
 	}
-	if queries.Has("size") {
-		options.Size = ValueOrDefault(queries.Get("size"), 0)
+	if value := queries.Get("size"); value != "" {
+		options.Size = ValueOrDefault(value, 0)
 	}
-	if queries.Has("search") {
-		options.Search = queries.Get("search")
-	}
-	if queries.Has("sort") {
-		options.Sort = queries.Get("sort")
-	}
-	if queries.Has("continue") {
-		options.Continue = queries.Get("continue")
+	options.Search = queries.Get("search")
+	options.Sort = queries.Get("sort")
+	options.Continue = queries.Get("continue")
+	if value := queries.Get("limit"); value != "" {
+		options.Limit = ValueOrDefault(value, 0)
 	}
 	fieldSelector := queries.Get("fieldSelector")
 	if fieldSelector == "" {
@@ -96,7 +102,10 @@ func GetListOptions(r *http.Request, modifiers ...meta.ListOption) ListOptions {
 	}
 	options.FieldSelector = fieldSelector
 	options.LabelSelector = labelSelector
-	return options
+	for _, modifier := range modifiers {
+		modifier.ApplyToList(&options)
+	}
+	return options, nil
 }
 
 func HeaderOrQuery[T any](r *http.Request, key string, defaultValue T) T {

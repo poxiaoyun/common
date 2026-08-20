@@ -231,6 +231,7 @@ func TestNotBeforeAndList(t *testing.T) {
 	waitForState(t, manager, id, task.StateSucceeded)
 
 	page, err := manager.List(t.Context(), meta.ListOptions{
+		Page:          1,
 		Size:          1,
 		Sort:          "-time",
 		FieldSelector: "status.state=Succeeded",
@@ -239,8 +240,21 @@ func TestNotBeforeAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != id {
+	if page.Total == nil || *page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != id {
 		t.Fatalf("List() = %#v", page)
+	}
+	page, err = manager.List(t.Context(), meta.ListOptions{
+		Page:          0,
+		Size:          1,
+		Continue:      "ignored",
+		FieldSelector: "status.state=Succeeded",
+		LabelSelector: "tenant=one",
+	})
+	if err != nil {
+		t.Fatalf("List() trusted pagination error = %v", err)
+	}
+	if page.Page != 1 || page.Size != 1 {
+		t.Fatalf("List() trusted pagination = %#v", page)
 	}
 
 	_, err = manager.List(t.Context(), meta.ListOptions{Search: "delayed"})

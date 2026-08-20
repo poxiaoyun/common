@@ -116,19 +116,17 @@ func (m *Manager) Submit(ctx context.Context, work task.Task, options task.Submi
 	return id, nil
 }
 
-// List returns an isolated snapshot of matching tasks. It supports Page, Size,
-// Sort, FieldSelector, and LabelSelector. Search and Continue are unsupported.
+// List returns an isolated snapshot of matching tasks. It supports page
+// pagination, Sort, FieldSelector, and LabelSelector. Search and continuation
+// pagination are unsupported.
 func (m *Manager) List(ctx context.Context, options meta.ListOptions) (meta.Page[task.TaskInfo], error) {
 	if err := ctx.Err(); err != nil {
 		return meta.Page[task.TaskInfo]{}, err
 	}
-	if options.Page < 0 || options.Size < 0 {
-		return meta.Page[task.TaskInfo]{}, fmt.Errorf("%w: page and size must not be negative", task.ErrInvalidArgument)
-	}
 	if options.Search != "" {
 		return meta.Page[task.TaskInfo]{}, fmt.Errorf("%w: search is unsupported", task.ErrInvalidArgument)
 	}
-	if options.Continue != "" {
+	if options.Limit > 0 {
 		return meta.Page[task.TaskInfo]{}, fmt.Errorf("%w: continue is unsupported", task.ErrInvalidArgument)
 	}
 	fieldSelector, err := fields.ParseSelector(options.FieldSelector)
@@ -486,29 +484,21 @@ func compareField(left, right task.TaskInfo, field string) int {
 
 func paginate(items []task.TaskInfo, options meta.ListOptions) meta.Page[task.TaskInfo] {
 	total := len(items)
-	size := options.Size
-	if size == 0 {
-		size = total
+	totalResult := total
+	if options.Size <= 0 {
+		return meta.Page[task.TaskInfo]{Total: &totalResult, Items: items}
 	}
-	page := options.Page
-	if page == 0 {
-		page = 1
+	page := max(options.Page, 1)
+	pageIndex := page - 1
+	offset := total
+	if pageIndex <= total/options.Size {
+		offset = pageIndex * options.Size
 	}
-	offset := 0
-	if options.Page > 1 && size > 0 {
-		offset = (options.Page - 1) * size
-	}
-	if offset > total {
-		offset = total
-	}
-	end := total
-	if size > 0 {
-		end = min(offset+size, total)
-	}
+	end := offset + min(options.Size, total-offset)
 	return meta.Page[task.TaskInfo]{
-		Total: total,
+		Total: &totalResult,
 		Items: items[offset:end],
 		Page:  page,
-		Size:  size,
+		Size:  options.Size,
 	}
 }

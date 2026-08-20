@@ -40,6 +40,96 @@ func TestPreconditionsJSON(t *testing.T) {
 	}
 }
 
+func TestPaginationDefaultsPreserveSelectedBehavior(t *testing.T) {
+	pageOptions := meta.ListOptions{Page: 2, Limit: 30}
+	meta.DefaultPage(1, 20).ApplyToList(&pageOptions)
+	if pageOptions != (meta.ListOptions{Page: 2, Limit: 30}) {
+		t.Fatalf("DefaultPage.ApplyToList() = %#v", pageOptions)
+	}
+	defaultPage := meta.ListOptions{Page: 2}
+	meta.DefaultPage(1, 20).ApplyToList(&defaultPage)
+	if defaultPage != (meta.ListOptions{Page: 2, Size: 20}) {
+		t.Fatalf("DefaultPage.ApplyToList() = %#v", defaultPage)
+	}
+	continuationIntent := meta.ListOptions{Continue: "next"}
+	meta.DefaultPage(1, 20).ApplyToList(&continuationIntent)
+	if continuationIntent != (meta.ListOptions{Continue: "next"}) {
+		t.Fatalf("DefaultPage.ApplyToList() = %#v", continuationIntent)
+	}
+
+	continuationOptions := meta.ListOptions{Page: 2, Size: 20}
+	meta.DefaultContinuation(30).ApplyToList(&continuationOptions)
+	if continuationOptions != (meta.ListOptions{Page: 2, Size: 20}) {
+		t.Fatalf("DefaultContinuation.ApplyToList() = %#v", continuationOptions)
+	}
+	pageIntent := meta.ListOptions{Page: 2}
+	meta.DefaultContinuation(30).ApplyToList(&pageIntent)
+	if pageIntent != (meta.ListOptions{Page: 2}) {
+		t.Fatalf("DefaultContinuation.ApplyToList() = %#v", pageIntent)
+	}
+
+	firstContinuationBatch := meta.ListOptions{Continue: "next"}
+	meta.DefaultContinuation(30).ApplyToList(&firstContinuationBatch)
+	if firstContinuationBatch != (meta.ListOptions{Continue: "next", Limit: 30}) {
+		t.Fatalf("DefaultContinuation.ApplyToList() = %#v", firstContinuationBatch)
+	}
+
+	pageDefaultFirst := meta.ApplyListOptions([]meta.ListOption{
+		meta.DefaultPage(1, 20),
+		meta.DefaultContinuation(30),
+	})
+	if pageDefaultFirst != (meta.ListOptions{Page: 1, Size: 20}) {
+		t.Fatalf("ApplyListOptions(page first) = %#v", pageDefaultFirst)
+	}
+	continuationDefaultFirst := meta.ApplyListOptions([]meta.ListOption{
+		meta.DefaultContinuation(30),
+		meta.DefaultPage(1, 20),
+	})
+	if continuationDefaultFirst != (meta.ListOptions{Limit: 30}) {
+		t.Fatalf("ApplyListOptions(continuation first) = %#v", continuationDefaultFirst)
+	}
+}
+
+func TestPageJSONIncludesOnlySelectedPagination(t *testing.T) {
+	tests := []struct {
+		name string
+		page meta.Page[int]
+		want string
+	}{
+		{
+			name: "unpaginated",
+			page: meta.Page[int]{Total: meta.Ptr(0), Items: []int{}},
+			want: `{"total":0,"items":[]}`,
+		},
+		{
+			name: "page",
+			page: meta.Page[int]{Total: meta.Ptr(0), Items: []int{}, Page: 2, Size: 20},
+			want: `{"total":0,"items":[],"page":2,"size":20}`,
+		},
+		{
+			name: "continuation",
+			page: meta.Page[int]{Items: []int{}, Continue: "next", Limit: 20},
+			want: `{"items":[],"continue":"next","limit":20}`,
+		},
+		{
+			name: "last continuation batch",
+			page: meta.Page[int]{Items: []int{}, Limit: 20},
+			want: `{"items":[],"limit":20}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := json.Marshal(test.page)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(encoded) != test.want {
+				t.Fatalf("json = %s, want %s", encoded, test.want)
+			}
+		})
+	}
+}
+
 func TestParseSearch(t *testing.T) {
 	tests := []struct {
 		name string // description of this test case

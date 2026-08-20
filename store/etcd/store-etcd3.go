@@ -345,10 +345,18 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 	}
 	preparedKey := e.core.getlistkey(e.scopes, resource)
 	rangeEnd := clientv3.GetPrefixRangeEnd(preparedKey)
-	continueMode := options.Continue != "" || options.Page == 0 && options.Size > 0
+	continuation := options.Limit > 0
+	pageMode := !continuation && options.Size > 0
+	page := options.Page
+	if pageMode && page < 1 {
+		page = 1
+	}
+	if continuation && options.Sort != "" {
+		return errors.NewUnsupported("etcd does not support sort with continuation pagination")
+	}
 	startKey := preparedKey
 	withRev := options.ResourceVersion
-	if continueMode && options.Continue != "" {
+	if continuation && options.Continue != "" {
 		continueKey, continueRevision, err := k8sstorage.DecodeContinue(options.Continue, preparedKey)
 		if err != nil {
 			return errors.NewBadRequest(fmt.Sprintf("invalid continue token: %v", err))
@@ -366,12 +374,8 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 		if withRev != nil {
 			getoptions = append(getoptions, clientv3.WithRev(*withRev))
 		}
-		if continueMode && options.Size > 0 {
-			remaining := options.Size - v.Len()
-			if remaining <= 0 {
-				hasMore = true
-				break
-			}
+		if continuation {
+			remaining := options.Limit - v.Len()
 			getoptions = append(getoptions, clientv3.WithLimit(int64(remaining)))
 		}
 		getResp, err := e.core.client.KV.Get(ctx, startKey, getoptions...)
@@ -415,10 +419,10 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 				v.Set(reflect.Append(v, reflect.ValueOf(obj).Elem()))
 			}
 		}
-		if !hasMore || !continueMode || options.Size == 0 {
+		if !hasMore || !continuation {
 			break
 		}
-		if v.Len() >= options.Size {
+		if v.Len() >= options.Limit {
 			break
 		}
 		startKey = string(lastKey) + "\x00"
@@ -438,26 +442,17 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 	}
 
 	total := v.Len()
-	if continueMode {
-		// Native continuation pagination cannot reliably report the complete
-		// number of matching objects without an additional full scan.
-		total = 0
-	} else {
-		if options.Size > 0 {
-			page := options.Page
-			if page == 0 {
-				page = 1
-			}
-			start := (page - 1) * options.Size
-			end := start + options.Size
-			if start >= total {
-				v.Set(reflect.MakeSlice(v.Type(), 0, 0))
-			} else {
-				if end > total {
-					end = total
-				}
-				v.Set(v.Slice(start, end))
-			}
+	if pageMode {
+		pageIndex := page - 1
+		start := total
+		if pageIndex <= total/options.Size {
+			start = pageIndex * options.Size
+		}
+		end := start + min(options.Size, total-start)
+		if start >= total {
+			v.Set(reflect.MakeSlice(v.Type(), 0, 0))
+		} else {
+			v.Set(v.Slice(start, end))
 		}
 	}
 	if v.IsNil() {
@@ -465,16 +460,20 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 		v.Set(reflect.MakeSlice(v.Type(), 0, 0))
 	}
 	continueToken := ""
-	if continueMode && hasMore {
+	if continuation && hasMore {
 		continueToken, err = k8sstorage.EncodeContinue(string(lastKey)+"\x00", preparedKey, ptr.Deref(withRev, 0))
 		if err != nil {
 			return errors.NewInternalError(err)
 		}
 	}
-	list.SetPage(options.Page)
-	list.SetSize(options.Size)
-	list.SetTotal(total)
-	list.SetContinue(continueToken)
+	switch {
+	case continuation:
+		store.SetContinuationListMetadata(list, continueToken, options.Limit)
+	case pageMode:
+		store.SetPageListMetadata(list, page, options.Size, total)
+	default:
+		store.SetUnpaginatedListMetadata(list, total)
+	}
 	list.SetResourceVersion(ptr.Deref(withRev, 0))
 	list.SetScopes(e.scopes)
 	list.SetResource(resource)

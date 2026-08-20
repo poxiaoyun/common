@@ -195,6 +195,9 @@ func (i *InMemory) List(ctx context.Context, list store.ObjectList, opts ...stor
 		return err
 	}
 	options := store.ApplyListOptions(opts)
+	if options.Limit > 0 {
+		return errors.NewUnsupported("in-memory store does not support continuation pagination")
+	}
 	items, newItem, err := store.NewItemFuncFromList(list)
 	if err != nil {
 		return err
@@ -226,10 +229,14 @@ func (i *InMemory) List(ctx context.Context, list store.ObjectList, opts ...stor
 		return store.CompareUnstructuredField(a.unstructured, b.unstructured, sorts)
 	})
 	total := len(results)
+	page := max(options.Page, 1)
 	if options.Size > 0 {
-		page := max(options.Page, 1)
-		start := min((page-1)*options.Size, total)
-		end := min(start+options.Size, total)
+		pageIndex := page - 1
+		start := total
+		if pageIndex <= total/options.Size {
+			start = pageIndex * options.Size
+		}
+		end := start + min(options.Size, total-start)
 		results = results[start:end]
 	}
 	items.Set(reflect.MakeSlice(items.Type(), 0, len(results)))
@@ -240,9 +247,11 @@ func (i *InMemory) List(ctx context.Context, list store.ObjectList, opts ...stor
 	list.SetResource(resource)
 	list.SetScopes(i.scopes)
 	list.SetResourceVersion(int64(i.core.rev.Load()))
-	list.SetPage(options.Page)
-	list.SetSize(options.Size)
-	list.SetTotal(total)
+	if options.Size > 0 {
+		store.SetPageListMetadata(list, page, options.Size, total)
+	} else {
+		store.SetUnpaginatedListMetadata(list, total)
+	}
 	return nil
 }
 

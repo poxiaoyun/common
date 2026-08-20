@@ -3,6 +3,7 @@ package store
 
 import "xiaoshiai.cn/common/meta"
 
+// Object exposes the metadata managed by Store implementations.
 type Object interface {
 	GetID() string
 	SetID(string)
@@ -47,6 +48,8 @@ type Object interface {
 	SetOwnerReferences([]OwnerReference)
 }
 
+// ObjectList exposes items and flat pagination metadata managed by a Store
+// List operation.
 type ObjectList interface {
 	GetResource() string
 	SetResource(string)
@@ -57,15 +60,28 @@ type ObjectList interface {
 	GetResourceVersion() int64
 	SetResourceVersion(int64)
 
-	GetSize() int
-	SetSize(size int)
-	SetPage(i int)
+	// GetPage returns the one-based page number, or zero outside page pagination.
 	GetPage() int
-	SetTotal(i int)
-	GetTotal() int
-
-	SetContinue(string)
+	// SetPage sets the one-based page number.
+	SetPage(page int)
+	// GetSize returns the page size, or zero outside page pagination.
+	GetSize() int
+	// SetSize sets the page size.
+	SetSize(size int)
+	// GetTotal returns the exact total, or nil for continuation pagination.
+	GetTotal() *int
+	// SetTotal sets or omits the exact total.
+	SetTotal(total *int)
+	// GetContinue returns the opaque next-batch token, or empty when a
+	// continuation traversal is complete.
 	GetContinue() string
+	// SetContinue sets the opaque next-batch token.
+	SetContinue(token string)
+	// GetLimit returns the continuation batch limit, or zero outside
+	// continuation pagination.
+	GetLimit() int
+	// SetLimit sets the continuation batch limit.
+	SetLimit(limit int)
 }
 
 // +k8s:openapi-gen=true
@@ -255,15 +271,17 @@ func (o *ObjectMeta) SetUID(uid string) {
 
 var _ ObjectList = &List[Object]{}
 
+// List is the Store wire-compatible list result with flat pagination metadata.
 type List[T any] struct {
 	Resource        string  `json:"resource,omitempty"`
 	ResourceVersion int64   `json:"resourceVersion,omitempty"`
 	Scopes          []Scope `json:"scopes,omitempty"`
 	Items           []T     `json:"items" openapi:"dynamic"`
-	Total           int     `json:"total"`
-	Page            int     `json:"page"`
-	Size            int     `json:"size"`
+	Total           *int    `json:"total,omitempty"`
+	Page            int     `json:"page,omitempty"`
+	Size            int     `json:"size,omitempty"`
 	Continue        string  `json:"continue,omitempty"` // Used for pagination, if set, indicates that there are more items to list
+	Limit           int     `json:"limit,omitempty"`
 }
 
 // PageFromList projects Store list metadata onto the public list contract.
@@ -275,6 +293,7 @@ func PageFromList[T any](list List[T]) meta.Page[T] {
 		Page:            list.Page,
 		Size:            list.Size,
 		Continue:        list.Continue,
+		Limit:           list.Limit,
 	}
 }
 
@@ -286,6 +305,16 @@ func (b *List[T]) GetContinue() string {
 // SetContinue implements ObjectList.
 func (b *List[T]) SetContinue(continueToken string) {
 	b.Continue = continueToken
+}
+
+// GetLimit implements ObjectList.
+func (b *List[T]) GetLimit() int {
+	return b.Limit
+}
+
+// SetLimit implements ObjectList.
+func (b *List[T]) SetLimit(limit int) {
+	b.Limit = limit
 }
 
 // GetResourceVersion implements ObjectList.
@@ -329,7 +358,7 @@ func (b *List[T]) GetSize() int {
 }
 
 // GetTotal implements ObjectList.
-func (b *List[T]) GetTotal() int {
+func (b *List[T]) GetTotal() *int {
 	return b.Total
 }
 
@@ -344,10 +373,38 @@ func (b *List[T]) SetSize(size int) {
 }
 
 // SetTotal implements ObjectList.
-func (b *List[T]) SetTotal(i int) {
-	b.Total = i
+func (b *List[T]) SetTotal(total *int) {
+	b.Total = total
 }
 
+// SetUnpaginatedListMetadata records an unpaginated result with an exact total.
+func SetUnpaginatedListMetadata(list ObjectList, total int) {
+	list.SetPage(0)
+	list.SetSize(0)
+	list.SetContinue("")
+	list.SetLimit(0)
+	list.SetTotal(&total)
+}
+
+// SetPageListMetadata records a page result with an exact total.
+func SetPageListMetadata(list ObjectList, page, size, total int) {
+	list.SetPage(page)
+	list.SetSize(size)
+	list.SetContinue("")
+	list.SetLimit(0)
+	list.SetTotal(&total)
+}
+
+// SetContinuationListMetadata records a continuation result and omits totals.
+func SetContinuationListMetadata(list ObjectList, token string, limit int) {
+	list.SetPage(0)
+	list.SetSize(0)
+	list.SetTotal(nil)
+	list.SetContinue(token)
+	list.SetLimit(limit)
+}
+
+// ConvertList maps list items while preserving Store and pagination metadata.
 func ConvertList[T any, F any](list List[T], f func(T) F) List[F] {
 	newItems := make([]F, 0, len(list.Items))
 	for _, item := range list.Items {
@@ -362,5 +419,6 @@ func ConvertList[T any, F any](list List[T], f func(T) F) List[F] {
 		Total:           list.Total,
 		Items:           newItems,
 		Continue:        list.Continue,
+		Limit:           list.Limit,
 	}
 }

@@ -97,11 +97,10 @@ type Submitter interface {
 
 // Manager exposes task state and optional operational controls.
 type Manager interface {
-	// List returns tasks matching options. Page and Size use the common pagination
-	// semantics. Other ListOptions capabilities are implementation-dependent
-	// because not every task backend can search, sort, or select arbitrary fields
-	// and labels. Implementations must document the options they support and return
-	// ErrInvalidArgument when a non-empty option is unsupported.
+	// List returns tasks matching options. A positive Limit selects continuation
+	// pagination; otherwise a positive Size selects page pagination, and fields
+	// outside the selected behavior are ignored. Search, sort, and selector
+	// capabilities are implementation-dependent and documented by each backend.
 	List(ctx context.Context, options meta.ListOptions) (meta.Page[TaskInfo], error)
 
 	// Get returns the current snapshot of one task.

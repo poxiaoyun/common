@@ -37,10 +37,39 @@ Services that use best-effort asynchronous audit delivery should wrap each
 destination in its own `CachedAuditSink` before composing the fan-out so each
 destination has independent backpressure.
 
-Resource List APIs use `meta.Page[T]` and `meta.ListOptions`. The query field
-for batch length is `size`; `limit` is not a second spelling. A non-empty
-`continue` selects continuation pagination and takes precedence over `page`.
-Defaults and maximum sizes belong to the service that owns the HTTP boundary.
-Services can pass `meta.DefaultSize` and `meta.DefaultSort` to `GetListOptions`; these
-options only fill omitted values and do not choose or rewrite the pagination
-mode.
+Resource List APIs use `meta.Page[T]` and `meta.ListOptions`; the authoritative
+field contract is documented by [meta](../../meta/README.md#列表与分页). Query fields are
+flat and have no mode discriminator. A positive `limit` selects continuation
+pagination and `continue` is its optional opaque cursor. Otherwise a positive
+`size` selects page pagination; `page` values below one are treated as one.
+When neither `limit` nor `size` is positive, the owning service uses its
+unpaginated behavior. Fields outside the selected behavior are ignored.
+Services can pass
+`meta.DefaultPage`, `meta.DefaultContinuation`, and `meta.DefaultSort` to
+`GetListOptions`. Default options only write their owned fields. `DefaultPage`
+does not fill page fields when a non-empty `continue` or positive `limit`
+expresses continuation intent, and `DefaultContinuation` does not fill `limit`
+when a non-zero `page` or positive `size` expresses page intent. Query values are parsed first and options are then
+applied in declaration order. Responses include only
+`page/size/total`, `continue/limit`, or `total`,
+according to the selected behavior. A continuation response always retains
+`limit`; an omitted or empty `continue` means traversal is complete.
+
+| Canonical query values | Result |
+| --- | --- |
+| Positive `limit`, optional `continue` | Continuation pagination |
+| Otherwise, positive `size` | Page pagination; `page < 1` becomes `1` |
+| Otherwise | Unpaginated service behavior |
+
+The request and list-options helpers use the same selection table and ignore
+fields outside the selected behavior. For continuation, the independent
+`getID` projection must return a stable, unique, non-empty value; the name
+projection remains dedicated to search and sorting. Object helpers use the UID
+exposed by Store or Kubernetes objects. The helper uses the UID as the opaque
+cursor after filtering and sorting.
+A cursor missing from the current list returns ResourceExpired. This in-memory
+traversal does not guarantee a stable snapshot across requests.
+
+Use `PageFromPreparedList` when the input is already filtered and sorted and
+only page/size slicing remains. It preserves the same `page < 1` and `size < 0`
+normalization described above.

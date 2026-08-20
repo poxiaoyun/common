@@ -58,7 +58,7 @@ func TestListObjectsAppliesCallerOptionsAfterRequestOptions(t *testing.T) {
 	serverRequirement := store.RequirementEqual("tenant", "tenant-1")
 
 	if _, err := ListObjects(request, storage, list,
-		store.WithPageSize(3, 10),
+		store.WithPage(3, 10),
 		store.WithLabelRequirements(serverRequirement),
 	); err != nil {
 		t.Fatal(err)

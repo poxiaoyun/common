@@ -11,7 +11,11 @@ import (
 
 func (a *API) ListUsers(w http.ResponseWriter, r *http.Request) {
 	api.On(w, r, func(ctx context.Context) (any, error) {
-		return a.Provider.ListUsers(ctx, ListUserOptions{ListOptions: api.GetListOptions(r)})
+		options, err := api.GetListOptions(r)
+		if err != nil {
+			return nil, err
+		}
+		return a.Provider.ListUsers(ctx, ListUserOptions{ListOptions: options})
 	})
 }
 
@@ -115,7 +119,7 @@ func (a *API) SearchUsers(w http.ResponseWriter, r *http.Request) {
 			return []NameOnly{}, nil
 		}
 		list, err := a.Provider.ListUsers(ctx, ListUserOptions{ListOptions: api.ListOptions{
-			Search: search, Size: 5,
+			Search: search, Page: 1, Size: 5,
 		}})
 		if err != nil {
 			return nil, err

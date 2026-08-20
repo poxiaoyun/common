@@ -397,6 +397,9 @@ func (s *Storage) Update(ctx context.Context, into store.Object, options ...stor
 
 func (s *Storage) List(ctx context.Context, list store.ObjectList, options ...store.ListOption) error {
 	opts := store.ApplyListOptions(options)
+	if opts.Limit > 0 {
+		return errors.NewUnsupported("SQL store does not support continuation pagination")
+	}
 	return s.core.list(ctx, s.conditions, list, opts)
 }
 
@@ -785,15 +788,21 @@ func (c *core) list(ctx context.Context, scope []store.Scope, list store.ObjectL
 	if opts.LabelRequirements != nil {
 		db = c.applyLabels(db, opts.LabelRequirements)
 	}
-	page, size := opts.Page, opts.Size
-	if size > 0 {
-		page = max(1, page) // ensure page is at least 1
-		db = db.Offset((page - 1) * size).Limit(size)
-	}
 	// count total
 	var total int64
 	if err := db.Count(&total).Error; err != nil {
 		return mapSQLError(err, resource, "")
+	}
+	page := max(opts.Page, 1)
+	if opts.Size > 0 {
+		pageIndex := int64(page - 1)
+		size := int64(opts.Size)
+		offset := total
+		if pageIndex <= total/size {
+			offset = pageIndex * size
+		}
+		maxOffset := int64(^uint(0) >> 1)
+		db = db.Offset(int(min(offset, maxOffset))).Limit(opts.Size)
 	}
 	for _, sort := range store.ParseSorts(opts.Sort) {
 		if sort.Direction == meta.SortDirectionAsc {
@@ -816,9 +825,11 @@ func (c *core) list(ctx context.Context, scope []store.Scope, list store.ObjectL
 	if err := c.helper.ScanAll(rows, items); err != nil {
 		return mapSQLError(err, resource, "")
 	}
-	list.SetTotal(int(total))
-	list.SetSize(int(size))
-	list.SetPage(int(page))
+	if opts.Size > 0 {
+		store.SetPageListMetadata(list, page, opts.Size, int(total))
+	} else {
+		store.SetUnpaginatedListMetadata(list, int(total))
+	}
 	list.SetResource(resource)
 	return nil
 }

@@ -69,6 +69,29 @@ func TestCacheStoreRebuildsFromInitialWatchAfterDisconnect(t *testing.T) {
 	}
 }
 
+func TestCacheStoreCapabilities(t *testing.T) {
+	cacheStore := NewCacheStore(&initialWatchStore{})
+	capabilities := cacheStore.Capabilities()
+	if !capabilities.Page {
+		t.Fatal("Capabilities().Page = false, want true")
+	}
+	if !capabilities.Watch {
+		t.Fatal("Capabilities().Watch = false, want true")
+	}
+}
+
+func TestCacheStoreRejectsContinuationPagination(t *testing.T) {
+	cacheStore := NewCacheStore(&initialWatchStore{})
+	err := cacheStore.List(
+		t.Context(),
+		&store.List[TestObject]{},
+		store.WithContinuation("", 10),
+	)
+	if !errors.IsUnsupported(err) {
+		t.Fatalf("List() error = %v, want Unsupported", err)
+	}
+}
+
 type initialWatchStore struct {
 	store.Store
 	mu      sync.Mutex

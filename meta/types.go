@@ -16,24 +16,26 @@ import (
 //	myMap := map[string]struct{}{}
 type Empty struct{}
 
+// Page is a flat list response. Exactly one of page, continuation, or
+// unpaginated metadata is present on a successful response.
 type Page[T any] struct {
 	// ResourceVersion identifies the collection snapshot when the backend can
 	// provide one. It is distinct from each item's resourceVersion.
 	ResourceVersion int64 `json:"resourceVersion,omitempty"`
-	// Total is the total number of items matching the query
-	// it used for page style pagination
-	Total int `json:"total"`
+	// Total is the exact number of matching items for page or unpaginated
+	// results. Continuation results omit it.
+	Total *int `json:"total,omitempty"`
 	// Items is the list of items in the current page
 	Items []T `json:"items"`
-	// Page is the current page number
-	Page int `json:"page"`
-	// Size is the number of items per page
-	Size int `json:"size"`
-	// for continue style pagination
-	// if continue is not empty, means there are more items
-	// when use continue style pagination, total is not returned and page is ignored
-	// for next page, use the continue token to get next page
+	// Page is the current one-based page number for page pagination.
+	Page int `json:"page,omitempty"`
+	// Size is the number of items per page for page pagination.
+	Size int `json:"size,omitempty"`
+	// Continue is the opaque next-batch token. On a continuation response,
+	// an omitted or empty token means that iteration is complete.
 	Continue string `json:"continue,omitempty"`
+	// Limit is the maximum number of items returned by continuation pagination.
+	Limit int `json:"limit,omitempty"`
 }
 
 // ConvertPage maps list items while preserving collection pagination metadata.
@@ -44,6 +46,7 @@ func ConvertPage[T any, R any](page Page[T], convert func(T) R) Page[R] {
 		Page:            page.Page,
 		Size:            page.Size,
 		Continue:        page.Continue,
+		Limit:           page.Limit,
 		Items:           make([]R, 0, len(page.Items)),
 	}
 	for _, item := range page.Items {
@@ -52,12 +55,15 @@ func ConvertPage[T any, R any](page Page[T], convert func(T) R) Page[R] {
 	return result
 }
 
+// ListOptions contains flat list filters and pagination values. A positive
+// Limit selects continuation pagination; otherwise a positive Size selects
+// page pagination, with Page values below one treated as one. When neither is
+// positive, the owning service chooses its unpaginated behavior.
 type ListOptions struct {
-	// Size is the number of items per page
-	Size int `json:"size,omitempty"`
-	// Page is the page number, starting from 1
-	// it used for page style pagination
+	// Page is the one-based page number for page pagination.
 	Page int `json:"page,omitempty"`
+	// Size is the number of items per page for page pagination.
+	Size int `json:"size,omitempty"`
 	// Search is the search string
 	// example:
 	// search="test" will match objects with name or description contains "test"
@@ -73,9 +79,11 @@ type ListOptions struct {
 	// time is alias for metadata.creationTimestamp
 	// see [ParseSort]
 	Sort string `json:"sort,omitempty"`
-	// Continue is a token to continue the list
-	// it is used for continue style pagination
+	// Continue is an optional opaque token for a later continuation batch.
+	// An empty value is equivalent to omitting it.
 	Continue string `json:"continue,omitempty"`
+	// Limit is the maximum number of items returned by continuation pagination.
+	Limit int `json:"limit,omitempty"`
 	// FieldSelector is a selector expr to filter objects by fields
 	// example: "metadata.name=myname,metadata.namespace=mynamespace"
 	FieldSelector string `json:"fieldSelector,omitempty"`
@@ -90,19 +98,49 @@ type ListOption interface {
 	ApplyToList(*ListOptions)
 }
 
-// DefaultSizeOption supplies a default list size.
-type DefaultSizeOption int
+// DefaultPageOption supplies default page and size values.
+type DefaultPageOption struct {
+	// Page is the one-based default page number.
+	Page int
+	// Size is the default number of items per page.
+	Size int
+}
 
-// ApplyToList fills Size when it is zero.
-func (option DefaultSizeOption) ApplyToList(options *ListOptions) {
+// ApplyToList fills Page and Size independently unless Limit already selects continuation pagination.
+func (option DefaultPageOption) ApplyToList(options *ListOptions) {
+	// A continuation token or positive Limit expresses continuation intent. Do
+	// not let page defaults replace that explicit request.
+	if options.Continue != "" || options.Limit > 0 {
+		return
+	}
+	if options.Page == 0 {
+		options.Page = option.Page
+	}
 	if options.Size == 0 {
-		options.Size = int(option)
+		options.Size = option.Size
 	}
 }
 
-// DefaultSize supplies a size only when the caller omitted it.
-func DefaultSize(size int) DefaultSizeOption {
-	return DefaultSizeOption(size)
+// DefaultPage supplies default page and size values.
+func DefaultPage(page, size int) DefaultPageOption {
+	return DefaultPageOption{Page: page, Size: size}
+}
+
+// DefaultContinuationOption supplies a default continuation limit.
+type DefaultContinuationOption int
+
+// ApplyToList fills Limit when it is zero unless Size already selects page pagination.
+func (option DefaultContinuationOption) ApplyToList(options *ListOptions) {
+	// A page number or positive Size expresses page intent. Do not let a
+	// continuation default replace that explicit request through Limit priority.
+	if options.Limit == 0 && options.Page == 0 && options.Size <= 0 {
+		options.Limit = int(option)
+	}
+}
+
+// DefaultContinuation supplies a default continuation limit.
+func DefaultContinuation(limit int) DefaultContinuationOption {
+	return DefaultContinuationOption(limit)
 }
 
 // DefaultSortOption supplies a default list sort.

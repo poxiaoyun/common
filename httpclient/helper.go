@@ -344,13 +344,21 @@ func StatusOnResponse(req *http.Request, resp *http.Response) error {
 	return errors.NewCustomError(resp.StatusCode, errors.StatusReasonUnknown, cache.String())
 }
 
+// ListOptionsToQuery serializes non-zero list values without selecting or
+// normalizing pagination behavior.
 func ListOptionsToQuery(options meta.ListOptions) url.Values {
 	values := url.Values{}
-	if options.Size > 0 {
+	if options.Page != 0 {
+		values.Set("page", fmt.Sprint(options.Page))
+	}
+	if options.Size != 0 {
 		values.Set("size", fmt.Sprint(options.Size))
 	}
-	if options.Page > 0 {
-		values.Set("page", fmt.Sprint(options.Page))
+	if options.Continue != "" {
+		values.Set("continue", options.Continue)
+	}
+	if options.Limit != 0 {
+		values.Set("limit", fmt.Sprint(options.Limit))
 	}
 	if options.Search != "" {
 		values.Set("search", options.Search)
@@ -363,9 +371,6 @@ func ListOptionsToQuery(options meta.ListOptions) url.Values {
 	}
 	if options.LabelSelector != "" {
 		values.Set("labelSelector", options.LabelSelector)
-	}
-	if options.Continue != "" {
-		values.Set("continue", options.Continue)
 	}
 	return values
 }

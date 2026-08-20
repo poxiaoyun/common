@@ -246,19 +246,6 @@ func WithFields(fields ...string) FieldsOption {
 	return FieldsOption(fields)
 }
 
-// ContinueOption sets a List continuation token.
-type ContinueOption string
-
-// ApplyToList sets the continuation token.
-func (option ContinueOption) ApplyToList(options *ListOptions) {
-	options.Continue = string(option)
-}
-
-// WithContinue resumes a List from token.
-func WithContinue(token string) ContinueOption {
-	return ContinueOption(token)
-}
-
 // PreconditionsOption overlays present Delete preconditions.
 type PreconditionsOption Preconditions
 
@@ -355,23 +342,42 @@ func WithDryRun() DryRunOption {
 	return DryRunOption{}
 }
 
-// PageSizeOption sets page-number pagination.
-type PageSizeOption struct {
-	// Page selects the one-based page number; zero selects continuation mode.
+// PageOption sets page-number pagination.
+type PageOption struct {
+	// Page is the one-based page number.
 	Page int
-	// Size limits the number of returned objects.
+	// Size is the number of objects per page.
 	Size int
 }
 
 // ApplyToList sets Page and Size together.
-func (option PageSizeOption) ApplyToList(options *ListOptions) {
+func (option PageOption) ApplyToList(options *ListOptions) {
 	options.Page = option.Page
 	options.Size = option.Size
 }
 
-// WithPageSize selects page-number pagination.
-func WithPageSize(page, size int) PageSizeOption {
-	return PageSizeOption{Page: page, Size: size}
+// WithPage selects page-number pagination.
+func WithPage(page, size int) PageOption {
+	return PageOption{Page: page, Size: size}
+}
+
+// ContinuationOption sets continuation pagination.
+type ContinuationOption struct {
+	// Continue is an opaque token returned by the previous request.
+	Continue string
+	// Limit is the maximum number of returned objects.
+	Limit int
+}
+
+// ApplyToList sets Continue and Limit together.
+func (option ContinuationOption) ApplyToList(options *ListOptions) {
+	options.Continue = option.Continue
+	options.Limit = option.Limit
+}
+
+// WithContinuation selects continuation pagination.
+func WithContinuation(token string, limit int) ContinuationOption {
+	return ContinuationOption{Continue: token, Limit: limit}
 }
 
 // SortOption sets the List sort expression.

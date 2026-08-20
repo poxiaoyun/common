@@ -334,11 +334,19 @@ func (c *generic) Get(ctx context.Context, name string, obj store.Object, opts .
 // List implements store.Store.
 func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store.ListOption) error {
 	options := store.ApplyListOptions(opts)
+	continueMode := options.Limit > 0
+	pageMode := !continueMode && options.Size > 0
+	page := options.Page
+	if pageMode && page < 1 {
+		page = 1
+	}
+	if options.Limit > 0 && options.Sort != "" {
+		return errors.NewUnsupported("etcd cache does not support sorting continuation lists")
+	}
 	preficate, err := ConvertPredicate(options.LabelRequirements, options.FieldRequirements)
 	if err != nil {
 		return err
 	}
-	continueMode := options.Continue != "" || options.Page == 0 && options.Size > 0
 	v, newItemFunc, err := store.NewItemFuncFromList(list)
 	if err != nil {
 		return err
@@ -395,11 +403,7 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 			for {
 				predicate := preficate
 				predicate.Continue = continueToken
-				if options.Size > 0 {
-					predicate.Limit = int64(options.Size - len(filtered))
-				} else {
-					predicate.Limit = 0
-				}
+				predicate.Limit = int64(options.Limit - len(filtered))
 				unslist, err := getList(predicate)
 				if err != nil {
 					return err
@@ -407,7 +411,7 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 				filtered = append(filtered, filter(unslist.Items)...)
 				continueToken = unslist.GetContinue()
 				resourceVersion = unslist.GetResourceVersion()
-				if options.Size <= 0 || continueToken == "" || len(filtered) >= options.Size {
+				if continueToken == "" || len(filtered) >= options.Limit {
 					break
 				}
 			}
@@ -423,12 +427,8 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 
 		// pagination
 		total := len(filtered)
-		if continueMode {
-			// Native continuation pagination cannot reliably report the complete
-			// number of matching objects without an additional full scan.
-			total = 0
-		} else {
-			filtered = PageUnstructuredList(filtered, options.Page, options.Size)
+		if pageMode {
+			filtered = PageUnstructuredList(filtered, page, options.Size)
 		}
 
 		// convert to result
@@ -439,11 +439,14 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 			}
 			v.Set(reflect.Append(v, reflect.ValueOf(obj).Elem()))
 		}
-		list.SetPage(options.Page)
-		list.SetSize(options.Size)
-		list.SetTotal(total)
+		if continueMode {
+			store.SetContinuationListMetadata(list, continueToken, options.Limit)
+		} else if pageMode {
+			store.SetPageListMetadata(list, page, options.Size, total)
+		} else {
+			store.SetUnpaginatedListMetadata(list, total)
+		}
 		list.SetResourceVersion(resourceVersion)
-		list.SetContinue(continueToken)
 		list.SetScopes(c.scopes)
 		list.SetResource(db.resource.String())
 		return nil
@@ -805,19 +808,14 @@ func PageUnstructuredList(list []StorageObject, page, size int) []StorageObject 
 	if size <= 0 {
 		return list
 	}
-	if page == 0 {
-		page = 1
-	}
+	page = max(page, 1)
 	total := len(list)
-	startIdx := (page - 1) * size
-	endIdx := startIdx + size
-	if startIdx > total {
-		startIdx = 0
-		endIdx = 0
+	pageIndex := page - 1
+	startIdx := total
+	if pageIndex <= total/size {
+		startIdx = pageIndex * size
 	}
-	if endIdx > total {
-		endIdx = total
-	}
+	endIdx := startIdx + min(size, total-startIdx)
 	list = list[startIdx:endIdx]
 	return list
 }

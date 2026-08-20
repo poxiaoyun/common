@@ -486,7 +486,7 @@ func TestIntegrationMongoDB(t *testing.T) {
 		if err != nil {
 			t.Fatalf("List() error = %v", err)
 		}
-		if page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != matchingID {
+		if page.Total == nil || *page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != matchingID {
 			t.Fatalf("List() = %#v, want task %q", page, matchingID)
 		}
 	})

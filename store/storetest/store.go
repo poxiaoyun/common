@@ -769,7 +769,7 @@ func RunQueryCapabilities(t *testing.T, fixture Fixture, storage commonstore.Sto
 		{name: "search by ID", enabled: fixture.Capabilities.Search, options: []commonstore.ListOption{commonstore.WithSearch("c")}, wantIDs: []string{"c"}},
 		{name: "explicit search fields", enabled: fixture.Capabilities.Search, options: []commonstore.ListOption{commonstore.WithSearch("c"), commonstore.WithSearchFields("name")}, wantIDs: []string{}},
 		{name: "indexed sort", enabled: fixture.Capabilities.Sort, options: []commonstore.ListOption{commonstore.WithSort("rank-")}, wantIDs: []string{"c", "b", "a"}, ordered: true},
-		{name: "page", enabled: fixture.Capabilities.Page, options: []commonstore.ListOption{commonstore.WithSort("id+"), commonstore.WithPageSize(1, 2)}, wantIDs: []string{"a", "b"}, ordered: true},
+		{name: "page", enabled: fixture.Capabilities.Page, options: []commonstore.ListOption{commonstore.WithSort("id+"), commonstore.WithPage(1, 2)}, wantIDs: []string{"a", "b"}, ordered: true},
 	}
 	for _, test := range tests {
 		if !test.enabled {
@@ -788,6 +788,15 @@ func RunQueryCapabilities(t *testing.T, fixture Fixture, storage commonstore.Sto
 			if !reflect.DeepEqual(ids, test.wantIDs) {
 				t.Fatalf("List() IDs = %v, want %v", ids, test.wantIDs)
 			}
+			if test.name == "page" {
+				if list.Total == nil || *list.Total != 3 || list.Page != 1 || list.Size != 2 || list.Continue != "" || list.Limit != 0 {
+					t.Fatalf("page List() metadata = %#v", list)
+				}
+				return
+			}
+			if list.Total == nil || *list.Total != len(test.wantIDs) || list.Page != 0 || list.Size != 0 || list.Continue != "" || list.Limit != 0 {
+				t.Fatalf("unpaginated List() metadata = %#v", list)
+			}
 		})
 	}
 	if fixture.Capabilities.Projection {
@@ -804,12 +813,12 @@ func RunQueryCapabilities(t *testing.T, fixture Fixture, storage commonstore.Sto
 		continueToken := ""
 		for {
 			list := &commonstore.List[Object]{Resource: "storetests"}
-			options := []commonstore.ListOption{commonstore.WithPageSize(0, 1)}
-			if continueToken != "" {
-				options = append(options, commonstore.WithContinue(continueToken))
-			}
+			options := []commonstore.ListOption{commonstore.WithContinuation(continueToken, 1)}
 			if err := storage.List(t.Context(), list, options...); err != nil {
 				t.Fatalf("continue List() error = %v", err)
+			}
+			if list.Total != nil || list.Page != 0 || list.Size != 0 || list.Limit != 1 {
+				t.Fatalf("continue List() metadata = %#v", list)
 			}
 			for _, item := range list.Items {
 				seen[item.ID] = true
@@ -824,8 +833,11 @@ func RunQueryCapabilities(t *testing.T, fixture Fixture, storage commonstore.Sto
 		}
 		if fixture.Capabilities.ContinueWithSort {
 			list := &commonstore.List[Object]{Resource: "storetests"}
-			if err := storage.List(t.Context(), list, commonstore.WithPageSize(0, 1), commonstore.WithSort("id+")); err != nil {
+			if err := storage.List(t.Context(), list, commonstore.WithContinuation("", 1), commonstore.WithSort("id+")); err != nil {
 				t.Fatalf("continue with sort List() error = %v", err)
+			}
+			if list.Total != nil || list.Page != 0 || list.Size != 0 || list.Limit != 1 {
+				t.Fatalf("continue with sort List() metadata = %#v", list)
 			}
 		}
 	}

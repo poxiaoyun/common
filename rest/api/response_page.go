@@ -21,93 +21,212 @@ import (
 
 	"golang.org/x/exp/slices"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/meta"
 )
 
-const DefaultPageSize = 10
-
-type Page[T any] = meta.Page[T]
-
-func PageObjectFromRequest[T any](req *http.Request, list []T) Page[T] {
-	return PageObjectFromListOptions(list, GetListOptions(req))
+type pageObjectStringUID interface {
+	// GetUID returns the stable unique identity used as a continuation cursor.
+	GetUID() string
 }
 
-// PageObjectFromListOptions used for client.Object pagination T in list
-// use any of T to suit for both eg. Pod(not implement metav1.Object) and *Pod(metav1.Object)
-func PageObjectFromListOptions[T any](list []T, opts ListOptions) Page[T] {
-	getname := func(t T) string {
-		if item, ok := any(t).(interface{ GetName() string }); ok {
-			return item.GetName()
+type pageObjectKubernetesUID interface {
+	// GetUID returns the stable Kubernetes identity used as a continuation cursor.
+	GetUID() types.UID
+}
+
+type pageObjectName interface {
+	// GetName returns the object name used by list search and ordering.
+	GetName() string
+}
+
+type pageObjectCreationTimestamp interface {
+	// GetCreationTimestamp returns the creation time used by list ordering.
+	GetCreationTimestamp() metav1.Time
+}
+
+// Page is the shared flat list response contract.
+type Page[T any] = meta.Page[T]
+
+// PageObjectFromRequest parses a page request, filters and sorts objects by
+// their metadata, and returns the selected page. Continuation uses object UIDs;
+// an unavailable cursor returns ResourceExpired. Filtering and sorting reuse
+// the input slice's backing array.
+func PageObjectFromRequest[T any](req *http.Request, list []T) (Page[T], error) {
+	options, err := GetListOptions(req)
+	if err != nil {
+		return Page[T]{}, err
+	}
+	return PageObjectFromListOptions(list, options)
+}
+
+// PageObjectFromListOptions filters and sorts objects by their metadata and
+// applies trusted list options. T may expose metadata methods as either T or
+// *T. Limit takes precedence over a positive Size; fields outside the selected
+// pagination behavior are ignored. Continuation requires stable,
+// unique, non-empty object UIDs and returns ResourceExpired when its cursor is
+// absent from the current list. Filtering and sorting reuse the input slice's
+// backing array.
+func PageObjectFromListOptions[T any](list []T, opts ListOptions) (Page[T], error) {
+	getID := func(t T) string {
+		if item, ok := valueOrPointerAs[pageObjectStringUID](t); ok {
+			return item.GetUID()
 		}
-		if item, ok := any(&t).(interface{ GetName() string }); ok {
+		if item, ok := valueOrPointerAs[pageObjectKubernetesUID](t); ok {
+			return string(item.GetUID())
+		}
+		return ""
+	}
+	getname := func(t T) string {
+		if item, ok := valueOrPointerAs[pageObjectName](t); ok {
 			return item.GetName()
 		}
 		return ""
 	}
 	gettime := func(t T) time.Time {
-		if item, ok := any(t).(interface{ GetCreationTimestamp() metav1.Time }); ok {
-			return item.GetCreationTimestamp().Time
-		}
-		if item, ok := any(&t).(interface{ GetCreationTimestamp() metav1.Time }); ok {
+		if item, ok := valueOrPointerAs[pageObjectCreationTimestamp](t); ok {
 			return item.GetCreationTimestamp().Time
 		}
 		return time.Time{}
 	}
-	return PageFromListOptions(list, opts, getname, gettime)
+	return PageFromListOptions(list, opts, getID, getname, gettime)
 }
 
-// PageFromRequest auto pagination from user request on item name or time in list
-func PageFromRequest[T any](req *http.Request, list []T, namefunc func(item T) string, timefunc func(item T) time.Time) Page[T] {
-	return PageFromListOptions(list, GetListOptions(req), namefunc, timefunc)
+func valueOrPointerAs[I any, T any](value T) (I, bool) {
+	if result, ok := any(value).(I); ok {
+		return result, true
+	}
+	result, ok := any(&value).(I)
+	return result, ok
 }
 
-func PageFromListOptions[T any](list []T, opts ListOptions, namefunc func(item T) string, timefunc func(item T) time.Time) Page[T] {
-	return PageFrom(list, opts.Page, opts.Size, SearchNameFunc(opts.Search, namefunc), SortByFunc(opts.Sort, namefunc, timefunc))
+// PageFromRequest parses a page request, applies the supplied search and sort
+// projections, and returns the selected page. Continuation uses the stable,
+// unique, non-empty value returned by getID; an unavailable cursor returns
+// ResourceExpired. Filtering and sorting reuse the input slice's backing
+// array.
+func PageFromRequest[T any](
+	req *http.Request,
+	list []T,
+	getID func(item T) string,
+	getName func(item T) string,
+	getTime func(item T) time.Time,
+) (Page[T], error) {
+	options, err := GetListOptions(req)
+	if err != nil {
+		return Page[T]{}, err
+	}
+	return PageFromListOptions(list, options, getID, getName, getTime)
 }
 
-// PageFrom auto pagination from list with page, size, pickfun and sortfun
-// if size is 0, return all items(no pagination)
+// PageFromListOptions applies search, sort, and trusted pagination options.
+// Limit takes precedence over a positive Size; fields outside the selected
+// pagination behavior are ignored. Continuation requires getID
+// to return stable, unique, non-empty values and returns ResourceExpired when
+// its cursor is absent from the current list. Filtering and sorting reuse the
+// input slice's backing array.
+func PageFromListOptions[T any](
+	list []T,
+	opts ListOptions,
+	getID func(item T) string,
+	getName func(item T) string,
+	getTime func(item T) time.Time,
+) (Page[T], error) {
+	list = filteredAndSortedList(list, SearchNameFunc(opts.Search, getName), SortByFunc(opts.Sort, getName, getTime))
+	if opts.Limit > 0 {
+		return continuationPageFromPreparedList(list, opts.Continue, opts.Limit, getID)
+	}
+	if opts.Size > 0 {
+		return PageFromPreparedList(list, opts.Page, opts.Size), nil
+	}
+	total := len(list)
+	return Page[T]{Total: &total, Items: list}, nil
+}
+
+// PageFrom filters, sorts, and applies trusted page/size pagination. Page
+// values below one are treated as one. Size values below zero are treated as
+// zero, and a zero size returns all items without pagination. Filtering and
+// sorting reuse the input slice's backing array.
 func PageFrom[T any](list []T, page, size int, pickfun func(item T) bool, sortfun func(a, b T) int) Page[T] {
-	// filter
+	list = filteredAndSortedList(list, pickfun, sortfun)
+	return PageFromPreparedList(list, page, size)
+}
+
+func filteredAndSortedList[T any](list []T, pickfun func(item T) bool, sortfun func(a, b T) int) []T {
 	if pickfun != nil {
-		datas := []T{}
+		// Compact matching items in place without clearing the unused tail, so
+		// callers retaining the original slice length do not observe zeroed items.
+		filtered := list[:0]
 		for _, item := range list {
 			if pickfun(item) {
-				datas = append(datas, item)
+				filtered = append(filtered, item)
 			}
 		}
-		list = datas
+		list = filtered
 	}
 	// sort
 	if sortfun != nil {
 		slices.SortFunc(list, sortfun)
 	}
-	// page
-	if size == 0 {
-		return Page[T]{Total: len(list), Items: list}
-	}
-	if page < 1 {
-		page = 1
-	}
+	return list
+}
+
+// PageFromPreparedList applies trusted page/size pagination to an already
+// filtered and sorted list. Page values below one are treated as one. Size
+// values below zero are treated as zero, and zero returns all items.
+func PageFromPreparedList[T any](list []T, page, size int) Page[T] {
 	total := len(list)
-	startIdx := (page - 1) * size
-	endIdx := startIdx + size
-	if startIdx > total {
-		startIdx = 0
-		endIdx = 0
+	page = max(page, 1)
+	size = max(size, 0)
+	if size == 0 {
+		return Page[T]{Total: &total, Items: list}
 	}
-	if endIdx > total {
-		endIdx = total
+	pageIndex := page - 1
+	startIdx := total
+	if pageIndex <= total/size {
+		startIdx = pageIndex * size
 	}
+	endIdx := startIdx + min(size, total-startIdx)
 	list = list[startIdx:endIdx]
 	return Page[T]{
-		Total: total,
+		Total: &total,
 		Items: list,
 		Page:  page,
 		Size:  size,
 	}
 }
 
+func continuationPageFromPreparedList[T any](list []T, continueToken string, limit int, getID func(item T) string) (Page[T], error) {
+	if getID == nil {
+		return Page[T]{}, errors.NewUnsupported("continuation pagination is not supported for this resource")
+	}
+	start := 0
+	if continueToken != "" {
+		start = -1
+		for index, item := range list {
+			if getID(item) == continueToken {
+				start = index + 1
+				break
+			}
+		}
+		if start < 0 {
+			return Page[T]{}, errors.NewResourceExpired("", "continue token is no longer present")
+		}
+	}
+	end := start + min(limit, len(list)-start)
+	items := list[start:end]
+	nextToken := ""
+	if end < len(list) {
+		nextToken = getID(items[len(items)-1])
+		if nextToken == "" {
+			return Page[T]{}, errors.NewUnsupported("continuation pagination is not supported for this resource")
+		}
+	}
+	return Page[T]{Items: items, Continue: nextToken, Limit: limit}, nil
+}
+
+// SearchNameFunc returns a case-sensitive name predicate for search.
 func SearchNameFunc[T any](search string, getname func(T) string) func(T) bool {
 	if getname == nil || search == "" {
 		return nil
@@ -117,6 +236,8 @@ func SearchNameFunc[T any](search string, getname func(T) string) func(T) bool {
 	}
 }
 
+// SortByFunc returns a comparator for the supported name and creation-time
+// sort expressions.
 func SortByFunc[T any](by string, getname func(T) string, gettime func(T) time.Time) func(a, b T) int {
 	switch by {
 	case "createTime", "createTimeAsc", "time":

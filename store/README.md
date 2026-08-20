@@ -40,10 +40,24 @@ Scope 是有序层级。普通读写只作用于完整的当前 Scope；只有�
 使用 `ListOptionsFromMeta` 将公开的 `meta.ListOptions` 转成
 `[]store.ListOption`，并直接追加服务端约束后传给 `Store.List`。标准
 Store option 是实现 `ApplyToXxx` 的具体值；不得传入捕获闭包，也不得依赖
-完整 Options 替换的特殊顺序。HTTP 列表边界在转换前使用
-`meta.DefaultSize` 和 `meta.DefaultSort` 补充请求默认值。这些 option 只应用
-调用方显式声明的边界策略；Store 自身不提供默认分页 option，也不选择 Page
-或 Continue 模式。
+完整 Options 替换的特殊顺序。分页字段遵循 [meta 契约](../meta/README.md#列表与分页)
+并平铺在请求中。HTTP 列表 seam 可在转换前使用
+`meta.DefaultPage`、
+`meta.DefaultContinuation` 和 `meta.DefaultSort` 补充请求默认值。这些 option 只在
+各自字段为零时写入自己的字段；`DefaultPage` 和 `DefaultContinuation` 遇到另一组
+非空意图字段时都不应用，避免默认行为覆盖显式请求。query 先解析，option 随后按
+声明顺序应用。未配置默认值且 `Limit`、`Size` 均不为正数时，由拥有请求的服务
+决定不分页行为。
+
+`ApplyListOptions` 只按声明顺序展开 option，不返回错误。Store 实现以 `Limit>0`
+优先选择 continuation；否则
+`Size>0` 选择 page，并把 `Page<1` 当作第一页；否则执行不分页查询。未被选中模式
+的字段静默忽略。
+实现不支持选中的分页方式时仍返回 Unsupported。
+
+响应同样平铺字段：页码分页只返回 `page/size/total`，continuation 分页保留
+`limit` 并在存在下一批时返回 `continue`，不分页结果只返回 `total`。不属于当前
+模式的字段必须省略；continuation 响应省略或返回空 `continue` 都表示遍历结束。
 
 跨操作共享的选项使用同一个领域入口，例如 `WithSubScopes`、
 `WithResourceVersion`、`WithFieldRequirements` 和 `WithTTL`；具体 option 类型

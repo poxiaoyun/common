@@ -66,7 +66,25 @@ resource 和 scope 元数据。
 
 List 在未指定排序时不保证顺序。所有实现必须支持 `id+` 和 `id-`。其他排序字段必须来自 ResourceSchema 中某个 Index 的字段前缀；复合排序必须全部升序或全部降序。Search 是大小写不敏感的子串匹配，未指定 SearchFields 时搜索 id 和 name，多字段采用任一字段匹配；显式 SearchFields 覆盖默认字段。
 
-`Page>0` 且 `Size>0` 使用页码分页。`Page=0` 且 `Size>0` 或 Continue 非空时使用 continuation 分页；Continue 是实现方生成的不透明 token。Page、Continue 和 ContinueWithSort 分别声明能力。Page、Size 和 Continue 都为空时是不分页查询。
+List 使用平铺的 `Page`、`Size`、`Continue` 和 `Limit` 表达分页请求，不提供
+mode 字段，也不复用一个字段表达两种分页含义。字段含义以
+[meta 分页契约](../meta/DESIGN.md#分页请求契约)为准。请求解析和 Store 执行使用相同的
+分页选择优先级，不把混合、不完整或负值字段定义为非法组合。
+
+Store 实现按固定优先级选择行为：`Limit>0` 使用 continuation，`Continue` 为空
+表示首批；否则 `Size>0` 使用 page，`Page<1` 按第一页处理；否则不分页并返回
+全部匹配对象。选中一种行为后静默忽略另一组及不完整字段。Store 自身不选择默认
+分页方式；公开请求没有分页参数时，拥有该请求契约的服务可以在调用 Store 前选择
+页码分页、continuation 分页或不分页。Page、Continue 和 ContinueWithSort 分别
+声明能力；实现不支持选中的分页方式时返回 Unsupported。
+
+List 响应同样平铺分页字段，并只序列化当前方式支持的元数据。页码分页返回
+`Page`、`Size` 和精确的 `Total`，省略 `Continue` 和 `Limit`；continuation
+分页返回有效 `Limit` 以及存在下一批时的 `Continue`，省略 `Page`、`Size` 和
+`Total`；不分页返回精确的 `Total`，省略四个分页字段。空的 `Continue` 表示
+continuation 遍历结束，`Limit` 仍保留，因此客户端不需要 mode 字段推断当前
+响应方式。`Total=0` 是页码或不分页查询的有效结果，因此 Total 必须能区分零值
+与不支持。Continue 是实现生成的不透明 token。
 
 Store 操作使用 variadic option interface。每个 option 是实现
 `ApplyToXxx(*XxxOptions)` 的具体值；标准 option 不得使用捕获闭包。
@@ -80,12 +98,13 @@ option 类型实现所需的多个 `ApplyToXxx`。Option 类型和构造函数�
 命名，不重复目标操作，例如 `WithID`、`WithTimeout` 和 `WithPreconditions`。
 
 `ApplyXxxOptions` 是 option slice 到最终 `XxxOptions` 的唯一展开入口。
-各 Store adapter 调用该入口，不重复实现 option 循环。每个入口在同一函数内
-对空 option slice 直接返回零值，避免 interface 展开使 accumulator 逃逸；
-非空 slice 仍在该函数中线性展开，不拆出第二套 helper。
+各 Store adapter 调用该入口，不重复实现 option 循环。`ApplyListOptions` 只负责
+展开可信 option，不验证分页、不返回错误；adapter 按上述固定优先级执行。每个
+入口在同一函数内对空 option slice 直接返回零值，避免 interface 展开使
+accumulator 逃逸；非空 slice 仍在该函数中线性展开，不拆出第二套 helper。
 
 `ListOptionsFromMeta` 是公开列表契约到 `[]ListOption` 的唯一转换入口。
-它将 Page、Size、Search、Sort、Continue 和已解析 selector 表示为一个只含
+它将 Page、Size、Continue、Limit、Search、Sort 和已解析 selector 表示为一个只含
 公开列表字段的具体 option，再追加调用方 option。它不解析
 Store HTTP 协议字段，也不选择默认分页模式。边界默认值在转换前通过
 `meta.ListOption` 应用，使请求默认值留在公开请求契约中；业务和协议约束

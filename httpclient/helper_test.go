@@ -56,6 +56,49 @@ func TestObjectToQuery(t *testing.T) {
 	}
 }
 
+func TestListOptionsToQueryPagination(t *testing.T) {
+	tests := []struct {
+		name    string
+		options meta.ListOptions
+		want    url.Values
+	}{
+		{name: "mode neutral", want: url.Values{}},
+		{
+			name:    "page",
+			options: meta.ListOptions{Page: 2, Size: 20},
+			want:    url.Values{"page": []string{"2"}, "size": []string{"20"}},
+		},
+		{
+			name:    "non-positive page and unrelated continuation pass through",
+			options: meta.ListOptions{Page: -2, Size: 20, Continue: "ignored"},
+			want:    url.Values{"continue": []string{"ignored"}, "page": []string{"-2"}, "size": []string{"20"}},
+		},
+		{
+			name:    "first continuation batch",
+			options: meta.ListOptions{Limit: 20},
+			want:    url.Values{"limit": []string{"20"}},
+		},
+		{
+			name:    "mixed pagination passes through",
+			options: meta.ListOptions{Page: 2, Size: 10, Continue: "next", Limit: 20},
+			want:    url.Values{"continue": []string{"next"}, "limit": []string{"20"}, "page": []string{"2"}, "size": []string{"10"}},
+		},
+		{
+			name:    "negative batch values pass through",
+			options: meta.ListOptions{Size: -10, Limit: -20},
+			want:    url.Values{"limit": []string{"-20"}, "size": []string{"-10"}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := httpclient.ListOptionsToQuery(test.options)
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("ListOptionsToQuery() = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
 type roundTripText string
 
 func (v *roundTripText) MarshalText() ([]byte, error) {
@@ -101,7 +144,7 @@ type roundTripOptions struct {
 func TestObjectToQueryRoundTrip(t *testing.T) {
 	published := false
 	input := roundTripOptions{
-		ListOptions: meta.ListOptions{Size: 20, Continue: "next-token"},
+		ListOptions: meta.ListOptions{Continue: "next-token", Limit: 20},
 		Filter:      &roundTripFilter{Name: "demo"},
 		Labels:      []int{1, 2},
 		Published:   &published,

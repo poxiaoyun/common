@@ -54,7 +54,7 @@ type queryObjectOptions struct {
 func TestQueryObject(t *testing.T) {
 	request := httptest.NewRequest(
 		"GET",
-		"/clusters?page=2&size=25&continue=next-token&mode=Kubernetes&published=false&count=3"+
+		"/clusters?page=2&size=25&mode=Kubernetes&published=false&count=3"+
 			"&label=one&label=two&last=first&last=second&fallback=json-name&custom=mixed"+
 			"&filter.name=demo&filter.enabled=true"+
 			"&payload=%7B%22name%22%3A%22json%22%7D&raw=%7B%22raw%22%3Atrue%7D"+
@@ -66,7 +66,7 @@ func TestQueryObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.Page != 2 || options.Size != 25 || options.Continue != "next-token" {
+	if options.Page != 2 || options.Size != 25 {
 		t.Fatalf("unexpected embedded list options: %#v", options.ListOptions)
 	}
 	if options.Mode != "Kubernetes" {

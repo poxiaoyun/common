@@ -68,8 +68,8 @@ func TestListContinue(t *testing.T) {
 	for page := 0; ; page++ {
 		list := &store.List[TestObject]{}
 		if err := etcdStore.List(ctx, list,
-			store.WithPageSize(0, 3),
-			store.WithContinue(continueToken),
+			store.WithPage(99, 1),
+			store.WithContinuation(continueToken, 3),
 		); err != nil {
 			t.Fatalf("failed to list page %d: %v", page, err)
 		}
@@ -79,8 +79,11 @@ func TestListContinue(t *testing.T) {
 		if len(list.Items) > 3 {
 			t.Fatalf("page %d returned %d items, want at most 3", page, len(list.Items))
 		}
-		if list.Total != 0 {
-			t.Fatalf("page %d total is %d, want 0 for continuation pagination", page, list.Total)
+		if list.Total != nil {
+			t.Fatalf("page %d total is %v, want omitted for continuation pagination", page, list.Total)
+		}
+		if list.Page != 0 || list.Size != 0 || list.Limit != 3 {
+			t.Fatalf("page %d pagination metadata = page %d, size %d, limit %d", page, list.Page, list.Size, list.Limit)
 		}
 		for _, item := range list.Items {
 			if _, exists := got[item.ID]; exists {
@@ -118,6 +121,15 @@ func TestListContinue(t *testing.T) {
 	}
 }
 
+func TestListContinuationRejectsSort(t *testing.T) {
+	etcdStore := SetupEtcdTestEtcdStore(t)
+	list := &store.List[TestObject]{}
+	err := etcdStore.List(t.Context(), list, store.WithContinuation("", 1), store.WithSort("id+"))
+	if !errors.IsUnsupported(err) {
+		t.Fatalf("List() error = %v, want Unsupported", err)
+	}
+}
+
 func TestListPagePagination(t *testing.T) {
 	ctx := context.Background()
 	etcdStore := SetupEtcdTestEtcdStore(t)
@@ -135,22 +147,24 @@ func TestListPagePagination(t *testing.T) {
 	}
 
 	first := &store.List[TestObject]{}
-	if err := etcdStore.List(ctx, first, store.WithPageSize(1, 2)); err != nil {
+	if err := etcdStore.List(ctx, first, store.WithPage(0, 2)); err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Items) != 2 || first.Total != 5 || first.Continue != "" {
+	if len(first.Items) != 2 || first.Total == nil || *first.Total != 5 ||
+		first.Page != 1 || first.Size != 2 || first.Continue != "" || first.Limit != 0 {
 		t.Fatalf("first page = %#v", first)
 	}
 
 	second := &store.List[TestObject]{}
-	if err := etcdStore.List(ctx, second, store.WithPageSize(2, 2)); err != nil {
+	if err := etcdStore.List(ctx, second, store.WithPage(2, 2)); err != nil {
 		t.Fatal(err)
 	}
 	if len(second.Items) != 2 ||
 		second.Items[0].ID != "legacy-02" ||
 		second.Items[1].ID != "legacy-03" ||
-		second.Total != 5 ||
-		second.Continue != "" {
+		second.Total == nil || *second.Total != 5 ||
+		second.Page != 2 || second.Size != 2 ||
+		second.Continue != "" || second.Limit != 0 {
 		t.Fatalf("second page = %#v", second)
 	}
 }
@@ -182,8 +196,11 @@ func TestListWithoutSizeReturnsAllItems(t *testing.T) {
 	if list.Continue != "" {
 		t.Fatalf("unpaginated list returned continue token %q", list.Continue)
 	}
-	if list.Total != objectCount {
-		t.Fatalf("unpaginated list total is %d, want %d", list.Total, objectCount)
+	if list.Page != 0 || list.Size != 0 || list.Limit != 0 {
+		t.Fatalf("unpaginated list returned pagination metadata: page %d, size %d, limit %d", list.Page, list.Size, list.Limit)
+	}
+	if list.Total == nil || *list.Total != objectCount {
+		t.Fatalf("unpaginated list total is %v, want %d", list.Total, objectCount)
 	}
 }
 

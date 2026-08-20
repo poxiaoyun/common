@@ -12,9 +12,10 @@ import (
 type metaListOption struct {
 	Page              int
 	Size              int
+	Continue          string
+	Limit             int
 	Search            string
 	Sort              string
-	Continue          string
 	LabelRequirements Requirements
 	FieldRequirements Requirements
 }
@@ -25,6 +26,7 @@ func (option metaListOption) ApplyToList(options *ListOptions) {
 	options.Search = option.Search
 	options.Sort = option.Sort
 	options.Continue = option.Continue
+	options.Limit = option.Limit
 	options.LabelRequirements = append(options.LabelRequirements, option.LabelRequirements...)
 	options.FieldRequirements = append(options.FieldRequirements, option.FieldRequirements...)
 }
@@ -38,6 +40,7 @@ func ListOptionsFromMeta(options meta.ListOptions, modifiers ...ListOption) ([]L
 		Search:   options.Search,
 		Sort:     options.Sort,
 		Continue: options.Continue,
+		Limit:    options.Limit,
 	}
 	if options.LabelSelector != "" {
 		selector, err := labels.Parse(options.LabelSelector)

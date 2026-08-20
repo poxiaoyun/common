@@ -79,12 +79,36 @@ Authentication webhooks and trusted request-header propagation carry the complet
 
 ## List pagination seam
 
-`meta.ListOptions` and `meta.Page` are the shared list transport contract.
-`size` is the only batch-length term. `continue` is opaque and takes precedence
-over `page`; a positive page selects page pagination. A request with neither is
-mode-neutral, so the owning service selects its default without changing the
-shared parser. Collection `resourceVersion` is separate from item versions and
-is omitted when the backend cannot express it as the shared integer contract.
-`GetListOptions` accepts boundary-owned defaults for size and sort. Defaults
-are applied before request fields, so an explicitly provided zero size or empty
-sort remains explicit. They never modify Page or Continue.
+`meta.ListOptions` and `meta.Page` are the shared list transport contract owned
+by [meta](../../meta/DESIGN.md#分页请求契约).
+The contract is flat and has no mode field. A positive `limit` selects
+continuation pagination, where `continue` is an optional opaque token for later
+batches. Otherwise a positive `size` selects page pagination and `page` values
+below one normalize to one. When neither is positive, the owning service uses
+its unpaginated behavior. Fields outside the selected behavior are ignored.
+`GetListOptions` accepts caller-owned page, continuation, and sort options. Each
+`meta.Default*Option` only writes its owned fields. `DefaultPage` and
+`DefaultContinuation` observe the other behavior's non-empty intent fields so
+neither default can replace an explicit request. `GetListOptions`
+parses query values first and then applies options in declaration order,
+allowing Default options to fill zero values. Responses omit fields
+belonging to the other pagination behavior. A continuation response retains
+`limit`; an omitted or empty `continue` means traversal is complete.
+Collection `resourceVersion` is separate from item versions and is omitted when
+the backend cannot express it as the shared integer contract.
+
+Request-facing and list-options execution helpers select continuation when
+`Limit>0`, otherwise page pagination when `Size` is positive, otherwise an
+unpaginated result. Fields outside the selected behavior are ignored. Page
+values below one normalize to one. In-memory continuation
+applies filtering and sorting first, then uses the stable, unique, non-empty
+value returned by the independent `getID` projection as the opaque cursor for
+the last item in the batch. The name projection remains responsible only for
+search and ordering. Object helpers use the `GetUID()` value exposed by Store
+or Kubernetes objects as this identity. A
+missing cursor returns ResourceExpired. This helper traverses the current
+materialized list and does not provide a cross-request snapshot guarantee.
+
+`PageFromPreparedList` is the page-only execution seam for callers that have
+already completed filtering and sorting. It applies the same page and size
+normalization without repeating collection preparation.
