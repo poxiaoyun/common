@@ -48,7 +48,6 @@ func GetAttrsFunc(indexfields []string) func(obj runtime.Object) (labels.Set, fi
 		for _, fname := range indexfields {
 			val, ok := getFieldIndex(uns, strings.Split(fname, ".")...)
 			if !ok {
-				sFields[fname] = "" // make sure all index fields are present in field selector
 				continue
 			}
 			sFields[fname] = val

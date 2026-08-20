@@ -192,6 +192,14 @@ func TestEtcdCacherStore(t *testing.T) {
 		assertListIDs(t, ctx, storage, []string{"root-blue", "root-red"})
 		assertListIDs(t, ctx, orgA, []string{"scope-blue", "scope-red"})
 		assertListIDs(t, ctx, storage, []string{"root-blue", "root-red", "scope-blue", "scope-red"}, store.WithSubScopes())
+		assertListIDs(t, ctx, storage, []string{"scope-blue", "scope-red"},
+			store.WithSubScopes(),
+			store.WithFieldRequirements(store.NewRequirement("organization", store.Exists)),
+		)
+		assertListIDs(t, ctx, storage, []string{"root-blue", "root-red"},
+			store.WithSubScopes(),
+			store.WithFieldRequirements(store.NewRequirement("organization", store.DoesNotExist)),
+		)
 		assertListIDs(t, ctx, storage, []string{"root-blue"}, store.WithLabelRequirementsFromSet(map[string]string{"team": "blue"}))
 		assertListIDs(t, ctx, storage, []string{"root-blue"}, store.WithFieldRequirements(store.RequirementEqual("enabled", true)))
 		assertListIDs(t, ctx, storage, []string{"root-blue"}, store.WithSearch("blue"), store.WithSearchFields("name"))
@@ -356,7 +364,10 @@ func newMyObjectSchema(t *testing.T) *store.Schema {
 	t.Helper()
 	schema := store.NewSchema()
 	if err := schema.Register(&MyObject{}, store.ResourceSchema{
-		Indexes: []store.Index{{Name: "enabled", Fields: []string{"enabled"}}},
+		Indexes: []store.Index{
+			{Name: "enabled", Fields: []string{"enabled"}},
+			{Name: "organization", Fields: []string{"organization"}},
+		},
 	}); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}

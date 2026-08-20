@@ -108,12 +108,66 @@ func requirementsToFieldsSelector(reqs store.Requirements) (fields.Selector, err
 			selectors = append(selectors, OneTermInSelector(req.Key, store.AnyToStrings(req.Values)))
 		case store.NotIn:
 			selectors = append(selectors, OneTermNotInSelector(req.Key, store.AnyToStrings(req.Values)))
+		case store.Exists:
+			selectors = append(selectors, fieldPresenceTerm{field: req.Key, exists: true})
+		case store.DoesNotExist:
+			selectors = append(selectors, fieldPresenceTerm{field: req.Key})
 		default:
 			return nil, fmt.Errorf("unsupported field selector operator: %s", req.Operator)
 		}
 	}
 	return fields.AndSelectors(selectors...), nil
 }
+
+type fieldPresenceTerm struct {
+	field  string
+	exists bool
+}
+
+func (p fieldPresenceTerm) DeepCopySelector() fields.Selector {
+	return p
+}
+
+func (p fieldPresenceTerm) Empty() bool {
+	return false
+}
+
+func (p fieldPresenceTerm) Matches(values fields.Fields) bool {
+	return values.Has(p.field) == p.exists
+}
+
+func (p fieldPresenceTerm) Requirements() fields.Requirements {
+	operator := selection.DoesNotExist
+	if p.exists {
+		operator = selection.Exists
+	}
+	return fields.Requirements{{Field: p.field, Operator: operator}}
+}
+
+func (p fieldPresenceTerm) RequiresExactMatch(string) (string, bool) {
+	return "", false
+}
+
+func (p fieldPresenceTerm) String() string {
+	if p.exists {
+		return p.field
+	}
+	return "!" + p.field
+}
+
+func (p fieldPresenceTerm) Transform(fn fields.TransformFunc) (fields.Selector, error) {
+	field, _, err := fn(p.field, "")
+	if err != nil {
+		return nil, err
+	}
+	if field == "" {
+		return fields.Everything(), nil
+	}
+	p.field = field
+	return p, nil
+}
+
+var _ fields.Selector = fieldPresenceTerm{}
 
 func OneTermInSelector(key string, values []string) fields.Selector {
 	return inTerm{field: key, values: values}
