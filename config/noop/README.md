@@ -1,8 +1,9 @@
 # noop
 
 `config/noop` implements the disabled state of `config.DynamicConfig`. Get
-always reports a missing Configuration, Watch reports an initial missing state
-and then waits for cancellation, and mutation methods return Unsupported.
+returns a Version 0 empty Configuration, ListKeys returns an empty list, Watch
+sends the same empty snapshot and then waits for cancellation, and mutation
+methods return Unsupported.
 
 ```go
 client := noop.New()

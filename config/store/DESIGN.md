@@ -1,11 +1,13 @@
 # Store adapter design
 
 This package owns the persistence implementation of `config.DynamicConfig`.
-It registers `config.Configuration`, selects the namespace Store scope, maps
-write preconditions to Create, Update or Patch, and hides Store bookmarks and
-watch checkpoints behind the contract's Initial event.
+It registers the exported `StoredConfiguration` Store object, selects the
+namespace Store scope, maps version preconditions to Create, Update or Patch,
+and converts Store metadata to the root contract's Name and Version.
 
-`config.Configuration` is used directly as the Store object. The adapter does
-not introduce a persistence-only duplicate and does not override Store resource
-name inference. JSON Merge Patch is wrapped at the `value` field; JSON Patch
-paths are rooted below `/value`, so metadata cannot be patched.
+The persistence type embeds `store.ObjectMeta`; `config.Configuration` does
+not. It declares the stable resource name `configurations`, preserving existing
+storage independently of its Go type name. Missing reads and deletes become an
+empty Version 0 snapshot. Patch uses an empty object when no row exists and
+atomically creates or changes the persisted value according to the requested
+version.

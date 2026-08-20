@@ -4,17 +4,20 @@ import (
 	"net/http"
 	"testing"
 
-	"xiaoshiai.cn/common/config"
 	"xiaoshiai.cn/common/config/noop"
 	commonerrors "xiaoshiai.cn/common/errors"
 )
 
 func TestDynamicConfigRepresentsDisabledConfigurationCenter(t *testing.T) {
 	client := noop.New()
-	target := map[string]any{"unchanged": true}
+	target := map[string]any{"old": true}
 	configuration, err := client.Get(t.Context(), "iam", "server", &target)
-	if err != nil || configuration != nil || target["unchanged"] != true {
+	if err != nil || configuration.Name != "server" || configuration.Version != 0 || len(configuration.Value) != 0 || len(target) != 0 {
 		t.Fatalf("Get() = %#v, target = %#v, error = %v", configuration, target, err)
+	}
+	keys, err := client.ListKeys(t.Context(), "iam")
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("ListKeys() = %#v, error = %v", keys, err)
 	}
 	if _, err := client.Set(t.Context(), "iam", "server", map[string]any{}); !commonerrors.IsCode(err, http.StatusNotImplemented) {
 		t.Fatalf("Set() error = %v, want Unsupported", err)
@@ -27,8 +30,9 @@ func TestDynamicConfigRepresentsDisabledConfigurationCenter(t *testing.T) {
 	defer watcher.Stop()
 	select {
 	case event := <-watcher.Events():
-		if event.Type != config.EventInitial || event.Configuration != nil || event.Error != nil {
-			t.Fatalf("initial event = %#v", event)
+		current := event.Configuration
+		if event.Error != nil || current.Name != "server" || current.Version != 0 || len(current.Value) != 0 {
+			t.Fatalf("initial snapshot = %#v", event)
 		}
 	case <-t.Context().Done():
 		t.Fatal("timed out waiting for initial event")

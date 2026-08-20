@@ -19,7 +19,17 @@ type serverConfiguration struct {
 	Nested   map[string]int `json:"nested,omitempty"`
 }
 
-func TestDynamicConfigSerializesObjectsAcrossNamespaces(t *testing.T) {
+func TestStoredConfigurationUsesConfigurationsResource(t *testing.T) {
+	resource, err := store.GetResource(&configstore.StoredConfiguration{})
+	if err != nil {
+		t.Fatalf("GetResource() error = %v", err)
+	}
+	if resource != "configurations" {
+		t.Fatalf("GetResource() = %q, want configurations", resource)
+	}
+}
+
+func TestDynamicConfigStoresObjectsAndReturnsEmptyMissingValues(t *testing.T) {
 	client := configstore.New(newConfigurationStore(t))
 	want := serverConfiguration{Listen: ":8080", Features: []string{"audit"}}
 
@@ -27,7 +37,7 @@ func TestDynamicConfigSerializesObjectsAcrossNamespaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Set() error = %v", err)
 	}
-	if created.ID != "server" || created.ResourceVersion <= 0 || !json.Valid(created.Value) {
+	if created.Name != "server" || created.Version <= 0 || created.Value["listen"] != ":8080" {
 		t.Fatalf("Set() = %#v", created)
 	}
 
@@ -39,66 +49,63 @@ func TestDynamicConfigSerializesObjectsAcrossNamespaces(t *testing.T) {
 	if got.Listen != want.Listen || len(got.Features) != 1 || got.Features[0] != "audit" {
 		t.Fatalf("Get() object = %#v, want %#v", got, want)
 	}
-	if loaded.ResourceVersion != created.ResourceVersion {
-		t.Fatalf("Get() Configuration = %#v, want version %d", loaded, created.ResourceVersion)
+	if loaded.Version != created.Version {
+		t.Fatalf("Get() Configuration = %#v, want version %d", loaded, created.Version)
 	}
 
-	missingTarget := serverConfiguration{Listen: "unchanged"}
+	missingTarget := serverConfiguration{Listen: "old", Features: []string{"old"}}
 	missing, err := client.Get(t.Context(), "cloud", "server", &missingTarget)
 	if err != nil {
 		t.Fatalf("Get(other namespace) error = %v", err)
 	}
-	if missing != nil || missingTarget.Listen != "unchanged" {
+	if missing.Name != "server" || missing.Version != 0 || len(missing.Value) != 0 ||
+		missingTarget.Listen != "" || missingTarget.Features != nil || missingTarget.Nested != nil {
 		t.Fatalf("Get(other namespace) = %#v, object = %#v", missing, missingTarget)
 	}
 }
 
-func TestDynamicConfigDistinguishesMissingAndJSONNull(t *testing.T) {
+func TestDynamicConfigRejectsNonObjectValues(t *testing.T) {
 	client := configstore.New(newConfigurationStore(t))
-	if _, err := client.Set(t.Context(), "iam", "optional", nil); err != nil {
-		t.Fatalf("Set(null) error = %v", err)
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{name: "null", value: nil},
+		{name: "array", value: []string{"one"}},
+		{name: "scalar", value: true},
+		{name: "invalid JSON", value: json.RawMessage(`{"listen":`)},
 	}
-	value := map[string]any{"unchanged": true}
-	configuration, err := client.Get(t.Context(), "iam", "optional", &value)
-	if err != nil || configuration == nil || value != nil {
-		t.Fatalf("Get(null) = %#v, value = %#v, error = %v", configuration, value, err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := client.Set(t.Context(), "iam", "server", test.value); !commonerrors.IsCode(err, http.StatusBadRequest) {
+				t.Fatalf("Set() error = %v, want BadRequest", err)
+			}
+		})
 	}
 }
 
-func TestDynamicConfigRejectsInvalidJSONObjects(t *testing.T) {
+func TestDynamicConfigHonorsVersionPreconditions(t *testing.T) {
 	client := configstore.New(newConfigurationStore(t))
-	if _, err := client.Set(t.Context(), "iam", "server", json.RawMessage(`{"listen":`)); !commonerrors.IsCode(err, http.StatusBadRequest) {
-		t.Fatalf("Set(invalid JSON) error = %v, want BadRequest", err)
-	}
-}
-
-func TestDynamicConfigHonorsWritePreconditions(t *testing.T) {
-	client := configstore.New(newConfigurationStore(t))
-	created, err := client.Set(t.Context(), "iam", "server", map[string]int{"revision": 1}, config.IfAbsent())
+	created, err := client.Set(t.Context(), "iam", "server", map[string]int{"revision": 1}, config.IfVersion(0))
 	if err != nil {
-		t.Fatalf("Set(IfAbsent) error = %v", err)
+		t.Fatalf("Set(version 0) error = %v", err)
 	}
-	if _, err := client.Set(t.Context(), "iam", "server", map[string]int{"revision": 2}, config.IfAbsent()); !commonerrors.IsAlreadyExists(err) {
-		t.Fatalf("Set(second IfAbsent) error = %v, want AlreadyExists", err)
+	if _, err := client.Set(t.Context(), "iam", "server", map[string]int{"revision": 2}, config.IfVersion(0)); !commonerrors.IsConflict(err) {
+		t.Fatalf("Set(second version 0) error = %v, want Conflict", err)
 	}
-
-	stale := created.ResourceVersion + 1
-	if _, err := client.Set(t.Context(), "iam", "server", map[string]int{"revision": 2}, config.IfVersion(stale)); !commonerrors.IsConflict(err) {
+	if _, err := client.Set(t.Context(), "iam", "server", map[string]int{"revision": 2}, config.IfVersion(created.Version+1)); !commonerrors.IsConflict(err) {
 		t.Fatalf("Set(stale version) error = %v, want Conflict", err)
 	}
-	updated, err := client.Set(t.Context(), "iam", "server", map[string]int{"revision": 2}, config.IfVersion(created.ResourceVersion))
+	updated, err := client.Set(t.Context(), "iam", "server", map[string]int{"revision": 2}, config.IfVersion(created.Version))
 	if err != nil {
 		t.Fatalf("Set(current version) error = %v", err)
 	}
-	if updated.ResourceVersion <= created.ResourceVersion {
+	if updated.Version <= created.Version {
 		t.Fatalf("Set(current version) = %#v", updated)
-	}
-	if _, err := client.Set(t.Context(), "iam", "server", true, config.IfAbsent(), config.IfVersion(updated.ResourceVersion)); !commonerrors.IsCode(err, http.StatusBadRequest) {
-		t.Fatalf("Set(conflicting options) error = %v, want BadRequest", err)
 	}
 }
 
-func TestDynamicConfigPatchesAndOptionallyDecodesResult(t *testing.T) {
+func TestDynamicConfigPatchesExistingAndMissingObjects(t *testing.T) {
 	client := configstore.New(newConfigurationStore(t))
 	created, err := client.Set(t.Context(), "iam", "server", &serverConfiguration{
 		Listen: ":8080", Features: []string{"first"}, Nested: map[string]int{"a": 1},
@@ -115,34 +122,73 @@ func TestDynamicConfigPatchesAndOptionallyDecodesResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Patch(merge) error = %v", err)
 	}
-	if merged.ID != created.ID || mergedObject.Nested["a"] != 1 || mergedObject.Nested["b"] != 2 {
+	if merged.Name != created.Name || mergedObject.Nested["a"] != 1 || mergedObject.Nested["b"] != 2 {
 		t.Fatalf("Patch(merge) = %#v, object = %#v", merged, mergedObject)
 	}
 
 	patched, err := client.Patch(t.Context(), "iam", "server", config.Patch{
 		Type: config.JSONPatch,
 		Data: json.RawMessage(`[{"op":"replace","path":"/features/0","value":"updated"}]`),
-	}, nil, config.IfVersion(merged.ResourceVersion))
+	}, nil, config.IfVersion(merged.Version))
 	if err != nil {
 		t.Fatalf("Patch(JSON) error = %v", err)
 	}
-	if patched.ResourceVersion <= merged.ResourceVersion {
+	if patched.Version <= merged.Version {
 		t.Fatalf("Patch(JSON) = %#v", patched)
 	}
 	if _, err := client.Patch(t.Context(), "iam", "server", config.Patch{
 		Type: config.MergePatch,
 		Data: json.RawMessage(`{"stale":true}`),
-	}, nil, config.IfVersion(merged.ResourceVersion)); !commonerrors.IsConflict(err) {
+	}, nil, config.IfVersion(merged.Version)); !commonerrors.IsConflict(err) {
 		t.Fatalf("Patch(stale version) error = %v, want Conflict", err)
 	}
-	if _, err := client.Patch(t.Context(), "iam", "server", config.Patch{
-		Type: config.MergePatch, Data: json.RawMessage(`{}`),
-	}, nil, config.IfAbsent()); !commonerrors.IsCode(err, http.StatusBadRequest) {
-		t.Fatalf("Patch(IfAbsent) error = %v, want BadRequest", err)
+
+	createdByPatch, err := client.Patch(t.Context(), "iam", "created-by-patch", config.Patch{
+		Type: config.MergePatch,
+		Data: json.RawMessage(`{"enabled":true}`),
+	}, nil, config.IfVersion(0))
+	if err != nil || createdByPatch.Version <= 0 || createdByPatch.Value["enabled"] != true {
+		t.Fatalf("Patch(missing) = %#v, error = %v", createdByPatch, err)
+	}
+	createdByJSONPatch, err := client.Patch(t.Context(), "iam", "created-by-json-patch", config.Patch{
+		Type: config.JSONPatch,
+		Data: json.RawMessage(`[{"op":"add","path":"/enabled","value":true}]`),
+	}, nil)
+	if err != nil || createdByJSONPatch.Version <= 0 || createdByJSONPatch.Value["enabled"] != true {
+		t.Fatalf("Patch(JSON missing) = %#v, error = %v", createdByJSONPatch, err)
+	}
+	if _, err := client.Patch(t.Context(), "iam", "missing", config.Patch{
+		Type: config.MergePatch,
+		Data: json.RawMessage(`null`),
+	}, nil); !commonerrors.IsCode(err, http.StatusBadRequest) {
+		t.Fatalf("Patch(non-object result) error = %v, want BadRequest", err)
 	}
 }
 
-func TestDynamicConfigWatchStartsWithInitialAndStreamsChanges(t *testing.T) {
+func TestDynamicConfigListsOnlyPersistedKeysByName(t *testing.T) {
+	client := configstore.New(newConfigurationStore(t))
+	if _, err := client.Get(t.Context(), "iam", "missing", &map[string]any{}); err != nil {
+		t.Fatalf("Get(missing) error = %v", err)
+	}
+	second, err := client.Set(t.Context(), "iam", "zeta", map[string]any{})
+	if err != nil {
+		t.Fatalf("Set(zeta) error = %v", err)
+	}
+	first, err := client.Set(t.Context(), "iam", "alpha", map[string]any{})
+	if err != nil {
+		t.Fatalf("Set(alpha) error = %v", err)
+	}
+	keys, err := client.ListKeys(t.Context(), "iam")
+	if err != nil {
+		t.Fatalf("ListKeys() error = %v", err)
+	}
+	want := []config.Key{{Name: "alpha", Version: first.Version}, {Name: "zeta", Version: second.Version}}
+	if len(keys) != len(want) || keys[0] != want[0] || keys[1] != want[1] {
+		t.Fatalf("ListKeys() = %#v, want %#v", keys, want)
+	}
+}
+
+func TestDynamicConfigWatchStreamsCurrentSnapshots(t *testing.T) {
 	storage := newConfigurationStore(t)
 	client := configstore.New(storage)
 	if _, err := client.Set(t.Context(), "iam", "server", &serverConfiguration{Listen: ":8080"}); err != nil {
@@ -154,65 +200,57 @@ func TestDynamicConfigWatchStartsWithInitialAndStreamsChanges(t *testing.T) {
 		t.Fatalf("Watch() error = %v", err)
 	}
 	defer watcher.Stop()
-
-	initial := nextEvent(t, watcher)
-	if initial.Type != config.EventInitial || initial.Configuration == nil || initial.Configuration.ID != "server" {
-		t.Fatalf("initial event = %#v", initial)
+	initial := nextEvent(t, watcher).Configuration
+	if initial.Name != "server" || initial.Version <= 0 || initial.Value["listen"] != ":8080" {
+		t.Fatalf("initial snapshot = %#v", initial)
 	}
 	if _, err := client.Set(t.Context(), "iam", "server", &serverConfiguration{Listen: ":9090"}); err != nil {
 		t.Fatalf("Set(update) error = %v", err)
 	}
-	changed := nextEvent(t, watcher)
-	if changed.Type != config.EventChange || changed.Configuration == nil || string(changed.Configuration.Value) != `{"listen":":9090"}` {
-		t.Fatalf("change event = %#v", changed)
+	changed := nextEvent(t, watcher).Configuration
+	if changed.Version <= initial.Version || changed.Value["listen"] != ":9090" {
+		t.Fatalf("changed snapshot = %#v", changed)
 	}
 
-	scoped := storage.Scope(store.Scope{Resource: "namespaces", Name: "iam"})
-	if err := scoped.Delete(t.Context(), &config.Configuration{ObjectMeta: store.ObjectMeta{ID: "server"}}); err != nil {
-		t.Fatalf("Delete() error = %v", err)
-	}
-	deleted := nextEvent(t, watcher)
-	if deleted.Type != config.EventDelete || deleted.Configuration != nil {
-		t.Fatalf("delete event = %#v", deleted)
+	deleteStoredConfiguration(t, storage, "iam", "server")
+	deleted := nextEvent(t, watcher).Configuration
+	if deleted.Name != "server" || deleted.Version != 0 || len(deleted.Value) != 0 {
+		t.Fatalf("deleted snapshot = %#v", deleted)
 	}
 }
 
-func TestDynamicConfigWatchInitialReportsMissing(t *testing.T) {
+func TestDynamicConfigWatchStartsWithEmptySnapshot(t *testing.T) {
 	client := configstore.New(newConfigurationStore(t))
 	watcher, err := client.Watch(t.Context(), "iam", "missing")
 	if err != nil {
 		t.Fatalf("Watch() error = %v", err)
 	}
 	defer watcher.Stop()
-	initial := nextEvent(t, watcher)
-	if initial.Type != config.EventInitial || initial.Configuration != nil {
-		t.Fatalf("initial missing event = %#v", initial)
+	initial := nextEvent(t, watcher).Configuration
+	if initial.Name != "missing" || initial.Version != 0 || len(initial.Value) != 0 {
+		t.Fatalf("initial snapshot = %#v", initial)
 	}
 }
 
-func TestOnChangeDecodesFreshTypedObjectsAndDeletion(t *testing.T) {
+func TestOnChangeDecodesObjectAndVersion(t *testing.T) {
 	storage := newConfigurationStore(t)
 	client := configstore.New(storage)
 	if _, err := client.Set(t.Context(), "iam", "server", &serverConfiguration{Listen: ":8080"}); err != nil {
 		t.Fatalf("Set() error = %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	objects := []*serverConfiguration{}
-	events := []config.EventType{}
-	err := config.OnChange[serverConfiguration](ctx, client, "iam", "server", func(_ context.Context, change config.Change[serverConfiguration]) error {
-		events = append(events, change.Type)
-		objects = append(objects, change.Object)
-		switch change.Type {
-		case config.EventInitial:
-			if _, err := client.Set(t.Context(), "iam", "server", &serverConfiguration{Listen: ":9090"}); err != nil {
-				return err
-			}
-		case config.EventChange:
-			scoped := storage.Scope(store.Scope{Resource: "namespaces", Name: "iam"})
-			if err := scoped.Delete(t.Context(), &config.Configuration{ObjectMeta: store.ObjectMeta{ID: "server"}}); err != nil {
-				return err
-			}
-		case config.EventDelete:
+	objects := []serverConfiguration{}
+	versions := []int64{}
+	err := config.OnChange(ctx, client, "iam", "server", func(_ context.Context, object serverConfiguration, version int64) error {
+		objects = append(objects, object)
+		versions = append(versions, version)
+		switch len(objects) {
+		case 1:
+			_, err := client.Set(t.Context(), "iam", "server", &serverConfiguration{Listen: ":9090"})
+			return err
+		case 2:
+			deleteStoredConfiguration(t, storage, "iam", "server")
+		case 3:
 			cancel()
 		}
 		return nil
@@ -220,11 +258,12 @@ func TestOnChangeDecodesFreshTypedObjectsAndDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OnChange() error = %v", err)
 	}
-	if len(events) != 3 || events[0] != config.EventInitial || events[1] != config.EventChange || events[2] != config.EventDelete {
-		t.Fatalf("OnChange() events = %#v", events)
-	}
-	if objects[0] == objects[1] || objects[0].Listen != ":8080" || objects[1].Listen != ":9090" || objects[2] != nil {
+	if len(objects) != 3 || objects[0].Listen != ":8080" || objects[1].Listen != ":9090" ||
+		objects[2].Listen != "" || objects[2].Features != nil || objects[2].Nested != nil {
 		t.Fatalf("OnChange() objects = %#v", objects)
+	}
+	if versions[0] <= 0 || versions[1] <= versions[0] || versions[2] != 0 {
+		t.Fatalf("OnChange() versions = %#v", versions)
 	}
 }
 
@@ -242,6 +281,14 @@ func nextEvent(t *testing.T, watcher config.Watcher) config.Event {
 	case <-t.Context().Done():
 		t.Fatal("timed out waiting for watch event")
 		return config.Event{}
+	}
+}
+
+func deleteStoredConfiguration(t *testing.T, storage store.Store, namespace, name string) {
+	t.Helper()
+	target := &store.Unstructured{Object: map[string]any{"id": name, "resource": "configurations"}}
+	if err := storage.Scope(store.Scope{Resource: "namespaces", Name: namespace}).Delete(t.Context(), target); err != nil {
+		t.Fatalf("Delete() error = %v", err)
 	}
 }
 

@@ -19,20 +19,30 @@ func New() DynamicConfig {
 	return DynamicConfig{}
 }
 
-func (DynamicConfig) Set(context.Context, string, string, any, ...config.WriteOption) (*config.Configuration, error) {
-	return nil, errors.NewUnsupported("noop dynamic config does not support writes")
+func (DynamicConfig) Set(context.Context, string, string, any, ...config.WriteOption) (config.Configuration, error) {
+	return config.Configuration{}, errors.NewUnsupported("noop dynamic config does not support writes")
 }
 
-func (DynamicConfig) Get(context.Context, string, string, any) (*config.Configuration, error) {
-	return nil, nil
+func (DynamicConfig) Get(_ context.Context, _, name string, object any) (config.Configuration, error) {
+	result := emptyConfiguration(name)
+	if err := result.Value.Decode(object); err != nil {
+		return config.Configuration{}, err
+	}
+	return result, nil
 }
 
-func (DynamicConfig) Patch(context.Context, string, string, config.Patch, any, ...config.WriteOption) (*config.Configuration, error) {
-	return nil, errors.NewUnsupported("noop dynamic config does not support writes")
+func (DynamicConfig) Patch(context.Context, string, string, config.Patch, any, ...config.WriteOption) (config.Configuration, error) {
+	return config.Configuration{}, errors.NewUnsupported("noop dynamic config does not support writes")
 }
 
-func (DynamicConfig) Watch(ctx context.Context, _, _ string) (config.Watcher, error) {
+// ListKeys returns no keys for the disabled configuration center.
+func (DynamicConfig) ListKeys(context.Context, string) ([]config.Key, error) {
+	return []config.Key{}, nil
+}
+
+func (DynamicConfig) Watch(ctx context.Context, _, name string) (config.Watcher, error) {
 	watcher := &configurationWatcher{
+		name:    name,
 		events:  make(chan config.Event),
 		stopped: make(chan struct{}),
 	}
@@ -41,6 +51,7 @@ func (DynamicConfig) Watch(ctx context.Context, _, _ string) (config.Watcher, er
 }
 
 type configurationWatcher struct {
+	name     string
 	events   chan config.Event
 	stopped  chan struct{}
 	stopOnce sync.Once
@@ -59,7 +70,7 @@ func (w *configurationWatcher) Stop() {
 func (w *configurationWatcher) run(ctx context.Context) {
 	defer close(w.events)
 	select {
-	case w.events <- config.Event{Type: config.EventInitial}:
+	case w.events <- config.Event{Configuration: emptyConfiguration(w.name)}:
 	case <-ctx.Done():
 		return
 	case <-w.stopped:
@@ -69,4 +80,8 @@ func (w *configurationWatcher) run(ctx context.Context) {
 	case <-ctx.Done():
 	case <-w.stopped:
 	}
+}
+
+func emptyConfiguration(name string) config.Configuration {
+	return config.Configuration{Name: name, Value: config.Object{}}
 }

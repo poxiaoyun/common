@@ -5,15 +5,81 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	commonerrors "xiaoshiai.cn/common/errors"
-	"xiaoshiai.cn/common/store"
 )
 
-// Configuration is one named, versioned JSON document.
+// Object is a JSON object used as a Configuration value.
+type Object map[string]any
+
+// UnmarshalJSON decodes an object with json.Number values and rejects other roots.
+func (object *Object) UnmarshalJSON(data []byte) error {
+	decoded := map[string]any{}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return fmt.Errorf("configuration value must be a JSON object: %w", err)
+	}
+	if decoded == nil {
+		return fmt.Errorf("configuration value must be a JSON object")
+	}
+	*object = decoded
+	return nil
+}
+
+// EncodeObject converts value to an independent JSON object.
+func EncodeObject(value any) (Object, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, commonerrors.NewBadRequest(fmt.Sprintf("encode configuration value: %v", err))
+	}
+	object := Object{}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&object); err != nil {
+		return nil, commonerrors.NewBadRequest(fmt.Sprintf("configuration value must be a JSON object: %v", err))
+	}
+	if object == nil {
+		return nil, commonerrors.NewBadRequest("configuration value must be a JSON object")
+	}
+	return object, nil
+}
+
+// Decode replaces target with the typed representation of Object.
+func (object Object) Decode(target any) error {
+	if target == nil {
+		return commonerrors.NewBadRequest("configuration target must be a non-nil pointer")
+	}
+	targetValue := reflect.ValueOf(target)
+	if targetValue.Kind() != reflect.Pointer || targetValue.IsNil() {
+		return commonerrors.NewBadRequest("configuration target must be a non-nil pointer")
+	}
+	data, err := json.Marshal(object)
+	if err != nil {
+		return fmt.Errorf("encode configuration object: %w", err)
+	}
+	decoded := reflect.New(targetValue.Elem().Type())
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(decoded.Interface()); err != nil {
+		return fmt.Errorf("decode configuration object: %w", err)
+	}
+	targetValue.Elem().Set(decoded.Elem())
+	return nil
+}
+
+// Configuration is one named, versioned JSON object.
 type Configuration struct {
-	store.ObjectMeta `json:",inline"`
-	Value            json.RawMessage `json:"value"`
+	Name    string `json:"name"`
+	Version int64  `json:"version"`
+	Value   Object `json:"value"`
+}
+
+// Key identifies one persisted Configuration and its current version.
+type Key struct {
+	Name    string `json:"name"`
+	Version int64  `json:"version"`
 }
 
 // WriteOption applies an optional write precondition.
@@ -21,23 +87,9 @@ type WriteOption interface {
 	ApplyToWrite(*WriteOptions)
 }
 
-// WriteOptions contains the resolved preconditions for one write.
+// WriteOptions contains the resolved precondition for one write.
 type WriteOptions struct {
-	IfAbsent        bool
 	ExpectedVersion *int64
-}
-
-// IfAbsentOption requires a Set target not to exist.
-type IfAbsentOption struct{}
-
-// ApplyToWrite applies the create-only precondition.
-func (IfAbsentOption) ApplyToWrite(options *WriteOptions) {
-	options.IfAbsent = true
-}
-
-// IfAbsent requires the Configuration not to exist. It is valid only for Set.
-func IfAbsent() IfAbsentOption {
-	return IfAbsentOption{}
 }
 
 // IfVersionOption requires a Configuration to have a specific version.
@@ -49,7 +101,8 @@ func (option IfVersionOption) ApplyToWrite(options *WriteOptions) {
 	options.ExpectedVersion = &version
 }
 
-// IfVersion requires the Configuration to have version.
+// IfVersion requires the effective Configuration to have version. Version 0
+// matches a Configuration that has not been persisted.
 func IfVersion(version int64) IfVersionOption {
 	return IfVersionOption(version)
 }
@@ -63,8 +116,8 @@ func ResolveWriteOptions(options ...WriteOption) (WriteOptions, error) {
 		}
 		option.ApplyToWrite(&resolved)
 	}
-	if resolved.ExpectedVersion != nil && (*resolved.ExpectedVersion <= 0 || resolved.IfAbsent) {
-		return WriteOptions{}, commonerrors.NewBadRequest("configuration write preconditions cannot be combined and versions must be positive")
+	if resolved.ExpectedVersion != nil && *resolved.ExpectedVersion < 0 {
+		return WriteOptions{}, commonerrors.NewBadRequest("configuration version cannot be negative")
 	}
 	return resolved, nil
 }
@@ -85,54 +138,39 @@ type Patch struct {
 	Data json.RawMessage
 }
 
-// EventType identifies one high-level Configuration state transition.
-type EventType string
-
-const (
-	// EventInitial is always the first Watch event. A nil Configuration means missing.
-	EventInitial EventType = "initial"
-	// EventChange represents a create or update after the initial state.
-	EventChange EventType = "change"
-	// EventDelete represents deletion after the initial state.
-	EventDelete EventType = "delete"
-)
-
-// Event describes one Configuration Watch event.
+// Event contains one Configuration snapshot or a terminal Watch error.
 type Event struct {
-	Type          EventType
-	Configuration *Configuration
+	Configuration Configuration
 	Error         error
 }
 
-// Watcher provides an ordered stream for one Configuration.
+// Watcher provides an ordered snapshot stream for one Configuration.
 type Watcher interface {
-	// Events returns the ordered event stream and closes after Stop or a terminal error.
+	// Events returns the ordered snapshot stream and closes after Stop or a terminal error.
+	// The first successful event is always the current effective Configuration.
 	Events() <-chan Event
 	// Stop idempotently stops the Watcher and closes its event stream.
 	Stop()
 }
 
-// Change is the typed event delivered by OnChange.
-type Change[T any] struct {
-	Type    EventType
-	Object  *T
-	Version int64
-}
-
 // DynamicConfig stores typed configuration objects addressed by namespace and name.
 type DynamicConfig interface {
 	// Set serializes object and replaces namespace/name according to options.
-	Set(ctx context.Context, namespace, name string, object any, options ...WriteOption) (*Configuration, error)
-	// Get decodes namespace/name into object. A missing Configuration returns (nil, nil).
-	Get(ctx context.Context, namespace, name string, object any) (*Configuration, error)
-	// Patch changes namespace/name and optionally decodes the persisted result into object.
-	Patch(ctx context.Context, namespace, name string, patch Patch, object any, options ...WriteOption) (*Configuration, error)
-	// Watch observes one Configuration and always starts with exactly one Initial event.
+	Set(ctx context.Context, namespace, name string, object any, options ...WriteOption) (Configuration, error)
+	// Get decodes the effective namespace/name value into object. Missing values
+	// have Version 0 and an empty Value.
+	Get(ctx context.Context, namespace, name string, object any) (Configuration, error)
+	// Patch changes the effective namespace/name value and optionally decodes the result into object.
+	Patch(ctx context.Context, namespace, name string, patch Patch, object any, options ...WriteOption) (Configuration, error)
+	// ListKeys returns all persisted keys in namespace ordered by name.
+	ListKeys(ctx context.Context, namespace string) ([]Key, error)
+
+	// Watch observes Configuration snapshots and always starts with the current effective value.
 	Watch(ctx context.Context, namespace, name string) (Watcher, error)
 }
 
-// OnChange watches one Configuration and decodes every state into a fresh T.
-func OnChange[T any](ctx context.Context, client DynamicConfig, namespace, name string, callback func(context.Context, Change[T]) error) error {
+// OnChange watches one Configuration and decodes every snapshot into a fresh T.
+func OnChange[T any](ctx context.Context, client DynamicConfig, namespace, name string, callback func(context.Context, T, int64) error) error {
 	watcher, err := client.Watch(ctx, namespace, name)
 	if err != nil {
 		return err
@@ -149,18 +187,11 @@ func OnChange[T any](ctx context.Context, client DynamicConfig, namespace, name 
 			if event.Error != nil {
 				return event.Error
 			}
-			change := Change[T]{Type: event.Type}
-			if event.Configuration != nil {
-				object := new(T)
-				decoder := json.NewDecoder(bytes.NewReader(event.Configuration.Value))
-				decoder.UseNumber()
-				if err := decoder.Decode(object); err != nil {
-					return fmt.Errorf("decode configuration object: %w", err)
-				}
-				change.Object = object
-				change.Version = event.Configuration.ResourceVersion
+			object := *new(T)
+			if err := event.Configuration.Value.Decode(&object); err != nil {
+				return err
 			}
-			if err := callback(ctx, change); err != nil {
+			if err := callback(ctx, object, event.Configuration.Version); err != nil {
 				return err
 			}
 		}

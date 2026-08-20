@@ -74,7 +74,7 @@ func TestFromOptionsDefaultsAddressSchemeToHTTP(t *testing.T) {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":"server","resourceVersion":1,"value":{"global":{"endpoint":"https://iam.example"}}}`)
+		fmt.Fprint(w, `{"name":"server","version":1,"value":{"global":{"endpoint":"https://iam.example"}}}`)
 	}))
 	defer server.Close()
 
@@ -118,7 +118,7 @@ func TestDefaultSourcesLoadConfigurationThroughControlFlags(t *testing.T) {
 			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":"server","resourceVersion":1,"value":{"endpoint":"https://configured.example"}}`)
+		fmt.Fprint(w, `{"name":"server","version":1,"value":{"endpoint":"https://configured.example"}}`)
 	}))
 	defer server.Close()
 

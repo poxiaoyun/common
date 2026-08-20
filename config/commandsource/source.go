@@ -156,7 +156,7 @@ func load(ctx context.Context, client config.DynamicConfig, namespace, name stri
 	if err != nil {
 		return nil, fmt.Errorf("load configuration %q/%q: %w", namespace, name, err)
 	}
-	if configuration == nil {
+	if configuration.Version == 0 {
 		return nil, nil
 	}
 	current, ok := decoded.(map[string]any)

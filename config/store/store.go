@@ -2,11 +2,9 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"sync"
 
 	"xiaoshiai.cn/common/config"
@@ -16,9 +14,20 @@ import (
 
 var _ config.DynamicConfig = (*DynamicConfig)(nil)
 
-// AddToSchema registers Configuration persistence.
+// StoredConfiguration is the Store persistence representation of a Configuration.
+type StoredConfiguration struct {
+	commonstore.ObjectMeta `json:",inline"`
+	Value                  config.Object `json:"value"`
+}
+
+// ResourceName returns the stable Store resource name.
+func (*StoredConfiguration) ResourceName() string {
+	return "configurations"
+}
+
+// AddToSchema registers StoredConfiguration persistence.
 func AddToSchema(schema *commonstore.Schema) error {
-	return schema.Register(&config.Configuration{}, commonstore.ResourceSchema{})
+	return schema.Register(&StoredConfiguration{}, commonstore.ResourceSchema{})
 }
 
 // New returns a Store-backed DynamicConfig that can access any namespace.
@@ -31,199 +40,218 @@ type DynamicConfig struct {
 	storage commonstore.Store
 }
 
-type writeOptions struct {
-	ifAbsent        bool
-	expectedVersion *int64
+func (s *DynamicConfig) Set(ctx context.Context, namespace, name string, object any, options ...config.WriteOption) (config.Configuration, error) {
+	write, err := config.ResolveWriteOptions(options...)
+	if err != nil {
+		return config.Configuration{}, err
+	}
+	value, err := config.EncodeObject(object)
+	if err != nil {
+		return config.Configuration{}, err
+	}
+	if write.ExpectedVersion != nil {
+		return s.setConfigurationVersion(ctx, namespace, name, value, *write.ExpectedVersion)
+	}
+	return s.setConfiguration(ctx, namespace, name, value)
 }
 
-func resolveWriteOptions(options []config.WriteOption) (writeOptions, error) {
-	resolved, err := config.ResolveWriteOptions(options...)
-	if err != nil {
-		return writeOptions{}, err
-	}
-	return writeOptions{ifAbsent: resolved.IfAbsent, expectedVersion: resolved.ExpectedVersion}, nil
-}
-
-func (s *DynamicConfig) Set(ctx context.Context, namespace, name string, object any, options ...config.WriteOption) (*config.Configuration, error) {
-	write, err := resolveWriteOptions(options)
-	if err != nil {
-		return nil, err
-	}
-	value, err := marshalObject(object)
-	if err != nil {
-		return nil, err
-	}
-	return s.setValue(ctx, namespace, name, value, write)
-}
-
-func (s *DynamicConfig) setValue(ctx context.Context, namespace, name string, value json.RawMessage, options writeOptions) (*config.Configuration, error) {
+func (s *DynamicConfig) setConfiguration(ctx context.Context, namespace, name string, value config.Object) (config.Configuration, error) {
 	storage := s.namespace(namespace)
-	target := &config.Configuration{ObjectMeta: commonstore.ObjectMeta{ID: name, Name: name}, Value: value}
-	if options.ifAbsent {
-		if err := storage.Create(ctx, target); err != nil {
-			return nil, err
-		}
-		return target, nil
-	}
-	if options.expectedVersion != nil {
-		target.ResourceVersion = *options.expectedVersion
-		if err := storage.Update(ctx, target); err != nil {
-			return nil, err
-		}
-		return target, nil
-	}
-
 	for {
-		target = &config.Configuration{ObjectMeta: commonstore.ObjectMeta{ID: name, Name: name}, Value: value}
-		if err := storage.Update(ctx, target); err == nil {
-			return target, nil
-		} else if !commonerrors.IsNotFound(err) {
-			return nil, err
+		target, err := s.getStoredConfiguration(ctx, namespace, name)
+		if err != nil {
+			if !commonerrors.IsNotFound(err) {
+				return config.Configuration{}, err
+			}
+			target = newStoredConfiguration(name, value)
+			err = storage.Create(ctx, target)
+			if err != nil {
+				if !commonerrors.IsAlreadyExists(err) {
+					return config.Configuration{}, err
+				}
+				if err := ctx.Err(); err != nil {
+					return config.Configuration{}, err
+				}
+				continue
+			}
+			return configurationFromStored(target)
 		}
-		target = &config.Configuration{ObjectMeta: commonstore.ObjectMeta{ID: name, Name: name}, Value: value}
-		if err := storage.Create(ctx, target); err == nil {
-			return target, nil
-		} else if !commonerrors.IsAlreadyExists(err) {
-			return nil, err
+
+		target.Value = value
+		target.ResourceVersion = 0
+		err = storage.Update(ctx, target)
+		if err != nil {
+			if !commonerrors.IsNotFound(err) {
+				return config.Configuration{}, err
+			}
+			if err := ctx.Err(); err != nil {
+				return config.Configuration{}, err
+			}
+			continue
 		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
+		return configurationFromStored(target)
 	}
 }
 
-func (s *DynamicConfig) Get(ctx context.Context, namespace, name string, object any) (*config.Configuration, error) {
-	if err := validateDecodeTarget(object); err != nil {
-		return nil, err
+func (s *DynamicConfig) setConfigurationVersion(ctx context.Context, namespace, name string, value config.Object, version int64) (config.Configuration, error) {
+	target := newStoredConfiguration(name, value)
+	if version == 0 {
+		err := s.namespace(namespace).Create(ctx, target)
+		if err != nil {
+			if commonerrors.IsAlreadyExists(err) {
+				return config.Configuration{}, versionConflict(name, version)
+			}
+			return config.Configuration{}, err
+		}
+		return configurationFromStored(target)
 	}
-	configuration, err := s.getValue(ctx, namespace, name)
-	if commonerrors.IsNotFound(err) {
-		return nil, nil
-	}
+	target.ResourceVersion = version
+	err := s.namespace(namespace).Update(ctx, target)
 	if err != nil {
-		return nil, err
-	}
-	if err := unmarshalObject(configuration.Value, object); err != nil {
-		return nil, err
-	}
-	return configuration, nil
-}
-
-func (s *DynamicConfig) getValue(ctx context.Context, namespace, name string) (*config.Configuration, error) {
-	configuration := &config.Configuration{}
-	if err := s.namespace(namespace).Get(ctx, name, configuration); err != nil {
-		return nil, err
-	}
-	return configuration, nil
-}
-
-func (s *DynamicConfig) Patch(ctx context.Context, namespace, name string, patch config.Patch, object any, options ...config.WriteOption) (*config.Configuration, error) {
-	write, err := resolveWriteOptions(options)
-	if err != nil {
-		return nil, err
-	}
-	if write.ifAbsent {
-		return nil, commonerrors.NewBadRequest("IfAbsent is not valid for Patch")
-	}
-	if object != nil {
-		if err := validateDecodeTarget(object); err != nil {
-			return nil, err
+		if commonerrors.IsNotFound(err) {
+			return config.Configuration{}, versionConflict(name, version)
 		}
+		return config.Configuration{}, err
+	}
+	return configurationFromStored(target)
+}
+
+func (s *DynamicConfig) Get(ctx context.Context, namespace, name string, object any) (config.Configuration, error) {
+	stored, err := s.getStoredConfiguration(ctx, namespace, name)
+	if err != nil {
+		if !commonerrors.IsNotFound(err) {
+			return config.Configuration{}, err
+		}
+		result := emptyConfiguration(name)
+		if err := result.Value.Decode(object); err != nil {
+			return config.Configuration{}, err
+		}
+		return result, nil
+	}
+	result, err := configurationFromStored(stored)
+	if err != nil {
+		return config.Configuration{}, err
+	}
+	if err := result.Value.Decode(object); err != nil {
+		return config.Configuration{}, err
+	}
+	return result, nil
+}
+
+func (s *DynamicConfig) Patch(ctx context.Context, namespace, name string, patch config.Patch, object any, options ...config.WriteOption) (config.Configuration, error) {
+	write, err := config.ResolveWriteOptions(options...)
+	if err != nil {
+		return config.Configuration{}, err
+	}
+	if patch.Type != config.MergePatch && patch.Type != config.JSONPatch {
+		return config.Configuration{}, commonerrors.NewBadRequest(fmt.Sprintf("unsupported configuration patch type %q", patch.Type))
 	}
 	if !json.Valid(patch.Data) {
-		return nil, commonerrors.NewBadRequest("configuration patch must be valid JSON")
+		return config.Configuration{}, commonerrors.NewBadRequest("configuration patch must be valid JSON")
 	}
-
-	var configuration *config.Configuration
-	switch patch.Type {
-	case config.MergePatch:
-		configuration, err = s.applyMergePatch(ctx, namespace, name, patch.Data, write)
-	case config.JSONPatch:
-		configuration, err = s.applyJSONPatch(ctx, namespace, name, patch.Data, write)
-	default:
-		return nil, commonerrors.NewBadRequest(fmt.Sprintf("unsupported configuration patch type %q", patch.Type))
-	}
+	result, err := s.patchConfiguration(ctx, namespace, name, patch, write.ExpectedVersion)
 	if err != nil {
-		return nil, err
+		return config.Configuration{}, err
 	}
 	if object != nil {
-		if err := unmarshalObject(configuration.Value, object); err != nil {
-			return nil, err
+		if err := result.Value.Decode(object); err != nil {
+			return config.Configuration{}, err
 		}
 	}
-	return configuration, nil
+	return result, nil
 }
 
-func (s *DynamicConfig) applyMergePatch(ctx context.Context, namespace, name string, data json.RawMessage, options writeOptions) (*config.Configuration, error) {
-	wrapped, err := json.Marshal(struct {
-		Value           json.RawMessage `json:"value"`
-		ResourceVersion *int64          `json:"resourceVersion,omitempty"`
-	}{Value: data, ResourceVersion: options.expectedVersion})
-	if err != nil {
-		return nil, err
-	}
-	return s.patchValue(ctx, namespace, name, commonstore.RawPatch(commonstore.PatchTypeMergePatch, wrapped))
-}
-
-func (s *DynamicConfig) applyJSONPatch(ctx context.Context, namespace, name string, data json.RawMessage, options writeOptions) (*config.Configuration, error) {
-	if options.expectedVersion != nil {
-		current, err := s.getValue(ctx, namespace, name)
+func (s *DynamicConfig) patchConfiguration(ctx context.Context, namespace, name string, patch config.Patch, expectedVersion *int64) (config.Configuration, error) {
+	storage := s.namespace(namespace)
+	for {
+		current, err := s.getStoredConfiguration(ctx, namespace, name)
 		if err != nil {
-			return nil, err
+			if !commonerrors.IsNotFound(err) {
+				return config.Configuration{}, err
+			}
+			if expectedVersion != nil && *expectedVersion > 0 {
+				return config.Configuration{}, versionConflict(name, *expectedVersion)
+			}
+			value, err := applyPatch(config.Object{}, patch)
+			if err != nil {
+				return config.Configuration{}, err
+			}
+			target := newStoredConfiguration(name, value)
+			err = storage.Create(ctx, target)
+			if err != nil {
+				if commonerrors.IsAlreadyExists(err) {
+					if expectedVersion != nil {
+						return config.Configuration{}, versionConflict(name, *expectedVersion)
+					}
+					continue
+				}
+				return config.Configuration{}, err
+			}
+			return configurationFromStored(target)
 		}
-		if current.ResourceVersion != *options.expectedVersion {
-			return nil, commonerrors.NewConflict("configuration", name,
-				fmt.Errorf("resourceVersion %d does not match", *options.expectedVersion))
+
+		if expectedVersion != nil && current.ResourceVersion != *expectedVersion {
+			return config.Configuration{}, versionConflict(name, *expectedVersion)
 		}
-		if err := commonstore.JsonPatchObject(&current.Value, data); err != nil {
-			return nil, err
+		value, err := applyPatch(current.Value, patch)
+		if err != nil {
+			return config.Configuration{}, err
 		}
-		return s.setValue(ctx, namespace, name, current.Value, options)
+		current.Value = value
+		err = storage.Update(ctx, current)
+		if err != nil {
+			if expectedVersion == nil && (commonerrors.IsConflict(err) || commonerrors.IsNotFound(err)) {
+				continue
+			}
+			if commonerrors.IsNotFound(err) {
+				return config.Configuration{}, versionConflict(name, *expectedVersion)
+			}
+			return config.Configuration{}, err
+		}
+		return configurationFromStored(current)
 	}
-	wrapped, err := configurationJSONPatch(data)
+}
+
+func applyPatch(current config.Object, patch config.Patch) (config.Object, error) {
+	next, err := config.EncodeObject(current)
 	if err != nil {
 		return nil, err
 	}
-	return s.patchValue(ctx, namespace, name, commonstore.RawPatch(commonstore.PatchTypeJSONPatch, wrapped))
-}
-
-func (s *DynamicConfig) patchValue(ctx context.Context, namespace, name string, patch commonstore.Patch) (*config.Configuration, error) {
-	target := &config.Configuration{ObjectMeta: commonstore.ObjectMeta{ID: name}}
-	if err := s.namespace(namespace).Patch(ctx, target, patch); err != nil {
+	switch patch.Type {
+	case config.MergePatch:
+		err = commonstore.JsonMergePatchObject(&next, patch.Data)
+	case config.JSONPatch:
+		err = commonstore.JsonPatchObject(&next, patch.Data)
+	}
+	if err != nil {
 		return nil, err
 	}
-	return target, nil
+	return config.EncodeObject(next)
 }
 
-type jsonPatchOperation struct {
-	Operation string          `json:"op"`
-	Path      string          `json:"path"`
-	From      *string         `json:"from,omitempty"`
-	Value     json.RawMessage `json:"value,omitempty"`
-}
-
-func configurationJSONPatch(data json.RawMessage) ([]byte, error) {
-	operations := []jsonPatchOperation{}
-	if err := json.Unmarshal(data, &operations); err != nil {
-		return nil, commonerrors.NewBadRequest(err.Error())
+// ListKeys returns the namespace's keys in stable name order.
+func (s *DynamicConfig) ListKeys(ctx context.Context, namespace string) ([]config.Key, error) {
+	list := &commonstore.List[StoredConfiguration]{}
+	storage := s.namespace(namespace)
+	if err := storage.List(ctx, list, commonstore.WithSort("id+")); err != nil {
+		return nil, err
 	}
-	for index := range operations {
-		operations[index].Path = "/value" + operations[index].Path
-		if operations[index].From != nil {
-			from := "/value" + *operations[index].From
-			operations[index].From = &from
-		}
+	keys := make([]config.Key, 0, len(list.Items))
+	for _, item := range list.Items {
+		keys = append(keys, config.Key{Name: item.Name, Version: item.ResourceVersion})
 	}
-	return json.Marshal(operations)
+	return keys, nil
 }
 
 func (s *DynamicConfig) Watch(ctx context.Context, namespace, name string) (config.Watcher, error) {
-	upstream, err := s.namespace(namespace).Watch(ctx, &commonstore.List[config.Configuration]{},
+	storage := s.namespace(namespace)
+	upstream, err := storage.Watch(ctx, &commonstore.List[StoredConfiguration]{},
 		commonstore.WithID(name), commonstore.WithSendInitialEvents())
 	if err != nil {
 		return nil, err
 	}
 	watcher := &configurationWatcher{
+		name:     name,
 		upstream: upstream,
 		events:   make(chan config.Event),
 		stopped:  make(chan struct{}),
@@ -233,6 +261,7 @@ func (s *DynamicConfig) Watch(ctx context.Context, namespace, name string) (conf
 }
 
 type configurationWatcher struct {
+	name     string
 	upstream commonstore.Watcher
 	events   chan config.Event
 	stopped  chan struct{}
@@ -253,7 +282,7 @@ func (w *configurationWatcher) Stop() {
 func (w *configurationWatcher) run(ctx context.Context) {
 	defer close(w.events)
 	defer w.Stop()
-	var initial *config.Configuration
+	initial := emptyConfiguration(w.name)
 	initialized := false
 	for {
 		select {
@@ -275,16 +304,16 @@ func (w *configurationWatcher) run(ctx context.Context) {
 			if !initialized {
 				switch event.Type {
 				case commonstore.WatchEventCreate, commonstore.WatchEventUpdate:
-					configuration, err := watchConfiguration(event.Object)
+					current, err := watchConfiguration(event.Object)
 					if err != nil {
 						w.send(ctx, config.Event{Error: err})
 						return
 					}
-					initial = configuration
+					initial = current
 				case commonstore.WatchEventDelete:
-					initial = nil
+					initial = emptyConfiguration(w.name)
 				case commonstore.WatchEventBookmark:
-					if !w.send(ctx, config.Event{Type: config.EventInitial, Configuration: initial}) {
+					if !w.send(ctx, config.Event{Configuration: initial}) {
 						return
 					}
 					initialized = true
@@ -294,16 +323,16 @@ func (w *configurationWatcher) run(ctx context.Context) {
 
 			switch event.Type {
 			case commonstore.WatchEventCreate, commonstore.WatchEventUpdate:
-				configuration, err := watchConfiguration(event.Object)
+				current, err := watchConfiguration(event.Object)
 				if err != nil {
 					w.send(ctx, config.Event{Error: err})
 					return
 				}
-				if !w.send(ctx, config.Event{Type: config.EventChange, Configuration: configuration}) {
+				if !w.send(ctx, config.Event{Configuration: current}) {
 					return
 				}
 			case commonstore.WatchEventDelete:
-				if !w.send(ctx, config.Event{Type: config.EventDelete}) {
+				if !w.send(ctx, config.Event{Configuration: emptyConfiguration(w.name)}) {
 					return
 				}
 			}
@@ -331,47 +360,43 @@ func (w *configurationWatcher) wasStopped() bool {
 	}
 }
 
-func watchConfiguration(object any) (*config.Configuration, error) {
-	configuration, ok := object.(*config.Configuration)
-	if !ok {
-		return nil, fmt.Errorf("configuration watcher returned %T", object)
+func (s *DynamicConfig) getStoredConfiguration(ctx context.Context, namespace, name string) (*StoredConfiguration, error) {
+	result := &StoredConfiguration{}
+	storage := s.namespace(namespace)
+	if err := storage.Get(ctx, name, result); err != nil {
+		return nil, err
 	}
-	copy := *configuration
-	copy.Value = bytes.Clone(configuration.Value)
-	return &copy, nil
+	return result, nil
 }
 
 func (s *DynamicConfig) namespace(namespace string) commonstore.Store {
 	return s.storage.Scope(commonstore.Scope{Resource: "namespaces", Name: namespace})
 }
 
-func marshalObject(object any) (json.RawMessage, error) {
-	value, err := json.Marshal(object)
+func newStoredConfiguration(name string, value config.Object) *StoredConfiguration {
+	return &StoredConfiguration{ObjectMeta: commonstore.ObjectMeta{ID: name, Name: name}, Value: value}
+}
+
+func configurationFromStored(stored *StoredConfiguration) (config.Configuration, error) {
+	value, err := config.EncodeObject(stored.Value)
 	if err != nil {
-		return nil, commonerrors.NewBadRequest(fmt.Sprintf("marshal configuration object: %v", err))
+		return config.Configuration{}, err
 	}
-	return value, nil
+	return config.Configuration{Name: stored.Name, Version: stored.ResourceVersion, Value: value}, nil
 }
 
-func unmarshalObject(value json.RawMessage, object any) error {
-	if err := validateDecodeTarget(object); err != nil {
-		return err
+func watchConfiguration(object any) (config.Configuration, error) {
+	stored, ok := object.(*StoredConfiguration)
+	if !ok {
+		return config.Configuration{}, fmt.Errorf("configuration watcher returned %T", object)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(value))
-	decoder.UseNumber()
-	if err := decoder.Decode(object); err != nil {
-		return fmt.Errorf("decode configuration object: %w", err)
-	}
-	return nil
+	return configurationFromStored(stored)
 }
 
-func validateDecodeTarget(object any) error {
-	if object == nil {
-		return commonerrors.NewBadRequest("configuration object must be a non-nil pointer")
-	}
-	value := reflect.ValueOf(object)
-	if value.Kind() != reflect.Pointer || value.IsNil() {
-		return commonerrors.NewBadRequest("configuration object must be a non-nil pointer")
-	}
-	return nil
+func emptyConfiguration(name string) config.Configuration {
+	return config.Configuration{Name: name, Value: config.Object{}}
+}
+
+func versionConflict(name string, version int64) error {
+	return commonerrors.NewConflict("configuration", name, fmt.Errorf("version %d does not match", version))
 }
