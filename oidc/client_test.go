@@ -91,6 +91,9 @@ func TestGetClientCredentialsTokenCachesConcurrentRequest(t *testing.T) {
 			if request.Form.Get("resource") != "urn:orders:api" {
 				t.Fatalf("resource = %q", request.Form.Get("resource"))
 			}
+			if request.Form.Get("scope") != "read write" {
+				t.Fatalf("scope = %q", request.Form.Get("scope"))
+			}
 			response.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"access_token": "machine-token",
@@ -105,8 +108,11 @@ func TestGetClientCredentialsTokenCachesConcurrentRequest(t *testing.T) {
 	defer server.Close()
 
 	client := NewTestClient(t, server, ClientOptions{
-		Authentication:            ClientAuthentication{ClientID: "client", ClientSecret: "secret"},
-		ClientCredentialsResource: "urn:orders:api",
+		Authentication: ClientAuthentication{ClientID: "client", ClientSecret: "secret"},
+	})
+	source := client.NewClientCredentialsTokenSource(ClientCredentialsOptions{
+		Resource: "urn:orders:api",
+		Scopes:   []string{"read", "write"},
 	})
 	const callers = 20
 	var wait sync.WaitGroup
@@ -114,7 +120,7 @@ func TestGetClientCredentialsTokenCachesConcurrentRequest(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			token, err := client.GetClientCredentialsToken(context.Background())
+			token, err := source.Token(context.Background())
 			if err != nil {
 				t.Error(err)
 				return
@@ -127,6 +133,81 @@ func TestGetClientCredentialsTokenCachesConcurrentRequest(t *testing.T) {
 	wait.Wait()
 	if calls.Load() != 1 {
 		t.Fatalf("token calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestClientCredentialsTokenSourcesShareDiscoveryAndIsolateTokens(t *testing.T) {
+	var discoveries atomic.Int32
+	var iamTokens atomic.Int32
+	var cloudTokens atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/.well-known/openid-configuration":
+			discoveries.Add(1)
+			WriteProviderMetadata(t, response, server.URL)
+		case "/token":
+			if err := request.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			resource := request.Form.Get("resource")
+			scope := request.Form.Get("scope")
+			token := ""
+			switch resource {
+			case "urn:iam:api":
+				iamTokens.Add(1)
+				if scope != "create:authentication-reviews" {
+					t.Fatalf("IAM scope = %q", scope)
+				}
+				token = "iam-token"
+			case "urn:cloud:api":
+				cloudTokens.Add(1)
+				if scope != "read:clusters" {
+					t.Fatalf("Cloud scope = %q", scope)
+				}
+				token = "cloud-token"
+			default:
+				t.Fatalf("resource = %q", resource)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"access_token": token,
+				"token_type":   "Bearer",
+				"expires_in":   3600,
+			})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	client := NewTestClient(t, server, ClientOptions{
+		Authentication: ClientAuthentication{ClientID: "apiserver", ClientSecret: "secret"},
+	})
+	iamScopes := []string{"create:authentication-reviews"}
+	iam := client.NewClientCredentialsTokenSource(ClientCredentialsOptions{Resource: "urn:iam:api", Scopes: iamScopes})
+	cloud := client.NewClientCredentialsTokenSource(ClientCredentialsOptions{Resource: "urn:cloud:api", Scopes: []string{"read:clusters"}})
+	iamScopes[0] = "mutated"
+
+	iamToken, err := iam.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloudToken, err := cloud.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if iamToken.AccessToken != "iam-token" || cloudToken.AccessToken != "cloud-token" {
+		t.Fatalf("tokens = (%q, %q)", iamToken.AccessToken, cloudToken.AccessToken)
+	}
+	if _, err := iam.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cloud.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if discoveries.Load() != 1 || iamTokens.Load() != 1 || cloudTokens.Load() != 1 {
+		t.Fatalf("calls = discovery:%d iam:%d cloud:%d", discoveries.Load(), iamTokens.Load(), cloudTokens.Load())
 	}
 }
 

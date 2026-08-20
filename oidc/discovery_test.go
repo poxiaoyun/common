@@ -46,7 +46,7 @@ func TestNewClientDiscoversOnceThenUsesProviderMetadata(t *testing.T) {
 	if discoveries.Load() != 0 {
 		t.Fatalf("NewClient made %d Discovery calls", discoveries.Load())
 	}
-	token, err := client.GetClientCredentialsToken(context.Background())
+	token, err := client.NewClientCredentialsTokenSource(ClientCredentialsOptions{}).Token(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestNewClientUsesAdvertisedPublicClientAuthentication(t *testing.T) {
 	client := NewTestClient(t, server, ClientOptions{
 		Authentication: ClientAuthentication{ClientID: "public-client", ClientSecret: "must-not-be-sent"},
 	})
-	if _, err := client.GetClientCredentialsToken(context.Background()); err != nil {
+	if _, err := client.NewClientCredentialsTokenSource(ClientCredentialsOptions{}).Token(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }

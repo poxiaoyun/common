@@ -253,7 +253,7 @@ func TestClientCredentialsUsesOAuthOnlyProviderMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := client.GetClientCredentialsToken(context.Background())
+	token, err := client.NewClientCredentialsTokenSource(ClientCredentialsOptions{}).Token(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

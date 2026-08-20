@@ -1,4 +1,4 @@
-package oidc
+package oidc_test
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"xiaoshiai.cn/common/oidc"
 )
 
 func TestClientCredentialsRoundTripper(t *testing.T) {
@@ -13,7 +15,15 @@ func TestClientCredentialsRoundTripper(t *testing.T) {
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/.well-known/openid-configuration":
-			WriteProviderMetadata(t, response, server.URL)
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"issuer":                                server.URL,
+				"authorization_endpoint":                server.URL + "/authorize",
+				"token_endpoint":                        server.URL + "/token",
+				"jwks_uri":                              server.URL + "/jwks",
+				"grant_types_supported":                 []string{"client_credentials"},
+				"token_endpoint_auth_methods_supported": []string{"client_secret_basic"},
+			})
 		case "/token":
 			if err := request.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -39,16 +49,17 @@ func TestClientCredentialsRoundTripper(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(ClientOptions{
+	client, err := oidc.NewClient(oidc.ClientOptions{
 		Issuer:         server.URL,
 		HTTPClient:     server.Client(),
-		Authentication: ClientAuthentication{ClientID: "client", ClientSecret: "secret", Method: ClientAuthSecretBasic},
+		Authentication: oidc.ClientAuthentication{ClientID: "client", ClientSecret: "secret", Method: oidc.ClientAuthSecretBasic},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	source := client.NewClientCredentialsTokenSource(oidc.ClientCredentialsOptions{})
 	httpClient := &http.Client{
-		Transport: NewClientCredentialsRoundTripper(client, server.Client().Transport),
+		Transport: oidc.NewClientCredentialsRoundTripper(source, server.Client().Transport),
 	}
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/resource", nil)
 	if err != nil {

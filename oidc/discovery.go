@@ -36,7 +36,6 @@ type ClientConfiguration struct {
 type Client struct {
 	options             ClientOptions
 	configurationFlight SingleFlight[*ClientConfiguration]
-	credentialsFlight   SingleFlight[*oauth2.Token]
 }
 
 // NewClient constructs a client without performing Discovery. The first
@@ -143,9 +142,10 @@ func (c *ClientConfiguration) GetAuthorizationCodeConfiguration() (oauth2.Config
 	return newAuthorizationCodeConfiguration(token, c.Metadata)
 }
 
-// GetClientCredentialsConfiguration returns the client_credentials configuration.
-func (c *ClientConfiguration) GetClientCredentialsConfiguration() (clientcredentials.Config, error) {
-	return newClientCredentialsConfiguration(c.options, c.Metadata)
+// GetClientCredentialsConfiguration returns the client_credentials
+// configuration for one target-bound token source.
+func (c *ClientConfiguration) GetClientCredentialsConfiguration(options ClientCredentialsOptions) (clientcredentials.Config, error) {
+	return newClientCredentialsConfiguration(c.options, options, c.Metadata)
 }
 
 // GetRefreshTokenConfiguration returns the reusable refresh-token configuration.
@@ -214,30 +214,30 @@ func newAuthorizationCodeConfiguration(
 	return token, nil
 }
 
-func newClientCredentialsConfiguration(options ClientOptions, metadata OpenIDProviderMetadata) (clientcredentials.Config, error) {
+func newClientCredentialsConfiguration(client ClientOptions, options ClientCredentialsOptions, metadata OpenIDProviderMetadata) (clientcredentials.Config, error) {
 	if metadata.TokenEndpoint == "" {
 		return clientcredentials.Config{}, fmt.Errorf("%w: token", ErrUnsupportedEndpoint)
 	}
 	if !ProviderSupportsGrantType(metadata, "client_credentials") {
 		return clientcredentials.Config{}, fmt.Errorf("oidc: provider does not support the client_credentials grant type")
 	}
-	method, err := SelectClientAuthMethod(options.Authentication.Method, metadata.TokenEndpointAuthMethodsSupported)
+	method, err := SelectClientAuthMethod(client.Authentication.Method, metadata.TokenEndpointAuthMethodsSupported)
 	if err != nil {
 		return clientcredentials.Config{}, err
 	}
-	secret := options.Authentication.ClientSecret
+	secret := client.Authentication.ClientSecret
 	if method == ClientAuthNone {
 		secret = ""
 	}
 	current := clientcredentials.Config{
-		ClientID:     options.Authentication.ClientID,
+		ClientID:     client.Authentication.ClientID,
 		ClientSecret: secret,
 		TokenURL:     metadata.TokenEndpoint,
 		Scopes:       options.Scopes,
 		AuthStyle:    ClientAuthStyle(method),
 	}
-	if options.ClientCredentialsResource != "" {
-		current.EndpointParams = url.Values{"resource": {options.ClientCredentialsResource}}
+	if options.Resource != "" {
+		current.EndpointParams = url.Values{"resource": {options.Resource}}
 	}
 	return current, nil
 }

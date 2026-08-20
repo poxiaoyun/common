@@ -44,11 +44,9 @@ type ClientOptions struct {
 	HTTPClient     *http.Client
 	Authentication ClientAuthentication
 	RedirectURL    string
-	Scopes         []string
-	// ClientCredentialsResource is the RFC 8707 Resource Indicator sent with
-	// client_credentials token requests. One Client caches tokens for one
-	// resource and one set of Scopes.
-	ClientCredentialsResource   string
+	// Scopes configures Authorization Code and Refresh Token operations.
+	// Client Credentials scopes belong to one ClientCredentialsTokenSource.
+	Scopes                      []string
 	IDTokenAudiences            []string
 	AccessTokenValidation       AccessTokenValidation
 	IntrospectionAuthentication *ClientAuthentication
@@ -56,6 +54,23 @@ type ClientOptions struct {
 	// DiscoveryRefreshInterval controls automatic Provider Configuration
 	// refresh. Zero and negative values disable automatic refresh.
 	DiscoveryRefreshInterval time.Duration
+}
+
+// ClientCredentialsOptions binds one Client Credentials token source to one
+// Resource Server and one exact scope set. An empty Resource lets the
+// Authorization Server select its configured default resource.
+type ClientCredentialsOptions struct {
+	Resource string
+	Scopes   []string
+}
+
+// ClientCredentialsTokenSource obtains and caches Client Credentials tokens
+// for one immutable resource and scope profile. Sources created by the same
+// Client share Provider Discovery but never share access tokens.
+type ClientCredentialsTokenSource struct {
+	client      *Client
+	options     ClientCredentialsOptions
+	tokenFlight SingleFlight[*oauth2.Token]
 }
 
 // DefaultDiscoveryRefreshInterval is the interval after which an operation
@@ -68,10 +83,16 @@ func NewDefaultClientOptions() ClientOptions {
 	return ClientOptions{DiscoveryRefreshInterval: DefaultDiscoveryRefreshInterval}
 }
 
-// GetClientCredentialsToken obtains and caches a client_credentials token. Calls
-// made concurrently while a token is unavailable share one endpoint request.
-func (c *Client) GetClientCredentialsToken(ctx context.Context) (*TokenSet, error) {
-	token, err := c.credentialsFlight.Get(ctx, clientCredentialsTokenState, c.getClientCredentialsToken)
+// NewClientCredentialsTokenSource creates one target-bound token source.
+func (c *Client) NewClientCredentialsTokenSource(options ClientCredentialsOptions) *ClientCredentialsTokenSource {
+	options.Scopes = slices.Clone(options.Scopes)
+	return &ClientCredentialsTokenSource{client: c, options: options}
+}
+
+// Token obtains and caches a Client Credentials token. Concurrent calls made
+// while a token is unavailable share one token endpoint request.
+func (s *ClientCredentialsTokenSource) Token(ctx context.Context) (*TokenSet, error) {
+	token, err := s.tokenFlight.Get(ctx, clientCredentialsTokenState, s.getToken)
 	if err != nil {
 		return nil, err
 	}
@@ -85,12 +106,12 @@ func clientCredentialsTokenState(token *oauth2.Token) CacheState {
 	return CacheExpired
 }
 
-func (c *Client) getClientCredentialsToken(ctx context.Context) (*oauth2.Token, error) {
-	configuration, err := c.getClientConfiguration(ctx)
+func (s *ClientCredentialsTokenSource) getToken(ctx context.Context) (*oauth2.Token, error) {
+	configuration, err := s.client.getClientConfiguration(ctx)
 	if err != nil {
 		return nil, err
 	}
-	clientCredentials, err := configuration.GetClientCredentialsConfiguration()
+	clientCredentials, err := configuration.GetClientCredentialsConfiguration(s.options)
 	if err != nil {
 		return nil, err
 	}
