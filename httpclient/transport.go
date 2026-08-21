@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"time"
@@ -9,6 +10,14 @@ import (
 
 // TransportWrapper composes runtime request behavior around a base transport.
 type TransportWrapper func(http.RoundTripper) http.RoundTripper
+
+// RequestAuthenticator prepares one outgoing request with its target
+// authentication. Implementations may preserve or replace existing
+// Authorization headers according to the identity they own.
+type RequestAuthenticator interface {
+	// AuthenticateRequest authenticates request without sending it.
+	AuthenticateRequest(request *http.Request) error
+}
 
 // WrappedRoundTripper exposes the next transport in a wrapping chain.
 type WrappedRoundTripper interface {
@@ -37,6 +46,19 @@ func TLSClientConfig(transport http.RoundTripper) (*tls.Config, error) {
 	}
 }
 
+// FindRequestAuthenticator returns the first request authenticator in a
+// RoundTripper wrapping chain, or nil when the chain has none.
+func FindRequestAuthenticator(transport http.RoundTripper) RequestAuthenticator {
+	switch transport := transport.(type) {
+	case RequestAuthenticator:
+		return transport
+	case WrappedRoundTripper:
+		return FindRequestAuthenticator(transport.WrappedRoundTripper())
+	default:
+		return nil
+	}
+}
+
 const MaxidleConnsPerHost = 25
 
 func NewDefaultHTTPTransport() *http.Transport {
@@ -48,57 +70,38 @@ func NewDefaultHTTPTransport() *http.Transport {
 }
 
 func NewBearerTokenRoundTripper(token string, rt http.RoundTripper) http.RoundTripper {
-	return &BearerTokenRoundTripper{token: token, transport: rt}
+	return AuthorizationRoundTripper{Authorization: "Bearer " + token, Transport: rt}
 }
 
-func NewBearerTokenFuncRoundTripper(tokenFunc func(r *http.Request) (string, error), rt http.RoundTripper) (http.RoundTripper, error) {
-	if tokenFunc == nil {
-		return nil, fmt.Errorf("tokenFunc is required")
+// AuthorizationRoundTripper adds a fixed Authorization value to cloned
+// requests before passing them to Transport.
+type AuthorizationRoundTripper struct {
+	Authorization string
+	Transport     http.RoundTripper
+}
+
+func (rt AuthorizationRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	if err := rt.AuthenticateRequest(clone); err != nil {
+		return nil, err
 	}
-	return &BearerTokenRoundTripper{tokenFunc: tokenFunc, transport: rt}, nil
+	return rt.Transport.RoundTrip(clone)
 }
 
-type BearerTokenRoundTripper struct {
-	token     string
-	tokenFunc func(r *http.Request) (string, error)
-	transport http.RoundTripper
-}
-
-func (rt *BearerTokenRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	// If the request already has an Authorization header, we assume it is already authenticated.
-	if len(req.Header.Get("Authorization")) != 0 {
-		return rt.transport.RoundTrip(req)
+// AuthenticateRequest adds Authorization unless request already carries one.
+func (rt AuthorizationRoundTripper) AuthenticateRequest(req *http.Request) error {
+	if req.Header.Get("Authorization") == "" {
+		req.Header.Set("Authorization", rt.Authorization)
 	}
-	token := rt.token
-	if rt.tokenFunc != nil {
-		dynamicToken, err := rt.tokenFunc(req)
-		if err != nil {
-			return nil, err
-		}
-		token = dynamicToken
-	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-	return rt.transport.RoundTrip(req)
+	return nil
 }
 
-func (rt *BearerTokenRoundTripper) WrappedRoundTripper() http.RoundTripper { return rt.transport }
-
-type BasicAuthRoundTripper struct {
-	username  string
-	password  string
-	transport http.RoundTripper
+// WrappedRoundTripper returns Transport.
+func (rt AuthorizationRoundTripper) WrappedRoundTripper() http.RoundTripper {
+	return rt.Transport
 }
 
 func NewBasicAuthRoundTripper(username, password string, rt http.RoundTripper) http.RoundTripper {
-	return &BasicAuthRoundTripper{username: username, password: password, transport: rt}
+	credentials := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	return AuthorizationRoundTripper{Authorization: "Basic " + credentials, Transport: rt}
 }
-
-func (rt *BasicAuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if len(req.Header.Get("Authorization")) != 0 {
-		return rt.transport.RoundTrip(req)
-	}
-	req.SetBasicAuth(rt.username, rt.password)
-	return rt.transport.RoundTrip(req)
-}
-
-func (rt *BasicAuthRoundTripper) WrappedRoundTripper() http.RoundTripper { return rt.transport }

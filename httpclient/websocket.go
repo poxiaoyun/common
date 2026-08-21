@@ -12,8 +12,9 @@ import (
 
 // WebSocketClient streams WebSocket messages using one resolved ClientConfig.
 type WebSocketClient struct {
-	server url.URL
-	dialer websocket.Dialer
+	server        url.URL
+	dialer        websocket.Dialer
+	authenticator RequestAuthenticator
 }
 
 // StreamWebSocket connects to address with the default network configuration
@@ -60,7 +61,11 @@ func NewWebSocketClient(clientConfig *ClientConfig) (*WebSocketClient, error) {
 			dialer.TLSClientConfig.NextProtos = []string{"http/1.1"}
 		}
 	}
-	return &WebSocketClient{server: *clientConfig.Server, dialer: dialer}, nil
+	return &WebSocketClient{
+		server:        *clientConfig.Server,
+		dialer:        dialer,
+		authenticator: FindRequestAuthenticator(clientConfig.RoundTripper),
+	}, nil
 }
 
 // WebSocketOptions controls one WebSocket stream.
@@ -87,6 +92,20 @@ func (c *WebSocketClient) Stream(
 ) error {
 	log := log.FromContext(ctx).WithValues("path", requestPath, "queries", options.Queries)
 	u := MergeURL(c.server, requestPath, options.Queries)
+	header := options.Header.Clone()
+	if header == nil {
+		header = http.Header{}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return err
+	}
+	request.Header = header
+	if c.authenticator != nil {
+		if err := c.authenticator.AuthenticateRequest(request); err != nil {
+			return err
+		}
+	}
 	switch u.Scheme {
 	case "http":
 		u.Scheme = "ws"
@@ -98,7 +117,7 @@ func (c *WebSocketClient) Stream(
 		dialer.Proxy = http.ProxyURL(options.ProxyURL)
 	}
 	log.V(6).Info("common http client websocket", "url", u.String())
-	connection, _, err := dialer.DialContext(ctx, u.String(), options.Header)
+	connection, _, err := dialer.DialContext(ctx, u.String(), request.Header)
 	if err != nil {
 		return err
 	}

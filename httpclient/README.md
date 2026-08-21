@@ -12,12 +12,21 @@ and then call `NewClientFromClientConfig`. Use
 `TLSClientConfig` when another protocol needs to inspect the effective TLS
 configuration through a wrapped transport chain.
 
+Authentication transports that must also authenticate non-HTTP protocol
+handshakes implement `RequestAuthenticator`. The built-in Bearer and Basic
+transports implement it, and wrapped transports may supply their own dynamic
+implementation. WebSocket discovers the outermost authenticator in the
+transport chain and applies it to the opening handshake, including token
+refresh failures in the stream's returned error.
+
 Pass runtime dialing behavior through
 `httpclient.TransportConfig{DialContext: ...}`
 when building a ClientConfig. The dialer is installed on the underlying HTTP
 transport and remains available to WebSocket callers through ClientConfig.
-WebSocket also inherits the configured TLS and proxy behavior; call-specific
-WebSocketOptions may override its proxy and supply handshake headers.
+WebSocket also inherits the configured TLS, proxy, and authentication behavior;
+call-specific WebSocketOptions may override its proxy and supply additional
+handshake headers. The selected authenticator owns whether an existing
+Authorization header is preserved or replaced.
 
 Construct `WebSocketClient` from ClientConfig and call `Stream` with a required
 message handler. The client owns connection setup, keepalive, Ping/Pong, and

@@ -1,6 +1,10 @@
 package oidc
 
-import "net/http"
+import (
+	"net/http"
+
+	"xiaoshiai.cn/common/httpclient"
+)
 
 type clientCredentialsRoundTripper struct {
 	source *ClientCredentialsTokenSource
@@ -19,13 +23,22 @@ func NewClientCredentialsRoundTripper(source *ClientCredentialsTokenSource, base
 // RoundTrip implements http.RoundTripper. The input request is cloned before
 // its headers are changed.
 func (t *clientCredentialsRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
-	token, err := t.source.Token(request.Context())
-	if err != nil {
+	clone := request.Clone(request.Context())
+	if err := t.AuthenticateRequest(clone); err != nil {
 		return nil, err
 	}
-	clone := request.Clone(request.Context())
-	clone.Header.Set("Authorization", token.TokenType+" "+token.AccessToken)
 	return t.base.RoundTrip(clone)
+}
+
+// AuthenticateRequest sets a target-bound Client Credentials access token on
+// request, replacing any caller-supplied Authorization header.
+func (t *clientCredentialsRoundTripper) AuthenticateRequest(request *http.Request) error {
+	token, err := t.source.Token(request.Context())
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", token.TokenType+" "+token.AccessToken)
+	return nil
 }
 
 // WrappedRoundTripper exposes the transport that owns the network and TLS
@@ -34,3 +47,5 @@ func (t *clientCredentialsRoundTripper) RoundTrip(request *http.Request) (*http.
 func (t *clientCredentialsRoundTripper) WrappedRoundTripper() http.RoundTripper {
 	return t.base
 }
+
+var _ httpclient.RequestAuthenticator = (*clientCredentialsRoundTripper)(nil)
