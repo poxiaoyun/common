@@ -14,6 +14,8 @@ func TestRequestSourceIPInCIDR(t *testing.T) {
 	}{
 		{name: "IPv4", remoteAddr: "192.0.2.10:4321", cidrs: []string{"192.0.2.0/24"}, want: true},
 		{name: "IPv6", remoteAddr: "[2001:db8::10]:4321", cidrs: []string{"2001:db8::/32"}, want: true},
+		{name: "wildcard", remoteAddr: "192.0.2.10:4321", cidrs: []string{"*"}, want: true},
+		{name: "wildcard without TCP address", remoteAddr: "local-transport", cidrs: []string{"*"}, want: true},
 		{name: "invalid remote address", remoteAddr: "192.0.2.10", cidrs: []string{"192.0.2.0/24"}, want: false},
 	}
 

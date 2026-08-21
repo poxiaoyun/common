@@ -2,6 +2,20 @@
 
 This context defines reusable domain values shared by common modules.
 
+## Authentication
+
+**Subject ID**:
+The stable identifier of an authenticated principal, used for authorization, ownership, and audit correlation.
+_Avoid_: Username, display name
+
+**Subject Name**:
+The provider-verified username or principal name within an authentication domain. It may change and is not a stable ownership key.
+_Avoid_: Display name, subject ID
+
+**Display Name**:
+A human-facing, non-unique label for a subject.
+_Avoid_: Subject name, username
+
 ## Attachments
 
 **Asset**:

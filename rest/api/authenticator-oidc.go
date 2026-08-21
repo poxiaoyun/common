@@ -12,7 +12,7 @@ import (
 func NewDefaultOIDCOptions() *OIDCOptions {
 	return &OIDCOptions{
 		Scope:          []string{oidc.ScopeOpenID, "profile"},
-		UsernameClaims: []string{"name"},
+		UsernameClaims: []string{"preferred_username"},
 	}
 }
 
@@ -95,6 +95,7 @@ func (o *OIDCAuthenticator) AuthenticateToken(ctx context.Context, token string)
 	}
 	// email
 	var email string
+	var emailVerified bool
 	for _, candidate := range o.EmailClaimCandidate {
 		if err := c.unmarshalClaim(candidate, &email); err != nil {
 			continue
@@ -102,7 +103,6 @@ func (o *OIDCAuthenticator) AuthenticateToken(ctx context.Context, token string)
 		// If the email_verified claim is present, ensure the email is valid.
 		// https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims
 		if hasEmailVerified := c.hasClaim("email_verified"); hasEmailVerified {
-			var emailVerified bool
 			if err := c.unmarshalClaim("email_verified", &emailVerified); err != nil {
 				return nil, fmt.Errorf("oidc: parse 'email_verified' claim: %v", err)
 			}
@@ -123,6 +123,12 @@ func (o *OIDCAuthenticator) AuthenticateToken(ctx context.Context, token string)
 			return nil, fmt.Errorf("oidc: no username/email claim found")
 		}
 	}
+	var displayName string
+	if c.hasClaim("name") {
+		if err := c.unmarshalClaim("name", &displayName); err != nil {
+			return nil, fmt.Errorf("oidc: parse 'name' claim: %v", err)
+		}
+	}
 	// groups
 	var groups stringOrArray
 	for _, candidate := range o.GroupsClaimCandidate {
@@ -134,10 +140,12 @@ func (o *OIDCAuthenticator) AuthenticateToken(ctx context.Context, token string)
 		}
 	}
 	subject := Subject{
-		ID:     idToken.Subject,
-		Name:   username,
-		Email:  email,
-		Groups: groups,
+		ID:            idToken.Subject,
+		Name:          username,
+		DisplayName:   displayName,
+		Email:         email,
+		EmailVerified: emailVerified,
+		Groups:        groups,
 	}
 	return &AuthenticationInfo{Subject: subject}, nil
 }

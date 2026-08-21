@@ -30,6 +30,7 @@ func (s *SelfTokenAuthenticator) AuthenticateToken(ctx context.Context, token st
 		Subject: api.Subject{
 			ID:            session.User.Subject,
 			Name:          session.User.Name,
+			DisplayName:   session.User.DisplayName,
 			Email:         session.User.Email,
 			EmailVerified: session.User.EmailVerified,
 			Groups:        session.User.Groups,
@@ -58,6 +59,7 @@ func (a *APIKeyAuthenticator) AuthenticateBasic(ctx context.Context, username, p
 		Subject: api.Subject{
 			ID:            user.Subject,
 			Name:          user.Name,
+			DisplayName:   user.DisplayName,
 			Email:         user.Email,
 			EmailVerified: user.EmailVerified,
 			Groups:        user.Groups,

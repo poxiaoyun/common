@@ -18,7 +18,7 @@ Authentication converts transport credentials into one canonical `Authentication
 
 Context helpers are named for the value they carry: `WithAuthentication` pairs with `AuthenticationFromContext`, and `WithAuthorizationDecision` pairs with `AuthorizationDecisionFromContext`. Authentication operations retain the verb `Authenticate`; values and filters use the noun `Authentication`.
 
-`Subject.ID` is the stable authorization and audit identifier. `Name` and `Email` are display attributes and must not be used as authorization keys. An OIDC adapter must resolve the issuer and `sub` pair into the authentication domain's stable subject ID. It must not infer identity semantics from provider-specific ID prefixes or from comparisons with `client_id`.
+`Subject.ID` is the stable authorization and audit identifier. `Name` is the provider-verified username or principal name within the authentication domain, while `DisplayName` is a non-unique human-facing label. Neither is a stable ownership key. An OIDC adapter must resolve the issuer and `sub` pair into the authentication domain's stable subject ID, map `preferred_username` to `Name`, and map the OIDC `name` claim to `DisplayName`. It must not infer identity semantics from provider-specific ID prefixes or from comparisons with `client_id`.
 
 At the request seam, an authenticator returns `ErrNotProvided` only when the request does not contain a credential applicable to that authenticator. Credential-level adapters may return `ErrNotProvided` so another adapter can inspect the same credential, but the request adapter that established credential presence converts final non-recognition into an authentication error.
 
@@ -87,7 +87,11 @@ Domain filters do not depend on OpenTelemetry or mutate spans. `trace.go` owns H
 
 ## Trusted propagation
 
-Authentication webhooks and trusted request-header propagation carry the complete `AuthenticationInfo` structure. Request headers use one encoded authentication envelope so additions to the canonical value cannot be silently dropped by parallel field lists. The envelope is an assertion, not a credential; inbound use requires a `RequestHeaderTrustVerifier`, and the trusted proxy must remove client-supplied assertion headers.
+Authentication webhooks and trusted request-header propagation carry the complete `AuthenticationInfo` structure. Request headers use one multi-header representation based on the Kubernetes authenticating-proxy convention. `X-Remote-User` contains the optional `Subject.Name`, `X-Remote-Uid` contains `Subject.ID`, and `X-Remote-Group` is repeated. Fields outside that convention use its `X-Remote-Extra-*` extension namespace instead of defining unrelated `X-Remote-*` headers.
+
+`X-Remote-Extra-Actor` contains the Actor's stable ID and marks Actor presence; `X-Remote-Extra-Actor-Name` contains its optional username or principal name. `X-Remote-Extra-Audience` and `X-Remote-Extra-Scopes` are repeated fields. `X-Remote-Extra-Access: oauth2` marks a non-nil OAuth access constraint, including one with empty audiences and scopes. Header absence otherwise represents the corresponding zero or nil field. The codec maps fields without deciding whether their contents are valid authentication data. The headers are assertions, not credentials; inbound use requires a `RequestHeaderTrustVerifier`, and the trusted proxy must remove every configured client-supplied authentication header before writing its own values.
+
+`CIDRRequestHeaderTrustVerifier` authorizes the direct connection peer by exact IP or CIDR. `TLSRequestHeaderTrustVerifier` requires a client certificate chain already verified by the HTTP server and optionally restricts its leaf Common Name. An allowlist entry of `*` permits every peer IP or every verified client certificate name respectively; it never bypasses the TLS chain requirement. These verifiers establish assertion-source trust only and do not validate decoded authentication fields.
 
 ## List pagination seam
 

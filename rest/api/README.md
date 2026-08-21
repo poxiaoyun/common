@@ -11,7 +11,7 @@ uses the corresponding arguments only when those headers are absent. Pass zero
 content length to omit the generated length header. The reader is always copied
 to EOF without validating its bytes against the declared length.
 
-Authenticators normalize credentials into `AuthenticationInfo`, which embeds the request `Subject` and may include a current `Actor` and OAuth access constraints. `Subject.ID` is the stable key for authorization, ownership, and audit. Display names are not identity keys.
+Authenticators normalize credentials into `AuthenticationInfo`, which embeds the request `Subject` and may include a current `Actor` and OAuth access constraints. `Subject.ID` is the stable key for authorization, ownership, and audit; `Subject.Name` is the provider-verified username or principal name; `Subject.DisplayName` is a non-unique human-facing label.
 
 Callers compose authenticators and install the result through `NewAuthenticationFilter`. `FallbackAuthenticator` adds an explicit fallback around a completed request authenticator; use `NewFallbackAuthenticator(chain, NewAnonymousAuthenticator())` when requests without credentials should receive the anonymous subject. An invalid supplied credential is never downgraded to anonymous.
 
@@ -30,7 +30,9 @@ Authentication and authorization errors are diagnostic by default: filters recor
 
 Authentication and authorization filters do not write trace data. OpenTelemetry behavior is owned by `trace.go` and composed explicitly: install `NewEndUserTraceFilter` after authentication and `NewAuthorizationTraceFilter` after request attributes only when those potentially sensitive or high-cardinality attributes are required. Route tracing records the low-cardinality `http.route` template and does not record dynamic path-variable values.
 
-`StaticTokenAuthenticator` maps one opaque token to a fixed `AuthenticationInfo`. Request-header and webhook adapters transport the same canonical value without provider-specific attribute maps.
+`StaticTokenAuthenticator` maps one opaque token to a fixed `AuthenticationInfo`. Request-header and webhook adapters transport the same canonical value without provider-specific attribute maps. Trusted request-header propagation uses one multi-header representation based on the Kubernetes authenticating-proxy convention: `X-Remote-User`, `X-Remote-Uid`, and repeated `X-Remote-Group` carry the standard fields, while display name, email, Actor, Access, audiences, and scopes use fixed `X-Remote-Extra-*` extension fields. `X-Remote-Extra-Access: oauth2` distinguishes a non-nil empty OAuth access constraint from authentication without an access token.
+
+Proxy transports clone the outbound request and remove all configured authentication headers before either injecting fixed/context authentication or forwarding a route without authentication. This prevents client-supplied assertions from crossing either protected or public proxy routes.
 
 `AuthenticationReview` and `AuthorizationReview` are shared wire contracts.
 The webhook authenticator, authorizer, and audit sink can receive an

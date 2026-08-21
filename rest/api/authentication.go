@@ -58,8 +58,11 @@ func (err *AuthenticationChallengeError) Unwrap() error {
 type Subject struct {
 	// ID is the stable identifier used by authorization, ownership, and audit.
 	ID string `json:"id"`
-	// Name is a display name. It must not be used as an authorization key.
+	// Name is the provider-verified username or principal name within the
+	// authentication domain. It is not a stable ownership key.
 	Name string `json:"name,omitempty"`
+	// DisplayName is a human-facing, non-unique label.
+	DisplayName string `json:"displayName,omitempty"`
 	// Email is the authenticated subject email when the authentication method
 	// provides one.
 	Email string `json:"email,omitempty"`

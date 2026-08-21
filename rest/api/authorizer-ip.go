@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"slices"
 )
 
 func NewAllowCIDRAuthorizer(cidrs []string, defaultDec Decision) RequestAuthorizer {
@@ -15,6 +16,9 @@ func NewAllowCIDRAuthorizer(cidrs []string, defaultDec Decision) RequestAuthoriz
 }
 
 func RequestSourceIPInCIDR(cidrs []string, r *http.Request) bool {
+	if slices.Contains(cidrs, "*") {
+		return true
+	}
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return false
@@ -24,6 +28,9 @@ func RequestSourceIPInCIDR(cidrs []string, r *http.Request) bool {
 
 func InCIDR(ip string, cidrs []string) bool {
 	for _, cidr := range cidrs {
+		if cidr == "*" {
+			return true
+		}
 		if cidr == ip {
 			return true
 		}
