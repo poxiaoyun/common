@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -32,8 +33,14 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-// ErrNotFound identifies a missing repository, manifest, tag, or blob.
-var ErrNotFound = errors.New("OCI content not found")
+var (
+	// ErrNotFound identifies a missing repository, manifest, tag, or blob.
+	ErrNotFound = errors.New("OCI content not found")
+	// ErrUnauthorized identifies Registry authentication failure.
+	ErrUnauthorized = errors.New("OCI Registry authentication failed")
+	// ErrForbidden identifies Registry authorization failure.
+	ErrForbidden = errors.New("OCI Registry access forbidden")
+)
 
 // ClientOptions configures a client for one registry endpoint.
 type ClientOptions struct {
@@ -157,7 +164,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 			Password: options.Password,
 		})))
 	} else {
-		remoteOptions = append(remoteOptions, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+		remoteOptions = append(remoteOptions, remote.WithAuth(authn.Anonymous))
 	}
 	return &Client{
 		registry:      registry,
@@ -691,9 +698,7 @@ func cloneMap(values map[string]string) map[string]string {
 		return nil
 	}
 	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, values)
 	return cloned
 }
 
@@ -702,8 +707,15 @@ func mapError(err error) error {
 		return nil
 	}
 	var transportError *transport.Error
-	if errors.As(err, &transportError) && transportError.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("%w: %w", ErrNotFound, err)
+	if errors.As(err, &transportError) {
+		switch transportError.StatusCode {
+		case http.StatusNotFound:
+			return fmt.Errorf("%w: %w", ErrNotFound, err)
+		case http.StatusUnauthorized:
+			return fmt.Errorf("%w: %w", ErrUnauthorized, err)
+		case http.StatusForbidden:
+			return fmt.Errorf("%w: %w", ErrForbidden, err)
+		}
 	}
 	return err
 }

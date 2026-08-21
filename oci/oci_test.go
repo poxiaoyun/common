@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"testing/fstest"
@@ -260,6 +261,38 @@ func TestRegistryCredentialValidation(t *testing.T) {
 	}
 	if _, err := NewClient(ClientOptions{Endpoint: "registry.example.com", Token: "token"}); err != nil {
 		t.Fatalf("NewClient(token): %v", err)
+	}
+	if _, err := NewClient(ClientOptions{Endpoint: "registry.example.com"}); err != nil {
+		t.Fatalf("NewClient(anonymous): %v", err)
+	}
+}
+
+func TestRegistryMapsAccessErrors(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		want   error
+	}{
+		{status: http.StatusUnauthorized, want: ErrUnauthorized},
+		{status: http.StatusForbidden, want: ErrForbidden},
+	} {
+		t.Run(http.StatusText(test.status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				if request.Method == http.MethodGet && request.URL.Path == "/v2/" {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.WriteHeader(test.status)
+			}))
+			defer server.Close()
+			client, err := NewClient(ClientOptions{Endpoint: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.HeadManifest(t.Context(), "team/app", "v1")
+			if !errors.Is(err, test.want) {
+				t.Fatalf("HeadManifest() error = %v, want %v", err, test.want)
+			}
+		})
 	}
 }
 

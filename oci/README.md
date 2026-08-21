@@ -33,8 +33,9 @@ layout, so this module performs no implicit Docker or containerd directory
 discovery. Deployments pass the intended files explicitly through `CAFile`,
 `CertFile`, and `KeyFile`.
 
-Authentication accepts either a bearer `Token`, a `Username`/`Password` pair,
-or the Docker credential keychain when neither is explicitly configured.
+Authentication accepts either a bearer `Token` or a `Username`/`Password`
+pair. When neither is configured, access is anonymous. The client does not
+implicitly read the Docker credential keychain.
 
 `DownloadLayer` returns a stream plus the complete OCI descriptor. The caller
 must close the stream, and must handle size or digest errors returned while

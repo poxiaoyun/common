@@ -16,12 +16,14 @@ to callers.
 ## Invariants
 
 - Endpoints without a scheme use verified HTTPS.
-- Bearer token and username/password authentication are mutually exclusive.
+- Bearer token and username/password authentication are mutually exclusive;
+  omitting both selects anonymous access without consulting ambient keychains.
 - CA and mTLS files are explicit; the module does not scan Docker/containerd
   certificate directories or parse `hosts.toml`.
 - Blob and manifest descriptors describe the exact uploaded bytes.
 - Downloaded layers are checked against both descriptor size and digest.
-- Registry 404 responses map to `ErrNotFound`.
+- Registry 404, 401, and 403 responses map to `ErrNotFound`,
+  `ErrUnauthorized`, and `ErrForbidden`.
 - Removing a tag must not delete a manifest still reachable through another
   tag. Registries without direct tag deletion use a replacement manifest that
   is subsequently deleted by digest.
