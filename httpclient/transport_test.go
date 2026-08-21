@@ -16,6 +16,25 @@ func (f unsupportedRoundTripper) RoundTrip(request *http.Request) (*http.Respons
 	return f(request)
 }
 
+func TestCloneRequestOnlyCopiesHeadersDeeply(t *testing.T) {
+	request, err := http.NewRequest(http.MethodGet, "https://api.example/resource", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Add("X-Test", "original")
+	clone := httpclient.CloneRequest(request)
+	if clone == request {
+		t.Fatal("CloneRequest() returned the original request")
+	}
+	if clone.URL != request.URL || clone.Body != request.Body {
+		t.Fatal("CloneRequest() deep-copied fields other than Header")
+	}
+	clone.Header.Set("X-Test", "clone")
+	if got := request.Header.Get("X-Test"); got != "original" {
+		t.Fatalf("original header = %q, want original", got)
+	}
+}
+
 func TestAuthorizationRoundTrippersCloneCallerRequest(t *testing.T) {
 	tests := []struct {
 		name      string

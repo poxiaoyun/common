@@ -23,7 +23,7 @@ func NewClientCredentialsRoundTripper(source *ClientCredentialsTokenSource, base
 // RoundTrip implements http.RoundTripper. The input request is cloned before
 // its headers are changed.
 func (t *clientCredentialsRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
-	clone := request.Clone(request.Context())
+	clone := httpclient.CloneRequest(request)
 	if err := t.AuthenticateRequest(clone); err != nil {
 		return nil, err
 	}

@@ -19,6 +19,15 @@ type RequestAuthenticator interface {
 	AuthenticateRequest(request *http.Request) error
 }
 
+// CloneRequest creates a shallow copy of request with an independent Header.
+// It is intended for RoundTrippers that only mutate outgoing request headers.
+func CloneRequest(request *http.Request) *http.Request {
+	clone := new(http.Request)
+	*clone = *request
+	clone.Header = request.Header.Clone()
+	return clone
+}
+
 // WrappedRoundTripper exposes the next transport in a wrapping chain.
 type WrappedRoundTripper interface {
 	// WrappedRoundTripper returns the transport wrapped by this implementation.
@@ -81,7 +90,7 @@ type AuthorizationRoundTripper struct {
 }
 
 func (rt AuthorizationRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	clone := req.Clone(req.Context())
+	clone := CloneRequest(req)
 	if err := rt.AuthenticateRequest(clone); err != nil {
 		return nil, err
 	}
