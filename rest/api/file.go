@@ -13,7 +13,8 @@ import (
 
 // ContentResponse describes either content served by this process or a link to
 // content served by another system. Content and Location are mutually
-// exclusive. ServeContentResponse closes Content after the response completes.
+// exclusive. Content with a Content-Range header must contain the selected
+// bytes. ServeContentResponse closes Content after the response completes.
 type ContentResponse struct {
 	StatusCode    int
 	Headers       http.Header
@@ -24,8 +25,9 @@ type ContentResponse struct {
 
 // ServeContentResponse writes a resolved content response. Linked content is
 // redirected with 307 by default so temporary or presigned locations are not
-// cached as permanent and the request method is preserved. Local content is
-// delegated to ServeContent so conditional and range requests remain supported.
+// cached as permanent and the request method is preserved. Pre-resolved ranged
+// content is written directly; other local content is delegated to ServeContent
+// so conditional and range requests remain supported.
 func ServeContentResponse(w http.ResponseWriter, r *http.Request, response ContentResponse) {
 	for key, values := range response.Headers {
 		for _, value := range values {
@@ -33,11 +35,6 @@ func ServeContentResponse(w http.ResponseWriter, r *http.Request, response Conte
 		}
 	}
 	if response.Location != "" {
-		if response.Content != nil {
-			response.Content.Close()
-			http.Error(w, "content response cannot contain both content and location", http.StatusInternalServerError)
-			return
-		}
 		status := response.StatusCode
 		if status == 0 {
 			status = http.StatusTemporaryRedirect
@@ -54,17 +51,43 @@ func ServeContentResponse(w http.ResponseWriter, r *http.Request, response Conte
 		return
 	}
 	defer response.Content.Close()
+	contentRange := response.Headers.Get("Content-Range")
+	if contentRange != "" {
+		ServePartialContent(w, r, response.Content, response.ContentLength, contentRange)
+		return
+	}
 	ServeContent(w, r, response.Content, response.ContentLength)
+}
+
+// ServePartialContent writes content whose byte range has already been
+// resolved. Existing Content-Range and Content-Length response headers take
+// precedence over contentRange and contentLength. The caller must provide both
+// values either through the response headers or arguments. Content is copied
+// to EOF without checking it against Content-Length. A zero contentLength does
+// not generate a Content-Length header. Use ServeContent when conditional or
+// range request headers still need evaluation.
+func ServePartialContent(w http.ResponseWriter, r *http.Request, content io.Reader, contentLength int64, contentRange string) {
+	if w.Header().Get("Content-Range") == "" {
+		w.Header().Set("Content-Range", contentRange)
+	}
+	if w.Header().Get("Content-Length") == "" && contentLength > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
+	}
+	w.WriteHeader(http.StatusPartialContent)
+	if r.Method != http.MethodHead {
+		_, _ = io.Copy(w, content)
+	}
 }
 
 // HTTPRange specifies the byte range to be sent to the client.
 type HTTPRange struct {
-	start, length int64
+	Start  int64
+	Length int64
 }
 
 // ContentRange returns the HTTP Content-Range field value for size.
 func (r HTTPRange) ContentRange(size int64) string {
-	return fmt.Sprintf("bytes %d-%d/%d", r.start, r.start+r.length-1, size)
+	return fmt.Sprintf("bytes %d-%d/%d", r.Start, r.Start+r.Length-1, size)
 }
 
 var ErrNoOverlap = stderrors.New("no overlapping ranges")
@@ -108,8 +131,8 @@ func ParseRange(s string, size int64) ([]HTTPRange, error) {
 			if i > size {
 				i = size
 			}
-			r.start = size - i
-			r.length = size - r.start
+			r.Start = size - i
+			r.Length = size - r.Start
 		} else {
 			i, err := strconv.ParseInt(start, 10, 64)
 			if err != nil || i < 0 {
@@ -121,19 +144,19 @@ func ParseRange(s string, size int64) ([]HTTPRange, error) {
 				noOverlap = true
 				continue
 			}
-			r.start = i
+			r.Start = i
 			if end == "" {
 				// If no end is specified, range extends to end of the file.
-				r.length = size - r.start
+				r.Length = size - r.Start
 			} else {
 				i, err := strconv.ParseInt(end, 10, 64)
-				if err != nil || r.start > i {
+				if err != nil || r.Start > i {
 					return nil, stderrors.New("invalid range")
 				}
 				if i >= size {
 					i = size - 1
 				}
-				r.length = i - r.start + 1
+				r.Length = i - r.Start + 1
 			}
 		}
 		ranges = append(ranges, r)
@@ -221,16 +244,16 @@ func ServeContent(w http.ResponseWriter, r *http.Request, content io.Reader, siz
 	if len(ranges) == 1 {
 		rng := ranges[0]
 		w.Header().Set("Content-Range", rng.ContentRange(size))
-		w.Header().Set("Content-Length", strconv.FormatInt(rng.length, 10))
+		w.Header().Set("Content-Length", strconv.FormatInt(rng.Length, 10))
 		code = http.StatusPartialContent
 		if r.Method != "HEAD" {
-			offset := rng.start
+			offset := rng.Start
 			if seeker, ok := content.(io.Seeker); ok {
 				seeker.Seek(offset, io.SeekStart)
 			} else {
 				io.CopyN(io.Discard, content, offset)
 			}
-			io.CopyN(w, content, rng.length)
+			io.CopyN(w, content, rng.Length)
 		}
 	} else {
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))

@@ -1,5 +1,17 @@
 # REST API design
 
+## Content delivery seam
+
+`ContentResponse` uses `Content-Range` to identify content whose byte range
+has already been resolved by its source. `ServeContentResponse` writes that
+content directly as HTTP 206 without applying the request Range again. Content
+without `Content-Range` continues through `ServeContent`, which owns conditional
+and range request evaluation. `ServePartialContent` is the reusable seam for
+already-resolved bytes. Existing `Content-Range` and `Content-Length` response
+headers take precedence; its arguments supply either value when the header has
+not already been set. Content is copied to EOF without validation against the
+declared length. A zero content-length argument generates no length header.
+
 ## Authentication seam
 
 Authentication converts transport credentials into one canonical `AuthenticationInfo` value. `Subject` is the identity the request is about. An optional `Actor` is the current identity acting for that subject. An optional `Access` contains audience and scope constraints carried by an OAuth 2.0 access token. Groups belong to a subject; audiences and scopes belong to the credential used for this request. Protocol claims and provider-specific metadata do not flow through an unstructured attribute map.

@@ -140,6 +140,13 @@ func (r *Builder) Body(data io.Reader, contenttype string) *Builder {
 	return r
 }
 
+// ContentLength sets the known request body length. Zero leaves the length
+// inferred by net/http from the body when possible.
+func (r *Builder) ContentLength(length int64) *Builder {
+	r.R.ContentLength = length
+	return r
+}
+
 func (r *Builder) GetBody(fn func() (io.ReadCloser, error)) *Builder {
 	r.R.GetBody = fn
 	return r

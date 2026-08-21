@@ -1,7 +1,6 @@
 package api_test
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"xiaoshiai.cn/common/httpclient"
 	"xiaoshiai.cn/common/rest/api"
 )
 
@@ -74,8 +74,8 @@ func TestWebhookAuditSinkWrapsTransport(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sink, err := api.NewWebhookAuditSinkWithTransport(context.Background(), &api.WebhookAuditSinkOptions{
-		Server: server.URL,
+	sink, err := api.NewWebhookAuditSinkWithTransport(t.Context(), &api.WebhookAuditSinkOptions{
+		Options: httpclient.Options{Server: server.URL},
 	}, func(base http.RoundTripper) http.RoundTripper {
 		return auditRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
 			request = request.Clone(request.Context())

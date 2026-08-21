@@ -107,16 +107,9 @@ func (c *CachedAuditSink) Save(log *AuditLog) error {
 }
 
 type WebhookAuditSinkOptions struct {
-	Server                string        `json:"server,omitempty" description:"webhook server address. e.g. https://example.com/webhook-audit"`
-	ProxyURL              string        `json:"proxyURL,omitempty" description:"proxy server address"`
-	Token                 string        `json:"token,omitempty" config:"token,sensitive" description:"authentication token"`
-	Username              string        `json:"username,omitempty" description:"basic auth username"`
-	Password              string        `json:"password,omitempty" config:"password,sensitive" description:"basic auth password"`
-	CertFile              string        `json:"certFile,omitempty" description:"path to TLS certificate file"`
-	KeyFile               string        `json:"keyFile,omitempty" description:"path to TLS key file"`
-	CAFile                string        `json:"caFile,omitempty" description:"path to CA certificate file"`
-	InsecureSkipTLSVerify bool          `json:"insecureSkipTLSVerify,omitempty" description:"skip TLS verification"`
-	Timeout               time.Duration `json:"timeout,omitempty" description:"timeout when sending audit log to webhook server"`
+	// Options configures the audit-event HTTP endpoint and transport.
+	httpclient.Options `json:",inline"`
+	Timeout            time.Duration `json:"timeout,omitempty" description:"timeout when sending audit log to webhook server"`
 }
 
 type WebhookAuditSink struct {
@@ -130,28 +123,17 @@ func NewDefaultWebhookAuditSinkOptions() *WebhookAuditSinkOptions {
 	}
 }
 
-func NewWebhookAuditSink(opts *WebhookAuditSinkOptions) (*WebhookAuditSink, error) {
-	return NewWebhookAuditSinkWithContext(context.Background(), opts)
-}
-
-func NewWebhookAuditSinkWithContext(ctx context.Context, opts *WebhookAuditSinkOptions) (*WebhookAuditSink, error) {
+// NewWebhookAuditSink creates a webhook audit sink. ctx owns the lifetime of
+// dynamic TLS certificate watchers created for its transport.
+func NewWebhookAuditSink(ctx context.Context, opts *WebhookAuditSinkOptions) (*WebhookAuditSink, error) {
 	return NewWebhookAuditSinkWithTransport(ctx, opts, nil)
 }
 
 // NewWebhookAuditSinkWithTransport creates an audit sink whose requests use
-// wrapper around the WebhookOptions transport.
-func NewWebhookAuditSinkWithTransport(ctx context.Context, opts *WebhookAuditSinkOptions, wrapper WebhookTransportWrapper) (*WebhookAuditSink, error) {
-	client, err := newHTTPClientFromWebhookOptions(ctx, &WebhookOptions{
-		Server:                opts.Server,
-		ProxyURL:              opts.ProxyURL,
-		Token:                 opts.Token,
-		Username:              opts.Username,
-		Password:              opts.Password,
-		CertFile:              opts.CertFile,
-		KeyFile:               opts.KeyFile,
-		CAFile:                opts.CAFile,
-		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
-	}, wrapper)
+// wrapper around the configured HTTP transport. ctx owns the lifetime of
+// dynamic TLS certificate watchers created for that transport.
+func NewWebhookAuditSinkWithTransport(ctx context.Context, opts *WebhookAuditSinkOptions, wrapper httpclient.TransportWrapper) (*WebhookAuditSink, error) {
+	client, err := httpclient.NewClientFromOptionsWithTransport(ctx, &opts.Options, wrapper)
 	if err != nil {
 		return nil, err
 	}

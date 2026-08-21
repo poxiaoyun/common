@@ -13,6 +13,56 @@ import (
 	"xiaoshiai.cn/common/rest/api"
 )
 
+func TestMergeURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		base    string
+		path    string
+		queries url.Values
+		want    string
+	}{
+		{
+			name: "join path",
+			base: "https://api.example.com/base",
+			path: "v1/resources",
+			want: "https://api.example.com/base/v1/resources",
+		},
+		{
+			name: "preserve and add queries",
+			base: "https://api.example.com/resources?existing=value",
+			queries: url.Values{
+				"filter": {"first", "second"},
+			},
+			want: "https://api.example.com/resources?existing=value&filter=first&filter=second",
+		},
+		{
+			name: "override existing query",
+			base: "https://api.example.com/resources?page=1&size=10",
+			queries: url.Values{
+				"page": {"2"},
+			},
+			want: "https://api.example.com/resources?page=2&size=10",
+		},
+		{
+			name: "empty path preserves complete URL",
+			base: "wss://api.example.com/events/?source=test",
+			want: "wss://api.example.com/events/?source=test",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			base, err := url.Parse(test.base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := httpclient.MergeURL(*base, test.path, test.queries).String()
+			if got != test.want {
+				t.Fatalf("MergeURL() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 type TestQeuryOption struct {
 	Foo  string `json:"foo"`
 	ABC  string `json:"abc,omitempty"`

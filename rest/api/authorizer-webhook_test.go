@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"xiaoshiai.cn/common/httpclient"
 	"xiaoshiai.cn/common/rest/api"
 )
 
@@ -25,7 +26,7 @@ func TestWebhookAuthorizerSendsCompleteAuthentication(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.AuthorizationReview{Status: &api.AuthorizationReviewStatus{Decision: api.DecisionAllow}})
 	}))
 	defer server.Close()
-	authorizer, err := api.NewWebhookAuthorizer(&api.WebhookAuthorizerOptions{WebhookOptions: api.WebhookOptions{Server: server.URL}})
+	authorizer, err := api.NewWebhookAuthorizer(t.Context(), &api.WebhookAuthorizerOptions{Options: httpclient.Options{Server: server.URL}})
 	if err != nil {
 		t.Fatal(err)
 	}

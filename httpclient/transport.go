@@ -1,13 +1,40 @@
 package httpclient
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"time"
 )
 
+// TransportWrapper composes runtime request behavior around a base transport.
+type TransportWrapper func(http.RoundTripper) http.RoundTripper
+
+// WrappedRoundTripper exposes the next transport in a wrapping chain.
 type WrappedRoundTripper interface {
+	// WrappedRoundTripper returns the transport wrapped by this implementation.
 	WrappedRoundTripper() http.RoundTripper
+}
+
+// TLSClientConfigHolder exposes the TLS configuration used by a RoundTripper.
+type TLSClientConfigHolder interface {
+	// TLSClientConfig returns the transport's effective TLS configuration.
+	TLSClientConfig() *tls.Config
+}
+
+// TLSClientConfig returns the TLS configuration from a known or wrapped
+// RoundTripper.
+func TLSClientConfig(transport http.RoundTripper) (*tls.Config, error) {
+	switch transport := transport.(type) {
+	case *http.Transport:
+		return transport.TLSClientConfig, nil
+	case TLSClientConfigHolder:
+		return transport.TLSClientConfig(), nil
+	case WrappedRoundTripper:
+		return TLSClientConfig(transport.WrappedRoundTripper())
+	default:
+		return nil, fmt.Errorf("round tripper %T does not expose a TLS client config", transport)
+	}
 }
 
 const MaxidleConnsPerHost = 25

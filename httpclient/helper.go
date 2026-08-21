@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/http/httputil"
@@ -33,13 +34,15 @@ type Request struct {
 	Headers      http.Header
 	Cookies      []http.Cookie
 	ContentType  string
-	Body         io.Reader
-	GetBody      func() (io.ReadCloser, error)
-	DecodeInto   any
-	OnRequest    func(req *http.Request) error
-	OnResponse   func(req *http.Request, resp *http.Response) error
-	OnDecode     func(req *http.Request, resp *http.Response, into any) error
-	Debug        bool
+	// ContentLength overrides the body length inferred by net/http when positive.
+	ContentLength int64
+	Body          io.Reader
+	GetBody       func() (io.ReadCloser, error)
+	DecodeInto    any
+	OnRequest     func(req *http.Request) error
+	OnResponse    func(req *http.Request, resp *http.Response) error
+	OnDecode      func(req *http.Request, resp *http.Response, into any) error
+	Debug         bool
 }
 
 func BuildRequest(ctx context.Context, r Request) (*http.Request, error) {
@@ -67,9 +70,10 @@ func BuildRequest(ctx context.Context, r Request) (*http.Request, error) {
 	if r.ContentType != "" {
 		req.Header.Set("Content-Type", r.ContentType)
 	}
-	for k, v := range r.Headers {
-		req.Header[k] = v
+	if r.ContentLength > 0 {
+		req.ContentLength = r.ContentLength
 	}
+	maps.Copy(req.Header, r.Headers)
 	for _, v := range r.Cookies {
 		req.AddCookie(&v)
 	}
@@ -192,11 +196,11 @@ func NewFormURLEncoded(data map[string]string) (io.Reader, string) {
 }
 
 func MergeURL(u url.URL, reqpath string, queries url.Values) *url.URL {
-	u.Path = path.Join(u.Path, reqpath)
-	existsQuery := u.Query()
-	for k, v := range queries {
-		existsQuery[k] = v
+	if reqpath != "" {
+		u.Path = path.Join(u.Path, reqpath)
 	}
+	existsQuery := u.Query()
+	maps.Copy(existsQuery, queries)
 	u.RawQuery = existsQuery.Encode()
 	return &u
 }

@@ -5,61 +5,84 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"time"
 
-	"github.com/gorilla/websocket"
-	"xiaoshiai.cn/common/log"
 	libtls "xiaoshiai.cn/common/tls"
 )
 
-type Config struct {
-	Server                string `json:"server,omitempty"`
-	ProxyURL              string `json:"proxyURL,omitempty"`
-	Token                 string `json:"token,omitempty"`
-	Username              string `json:"username,omitempty"`
-	Password              string `json:"password,omitempty"`
-	CertFile              string `json:"certFile,omitempty"`
-	KeyFile               string `json:"keyFile,omitempty"`
-	CAFile                string `json:"caFile,omitempty"`
-	InsecureSkipTLSVerify bool   `json:"insecureSkipTLSVerify,omitempty"`
+// Options describes a remote HTTP endpoint, TLS, proxy, and authentication.
+type Options struct {
+	Server                string `json:"server,omitempty" description:"remote HTTP server address"`
+	ProxyURL              string `json:"proxyURL,omitempty" description:"HTTP proxy server address"`
+	Token                 string `json:"token,omitempty" config:"token,sensitive" description:"bearer token sent to the remote server"`
+	Username              string `json:"username,omitempty" description:"basic authentication username"`
+	Password              string `json:"password,omitempty" config:"password,sensitive" description:"basic authentication password"`
+	CertFile              string `json:"certFile,omitempty" description:"path to the TLS client certificate"`
+	KeyFile               string `json:"keyFile,omitempty" description:"path to the TLS client private key"`
+	CAFile                string `json:"caFile,omitempty" description:"path to a CA certificate bundle"`
+	InsecureSkipTLSVerify bool   `json:"insecureSkipTLSVerify,omitempty" description:"skip verification of the remote TLS certificate"`
 }
 
-func (c *Config) ToClientConfig(ctx context.Context) (*ClientConfig, error) {
-	serverURL, err := url.Parse(c.Server)
+// TransportConfig supplies runtime behavior for the underlying HTTP transport.
+type TransportConfig struct {
+	// DialContext replaces the network dialer used by both HTTP and WebSocket
+	// clients built from the resulting ClientConfig. Nil uses net/http's default
+	// dial behavior.
+	DialContext func(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+// BuildClientConfig assembles the runtime client configuration.
+func BuildClientConfig(ctx context.Context, options *Options, transportConfig TransportConfig) (*ClientConfig, error) {
+	serverURL, err := url.Parse(options.Server)
 	if err != nil {
 		return nil, err
 	}
 	httptransport := NewDefaultHTTPTransport()
+	httptransport.DialContext = transportConfig.DialContext
 	// tls
 	tlsconfig, err := libtls.NewDynamicTLSConfig(ctx, &libtls.DynamicTLSConfigOptions{
-		CertFile: c.CertFile, KeyFile: c.KeyFile, CAFile: c.CAFile,
+		CertFile:              options.CertFile,
+		KeyFile:               options.KeyFile,
+		CAFile:                options.CAFile,
+		InsecureSkipTLSVerify: options.InsecureSkipTLSVerify,
 	})
 	if err != nil {
 		return nil, err
 	}
 	httptransport.TLSClientConfig = tlsconfig
 	// proxy
-	if c.ProxyURL != "" {
-		proxyURL, err := url.Parse(c.ProxyURL)
+	if options.ProxyURL != "" {
+		proxyURL, err := url.Parse(options.ProxyURL)
 		if err != nil {
 			return nil, err
 		}
 		httptransport.Proxy = http.ProxyURL(proxyURL)
 	}
 	tp := http.RoundTripper(httptransport)
-	if c.Token != "" {
-		tp = NewBearerTokenRoundTripper(c.Token, tp)
+	if options.Token != "" {
+		tp = NewBearerTokenRoundTripper(options.Token, tp)
 	}
-	if c.Username != "" && c.Password != "" {
-		tp = NewBasicAuthRoundTripper(c.Username, c.Password, tp)
+	if options.Username != "" && options.Password != "" {
+		tp = NewBasicAuthRoundTripper(options.Username, options.Password, tp)
 	}
-	return &ClientConfig{Server: serverURL, RoundTripper: tp}, nil
+	return &ClientConfig{
+		Server:       serverURL,
+		RoundTripper: tp,
+		DialContext:  transportConfig.DialContext,
+		Proxy:        httptransport.Proxy,
+	}, nil
 }
 
 type ClientConfig struct {
-	Server       *url.URL
+	// Server is the base URL used to resolve relative request paths.
+	Server *url.URL
+	// RoundTripper contains the configured TLS, proxy, and authentication layers
+	// used by HTTP requests.
 	RoundTripper http.RoundTripper
-	DialContext  func(ctx context.Context, network, addr string) (net.Conn, error)
+	// DialContext is exposed separately because WebSocket dialers do not execute
+	// an HTTP RoundTripper.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+	// Proxy is exposed separately for the same reason as DialContext.
+	Proxy func(*http.Request) (*url.URL, error)
 }
 
 type Client struct {
@@ -71,23 +94,30 @@ type Client struct {
 	Debug        bool
 }
 
-func NewClientFromConfig(ctx context.Context, cfg *Config) (*Client, error) {
-	clientConfig, err := cfg.ToClientConfig(ctx)
+// NewClientFromOptions builds a Client with the transport described by options.
+func NewClientFromOptions(ctx context.Context, options *Options) (*Client, error) {
+	return NewClientFromOptionsWithTransport(ctx, options, nil)
+}
+
+// NewClientFromOptionsWithTransport builds the configured Client. A non-nil
+// wrapper is composed around its RoundTripper; nil keeps the configured base
+// transport unchanged.
+func NewClientFromOptionsWithTransport(ctx context.Context, options *Options, wrapper TransportWrapper) (*Client, error) {
+	clientConfig, err := BuildClientConfig(ctx, options, TransportConfig{})
 	if err != nil {
 		return nil, err
+	}
+	if wrapper != nil {
+		clientConfig.RoundTripper = wrapper(clientConfig.RoundTripper)
 	}
 	return NewClientFromClientConfig(clientConfig), nil
 }
 
+// NewClientFromClientConfig builds a Client from an already assembled runtime
+// configuration without replacing or rewrapping its RoundTripper.
 func NewClientFromClientConfig(cfg *ClientConfig) *Client {
-	var transport http.RoundTripper
-	if cfg.DialContext != nil {
-		transport = &http.Transport{DialContext: cfg.DialContext}
-	} else {
-		transport = cfg.RoundTripper
-	}
 	return &Client{
-		RoundTripper: transport,
+		RoundTripper: cfg.RoundTripper,
 		Server:       cfg.Server,
 		// set default response handler
 		OnResponse: StatusOnResponse,
@@ -134,97 +164,4 @@ func (c *Client) Request(method string, path string) *Builder {
 		RoundTripper(c.RoundTripper).
 		BaseAddr(c.Server).
 		Debug(c.Debug)
-}
-
-func GetWebSocket(ctx context.Context, cliconfig *ClientConfig, reqpath string, queries url.Values, onmsg func(ctx context.Context, msg []byte) error) error {
-	return GetWebSocketOptions(ctx, cliconfig, reqpath, WebSocketOptions{
-		Queries:           queries,
-		KeepAliveInterval: 30 * time.Second,
-		OnMessage: func(ctx context.Context, kind int, msg []byte) error {
-			return onmsg(ctx, msg)
-		},
-	})
-}
-
-type WebSocketOptions struct {
-	Queries           url.Values
-	Header            http.Header
-	KeepAliveInterval time.Duration
-	ProxyURL          *url.URL
-	OnMessage         func(ctx context.Context, kind int, msg []byte) error
-}
-
-func GetWebSocketOptions(ctx context.Context, cliconfig *ClientConfig, reqpath string, options WebSocketOptions) error {
-	log := log.FromContext(ctx).WithValues("path", reqpath, "queries", options.Queries)
-	u := MergeURL(*cliconfig.Server, reqpath, options.Queries)
-	switch u.Scheme {
-	case "http":
-		u.Scheme = "ws"
-	case "https":
-		u.Scheme = "wss"
-	}
-	dailer := websocket.Dialer{
-		NetDialContext: cliconfig.DialContext,
-	}
-	if options.ProxyURL != nil {
-		dailer.Proxy = http.ProxyURL(options.ProxyURL)
-	}
-	if cliconfig.RoundTripper != nil {
-		if httptransport, ok := cliconfig.RoundTripper.(*http.Transport); ok {
-			dailer.TLSClientConfig = httptransport.TLSClientConfig
-		}
-	}
-	log.V(6).Info("common http client websocket", "url", u.String())
-	wsconn, _, err := dailer.DialContext(ctx, u.String(), options.Header)
-	if err != nil {
-		return err
-	}
-	defer wsconn.Close()
-
-	if options.KeepAliveInterval != 0 {
-		go func() {
-			log.V(3).Info("start keep alive", "interval", options.KeepAliveInterval)
-			// keep alive
-			timer := time.NewTimer(options.KeepAliveInterval)
-			defer timer.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-timer.C:
-					if err := wsconn.WriteMessage(websocket.PingMessage, nil); err != nil {
-						log.V(5).Error(err, "failed to send ping")
-						return
-					}
-					timer.Reset(options.KeepAliveInterval)
-				}
-			}
-		}()
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			msgtype, message, err := wsconn.ReadMessage()
-			if err != nil {
-				log.Error(err, "failed to read message")
-				return err
-			}
-			switch msgtype {
-			case websocket.PingMessage:
-				if err := wsconn.WriteMessage(websocket.PongMessage, nil); err != nil {
-					return err
-				}
-			case websocket.PongMessage:
-			case websocket.TextMessage, websocket.BinaryMessage:
-				if options.OnMessage != nil {
-					if err := options.OnMessage(ctx, msgtype, message); err != nil {
-						return err
-					}
-				}
-			}
-		}
-	}
 }

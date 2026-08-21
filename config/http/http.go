@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"slices"
 	"sync"
 
@@ -23,7 +22,7 @@ var _ config.DynamicConfig = (*DynamicConfig)(nil)
 
 // New returns an HTTP-backed DynamicConfig.
 func New(ctx context.Context, address, token string) (*DynamicConfig, error) {
-	client, err := httpclient.NewClientFromConfig(ctx, &httpclient.Config{Server: address, Token: token})
+	client, err := httpclient.NewClientFromOptions(ctx, &httpclient.Options{Server: address, Token: token})
 	if err != nil {
 		return nil, err
 	}
@@ -32,16 +31,15 @@ func New(ctx context.Context, address, token string) (*DynamicConfig, error) {
 
 // TransportWrapper composes authentication or other request behavior around
 // the HTTP adapter's configured base transport.
-type TransportWrapper func(http.RoundTripper) http.RoundTripper
+type TransportWrapper = httpclient.TransportWrapper
 
 // NewWithTransport returns an HTTP-backed DynamicConfig whose requests use
 // wrapper around the adapter's configured base transport.
 func NewWithTransport(ctx context.Context, address string, wrapper TransportWrapper) (*DynamicConfig, error) {
-	client, err := httpclient.NewClientFromConfig(ctx, &httpclient.Config{Server: address})
+	client, err := httpclient.NewClientFromOptionsWithTransport(ctx, &httpclient.Options{Server: address}, wrapper)
 	if err != nil {
 		return nil, err
 	}
-	client.RoundTripper = wrapper(client.RoundTripper)
 	return &DynamicConfig{client: client}, nil
 }
 

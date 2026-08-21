@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"xiaoshiai.cn/common/httpclient"
 	"xiaoshiai.cn/common/rest/api"
 )
 
@@ -33,7 +34,7 @@ func TestWebhookAuthenticatorReturnsCanonicalAuthentication(t *testing.T) {
 		}})
 	}))
 	defer server.Close()
-	processor, err := api.NewWebhookAuthenticatorProcessor(&api.WebhookOptions{Server: server.URL})
+	processor, err := api.NewWebhookAuthenticatorProcessor(t.Context(), &httpclient.Options{Server: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,9 +68,10 @@ func TestWebhookAuthenticatorValidatesRequestedAudienceAndWrapsTransport(t *test
 	defer server.Close()
 
 	authenticator, err := api.NewWebhookAuthenticatorWithTransport(
+		t.Context(),
 		&api.WebhookAuthenticatorOptions{
-			WebhookOptions: api.WebhookOptions{Server: server.URL},
-			Audiences:      []string{"urn:apps:api"},
+			Options:   httpclient.Options{Server: server.URL},
+			Audiences: []string{"urn:apps:api"},
 		},
 		func(base http.RoundTripper) http.RoundTripper {
 			return webhookRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
@@ -95,9 +97,9 @@ func TestWebhookAuthenticatorRejectsMissingRequestedAudience(t *testing.T) {
 		}})
 	}))
 	defer server.Close()
-	authenticator, err := api.NewWebhookAuthenticator(&api.WebhookAuthenticatorOptions{
-		WebhookOptions: api.WebhookOptions{Server: server.URL},
-		Audiences:      []string{"urn:apps:api"},
+	authenticator, err := api.NewWebhookAuthenticator(t.Context(), &api.WebhookAuthenticatorOptions{
+		Options:   httpclient.Options{Server: server.URL},
+		Audiences: []string{"urn:apps:api"},
 	})
 	if err != nil {
 		t.Fatal(err)

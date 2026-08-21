@@ -3,6 +3,29 @@
 `httpclient` provides request construction and transport helpers shared by Go
 clients.
 
+`NewClientFromOptions` builds the default transport with TLS, proxy, and static
+authentication. `NewClientFromOptionsWithTransport` additionally wraps the
+assembled RoundTripper when its wrapper is non-nil; nil reuses the same base
+transport behavior as `NewClientFromOptions`. Lower-level adapters can use
+`BuildClientConfig`, explicitly wrap the returned `ClientConfig.RoundTripper`,
+and then call `NewClientFromClientConfig`. Use
+`TLSClientConfig` when another protocol needs to inspect the effective TLS
+configuration through a wrapped transport chain.
+
+Pass runtime dialing behavior through
+`httpclient.TransportConfig{DialContext: ...}`
+when building a ClientConfig. The dialer is installed on the underlying HTTP
+transport and remains available to WebSocket callers through ClientConfig.
+WebSocket also inherits the configured TLS and proxy behavior; call-specific
+WebSocketOptions may override its proxy and supply handshake headers.
+
+Construct `WebSocketClient` from ClientConfig and call `Stream` with a required
+message handler. The client owns connection setup, keepalive, Ping/Pong, and
+the read loop; WebSocketOptions contains only call-specific optional settings.
+For the common one-off case, `StreamWebSocket` accepts a complete URL and a
+required message handler, and uses system TLS, the environment proxy, and the
+default keepalive interval.
+
 `ListOptionsToQuery` 只负责把非零 `meta.ListOptions` 字段转换成平铺 query；它不判断
 分页组合、不选择分页行为，也不规范化字段值。
 

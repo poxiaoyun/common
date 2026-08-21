@@ -2,6 +2,15 @@
 
 `rest/api` provides the HTTP routing, authentication, authorization, audit, and request-context interfaces shared by services using `common`.
 
+`ContentResponse` represents local content or a redirect. Local content with a
+`Content-Range` header must already contain the selected bytes and is written as
+HTTP 206; other local content is passed to `ServeContent` for conditional and
+range request handling. Call `ServePartialContent` directly for already-selected
+bytes. It preserves existing `Content-Range` and `Content-Length` headers and
+uses the corresponding arguments only when those headers are absent. Pass zero
+content length to omit the generated length header. The reader is always copied
+to EOF without validating its bytes against the declared length.
+
 Authenticators normalize credentials into `AuthenticationInfo`, which embeds the request `Subject` and may include a current `Actor` and OAuth access constraints. `Subject.ID` is the stable key for authorization, ownership, and audit. Display names are not identity keys.
 
 Callers compose authenticators and install the result through `NewAuthenticationFilter`. `FallbackAuthenticator` adds an explicit fallback around a completed request authenticator; use `NewFallbackAuthenticator(chain, NewAnonymousAuthenticator())` when requests without credentials should receive the anonymous subject. An invalid supplied credential is never downgraded to anonymous.
@@ -24,8 +33,8 @@ Authentication and authorization filters do not write trace data. OpenTelemetry 
 `StaticTokenAuthenticator` maps one opaque token to a fixed `AuthenticationInfo`. Request-header and webhook adapters transport the same canonical value without provider-specific attribute maps.
 
 `AuthenticationReview` and `AuthorizationReview` are shared wire contracts.
-The webhook authenticator, authorizer, and audit sink can receive a
-`WebhookTransportWrapper`, allowing a service to apply one OAuth Client
+The webhook authenticator, authorizer, and audit sink can receive an
+`httpclient.TransportWrapper`, allowing a service to apply one OAuth Client
 Credentials transport to all calls to an IAM Resource Server while retaining
 each endpoint's own timeout, proxy, and TLS settings. Token authentication
 reviews may request audiences; the response must contain at least one validated

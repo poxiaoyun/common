@@ -10,64 +10,25 @@ import (
 	"xiaoshiai.cn/common/httpclient"
 )
 
-// WebhookTransportWrapper decorates the transport created from WebhookOptions.
-type WebhookTransportWrapper func(http.RoundTripper) http.RoundTripper
-
-// WebhookOptions is the basic options for webhook operations
-type WebhookOptions struct {
-	Server                string `json:"server,omitempty"`
-	ProxyURL              string `json:"proxyURL,omitempty"`
-	Token                 string `json:"token,omitempty" config:"token,sensitive"`
-	Username              string `json:"username,omitempty"`
-	Password              string `json:"password,omitempty" config:"password,sensitive"`
-	CertFile              string `json:"certFile,omitempty"`
-	KeyFile               string `json:"keyFile,omitempty"`
-	CAFile                string `json:"caFile,omitempty"`
-	InsecureSkipTLSVerify bool   `json:"insecureSkipTLSVerify,omitempty"`
-}
-
-// NewHTTPClientFromWebhookOptions returns a client configured for a webhook.
-func NewHTTPClientFromWebhookOptions(opts *WebhookOptions) (*httpclient.Client, error) {
-	return newHTTPClientFromWebhookOptions(context.Background(), opts, nil)
-}
-
-func newHTTPClientFromWebhookOptions(ctx context.Context, opts *WebhookOptions, wrapper WebhookTransportWrapper) (*httpclient.Client, error) {
-	config := &httpclient.Config{
-		Server:                opts.Server,
-		ProxyURL:              opts.ProxyURL,
-		Token:                 opts.Token,
-		Username:              opts.Username,
-		Password:              opts.Password,
-		CertFile:              opts.CertFile,
-		KeyFile:               opts.KeyFile,
-		CAFile:                opts.CAFile,
-		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
-	}
-	client, err := httpclient.NewClientFromConfig(ctx, config)
-	if err != nil {
-		return nil, err
-	}
-	if wrapper != nil {
-		client.RoundTripper = wrapper(client.RoundTripper)
-	}
-	return client, nil
-}
-
 type WebhookAuthenticatorOptions struct {
-	WebhookOptions `json:",inline"`
+	// Options configures the AuthenticationReview HTTP endpoint and transport.
+	httpclient.Options `json:",inline"`
 	// Audiences delegates audience validation to the authentication review
 	// service. Resource Servers that validate OAuth tokens locally leave it empty.
 	Audiences []string `json:"audiences,omitempty" description:"Audiences requested when reviewing bearer tokens"`
 }
 
-func NewWebhookAuthenticator(opts *WebhookAuthenticatorOptions) (*WebhookAuthenticator, error) {
-	return NewWebhookAuthenticatorWithTransport(opts, nil)
+// NewWebhookAuthenticator creates an AuthenticationReview client. ctx owns the
+// lifetime of dynamic TLS certificate watchers created for its transport.
+func NewWebhookAuthenticator(ctx context.Context, opts *WebhookAuthenticatorOptions) (*WebhookAuthenticator, error) {
+	return NewWebhookAuthenticatorWithTransport(ctx, opts, nil)
 }
 
 // NewWebhookAuthenticatorWithTransport creates a Review authenticator whose
-// requests use wrapper around the WebhookOptions transport.
-func NewWebhookAuthenticatorWithTransport(opts *WebhookAuthenticatorOptions, wrapper WebhookTransportWrapper) (*WebhookAuthenticator, error) {
-	client, err := newHTTPClientFromWebhookOptions(context.Background(), &opts.WebhookOptions, wrapper)
+// requests use wrapper around the configured HTTP transport. ctx owns the
+// lifetime of dynamic TLS certificate watchers created for that transport.
+func NewWebhookAuthenticatorWithTransport(ctx context.Context, opts *WebhookAuthenticatorOptions, wrapper httpclient.TransportWrapper) (*WebhookAuthenticator, error) {
+	client, err := httpclient.NewClientFromOptionsWithTransport(ctx, &opts.Options, wrapper)
 	if err != nil {
 		return nil, err
 	}
@@ -118,8 +79,10 @@ func (w *WebhookAuthenticator) AuthenticatePublicKey(ctx context.Context, pubkey
 	return w.Process.Process(ctx, &AuthenticationReviewSpec{SSHPublicKey: string(ssh.MarshalAuthorizedKey(pubkey))})
 }
 
-func NewWebhookAuthenticatorProcessor(opts *WebhookOptions) (*WebhookAuthenticatorProcessor, error) {
-	cli, err := NewHTTPClientFromWebhookOptions(opts)
+// NewWebhookAuthenticatorProcessor creates a reusable AuthenticationReview
+// client. ctx owns the lifetime of its dynamic TLS certificate watchers.
+func NewWebhookAuthenticatorProcessor(ctx context.Context, opts *httpclient.Options) (*WebhookAuthenticatorProcessor, error) {
+	cli, err := httpclient.NewClientFromOptions(ctx, opts)
 	if err != nil {
 		return nil, err
 	}

@@ -27,3 +27,10 @@ func (t *clientCredentialsRoundTripper) RoundTrip(request *http.Request) (*http.
 	clone.Header.Set("Authorization", token.TokenType+" "+token.AccessToken)
 	return t.base.RoundTrip(clone)
 }
+
+// WrappedRoundTripper exposes the transport that owns the network and TLS
+// configuration. WebSocket clients use it to reuse that configuration without
+// executing this HTTP-only token injection layer.
+func (t *clientCredentialsRoundTripper) WrappedRoundTripper() http.RoundTripper {
+	return t.base
+}
