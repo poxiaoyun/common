@@ -13,7 +13,7 @@ current, err = client.Get(ctx, "iam", "server", &options)
 远程调用方可以直接构造 HTTP adapter：
 
 ```go
-client, err := confighttp.New(ctx, "https://iam.example/v1", token)
+client, err := confighttp.New("https://iam.example/v1", token)
 ```
 
 使用轮转凭据的服务通过 `confighttp.NewWithTransport` 包装 adapter

@@ -1,5 +1,13 @@
 # REST API design
 
+## Server TLS lifecycle
+
+`ServeTLS` installs file-backed serving credentials before listening. The
+initial certificate pair must load successfully; server option errors stop
+startup instead of falling through to a plaintext listener. The TLS package
+reloads the pair lazily for new handshakes, so the server runtime context owns
+only listener shutdown and no certificate watcher.
+
 ## Content delivery seam
 
 `ContentResponse` uses `Content-Range` to identify content whose byte range

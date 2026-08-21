@@ -47,7 +47,7 @@ func TestHTTPDynamicConfigUsesPerCallNamespaceObjectsAndVersions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := confighttp.New(t.Context(), server.URL+"/v1", "secret")
+	client, err := confighttp.New(server.URL+"/v1", "secret")
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -77,7 +77,7 @@ func TestHTTPDynamicConfigReturnsEmptyMissingValue(t *testing.T) {
 		fmt.Fprint(w, `{"status":"Failure","code":404,"reason":"NotFound","message":"configuration not found"}`)
 	}))
 	defer server.Close()
-	client, err := confighttp.New(t.Context(), server.URL, "")
+	client, err := confighttp.New(server.URL, "")
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -97,7 +97,7 @@ func TestHTTPDynamicConfigListsKeys(t *testing.T) {
 		fmt.Fprint(w, `[{"name":"server","version":5},{"name":"global","version":3}]`)
 	}))
 	defer server.Close()
-	client, err := confighttp.New(t.Context(), server.URL, "")
+	client, err := confighttp.New(server.URL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestHTTPDynamicConfigComposesTransport(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := confighttp.NewWithTransport(t.Context(), server.URL, func(base http.RoundTripper) http.RoundTripper {
+	client, err := confighttp.NewWithTransport(server.URL, func(base http.RoundTripper) http.RoundTripper {
 		return roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 			clone := request.Clone(request.Context())
 			clone.Header.Set("Authorization", "Bearer service-token")
@@ -151,7 +151,7 @@ func TestHTTPDynamicConfigWatchStreamsSnapshotsWithoutEventTypes(t *testing.T) {
 		fmt.Fprint(w, "data: {\"name\":\"server\",\"version\":0,\"value\":{}}\n\n")
 	}))
 	defer server.Close()
-	client, err := confighttp.New(t.Context(), server.URL, "")
+	client, err := confighttp.New(server.URL, "")
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -179,7 +179,7 @@ func TestHTTPDynamicConfigWatchRequiresInitialSnapshot(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 	}))
 	defer server.Close()
-	client, err := confighttp.New(t.Context(), server.URL, "")
+	client, err := confighttp.New(server.URL, "")
 	if err != nil {
 		t.Fatal(err)
 	}

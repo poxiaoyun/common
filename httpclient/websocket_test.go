@@ -82,7 +82,7 @@ func TestWebSocketClientUsesConfiguredBearerToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config, err := httpclient.BuildClientConfig(t.Context(), &httpclient.Options{
+	config, err := httpclient.BuildClientConfig(&httpclient.Options{
 		Server: server.URL,
 		Token:  "websocket-token",
 	}, httpclient.TransportConfig{})

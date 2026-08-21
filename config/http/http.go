@@ -21,8 +21,8 @@ import (
 var _ config.DynamicConfig = (*DynamicConfig)(nil)
 
 // New returns an HTTP-backed DynamicConfig.
-func New(ctx context.Context, address, token string) (*DynamicConfig, error) {
-	client, err := httpclient.NewClientFromOptions(ctx, &httpclient.Options{Server: address, Token: token})
+func New(address, token string) (*DynamicConfig, error) {
+	client, err := httpclient.NewClientFromOptions(&httpclient.Options{Server: address, Token: token})
 	if err != nil {
 		return nil, err
 	}
@@ -35,8 +35,8 @@ type TransportWrapper = httpclient.TransportWrapper
 
 // NewWithTransport returns an HTTP-backed DynamicConfig whose requests use
 // wrapper around the adapter's configured base transport.
-func NewWithTransport(ctx context.Context, address string, wrapper TransportWrapper) (*DynamicConfig, error) {
-	client, err := httpclient.NewClientFromOptionsWithTransport(ctx, &httpclient.Options{Server: address}, wrapper)
+func NewWithTransport(address string, wrapper TransportWrapper) (*DynamicConfig, error) {
+	client, err := httpclient.NewClientFromOptionsWithTransport(&httpclient.Options{Server: address}, wrapper)
 	if err != nil {
 		return nil, err
 	}

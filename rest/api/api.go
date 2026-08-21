@@ -108,5 +108,5 @@ func (m *API) Serve(ctx context.Context, listen string) error {
 }
 
 func (m *API) ServeTLS(ctx context.Context, listen, cert, key string) error {
-	return ServeContext(ctx, listen, m.Build(), WithDynamicTLSConfig(ctx, cert, key))
+	return ServeContext(ctx, listen, m.Build(), WithDynamicTLSConfig(cert, key))
 }

@@ -31,7 +31,7 @@ func TestClientImplementsServiceProtocol(t *testing.T) {
 	}))
 	defer httpServer.Close()
 
-	client, err := assethttp.New(t.Context(), assethttp.Options{
+	client, err := assethttp.New(assethttp.Options{
 		Address: httpServer.URL,
 		Token:   "secret",
 	})
@@ -139,7 +139,7 @@ func TestClientPutDirectLink(t *testing.T) {
 	server := assethttp.NewServer(local)
 	httpServer := httptest.NewServer(api.New().Group(server.Group(), server.PublicGroup()).Build())
 	defer httpServer.Close()
-	client, err := assethttp.New(t.Context(), assethttp.Options{Address: httpServer.URL})
+	client, err := assethttp.New(assethttp.Options{Address: httpServer.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestClientResolveReturnsLinkWithoutFollowingRedirect(t *testing.T) {
 	})
 	httpServer := httptest.NewServer(api.New().Group(server.PublicGroup()).Build())
 	defer httpServer.Close()
-	client, err := assethttp.New(t.Context(), assethttp.Options{Address: httpServer.URL})
+	client, err := assethttp.New(assethttp.Options{Address: httpServer.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

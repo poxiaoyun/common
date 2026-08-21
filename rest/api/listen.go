@@ -28,39 +28,27 @@ import (
 	libtls "xiaoshiai.cn/common/tls"
 )
 
+// ServerOption configures the HTTP server before it starts listening.
 type ServerOption func(*http.Server) error
 
+// WithTLSConfig installs an existing TLS configuration.
 func WithTLSConfig(tls *tls.Config) ServerOption {
 	return func(s *http.Server) error { s.TLSConfig = tls; return nil }
 }
 
-// WithDynamicTLSConfig creates a ServerOption that configures a server with dynamic TLS credentials
-// from the specified certificate and key files.
-// It continuously monitors the certificate and key files for changes and updates the TLS configuration accordingly.
-// If either cert or key is empty, it returns a no-op option that doesn't modify the server.
-// The context controls the lifetime of the file watcher for certificate and key changes.
-//
-// Parameters:
-//   - ctx: Context to control the lifetime of the TLS configuration watcher
-//   - cert: Path to the certificate file
-//   - key: Path to the key file
-//
-// Returns:
-//   - A ServerOption function that configures dynamic TLS for an HTTP server
-func WithDynamicTLSConfig(ctx context.Context, cert, key string) ServerOption {
-	if cert == "" || key == "" {
-		return func(s *http.Server) error { return nil }
-	}
+// WithDynamicTLSConfig reloads the serving certificate for new TLS handshakes.
+func WithDynamicTLSConfig(cert, key string) ServerOption {
 	return func(s *http.Server) error {
-		tlsconfig, err := libtls.NewDynamicTLSConfig(ctx, &libtls.DynamicTLSConfigOptions{CertFile: cert, KeyFile: key})
+		tlsconfig, err := libtls.NewServingConfig(cert, key)
 		if err != nil {
-			return fmt.Errorf("failed to create dynamic tls config: %v", err)
+			return fmt.Errorf("create dynamic TLS config: %w", err)
 		}
 		s.TLSConfig = tlsconfig
 		return nil
 	}
 }
 
+// ServeContext runs an HTTP or HTTPS server until ctx is canceled.
 func ServeContext(ctx context.Context, listen string, handler http.Handler, options ...ServerOption) error {
 	log := log.FromContext(ctx)
 	s := http.Server{
@@ -69,7 +57,9 @@ func ServeContext(ctx context.Context, listen string, handler http.Handler, opti
 		BaseContext: func(_ net.Listener) context.Context { return ctx },
 	}
 	for _, opt := range options {
-		opt(&s)
+		if err := opt(&s); err != nil {
+			return fmt.Errorf("configure http server: %w", err)
+		}
 	}
 	go func() {
 		<-ctx.Done()
@@ -95,6 +85,7 @@ func ServeContext(ctx context.Context, listen string, handler http.Handler, opti
 	}
 }
 
+// GRPCHTTPMux routes gRPC requests to grpchandler and all others to httphandler.
 func GRPCHTTPMux(httphandler http.Handler, grpchandler http.Handler) http.Handler {
 	httphandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {

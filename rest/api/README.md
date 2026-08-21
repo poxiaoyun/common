@@ -2,6 +2,11 @@
 
 `rest/api` provides the HTTP routing, authentication, authorization, audit, and request-context interfaces shared by services using `common`.
 
+`ServeTLS` loads its certificate and key before listening and returns any
+configuration error. It re-reads the pair for new TLS handshakes at most once
+per minute; canceling the serving context shuts down the listener, with no
+separate certificate-watcher lifecycle.
+
 `ContentResponse` represents local content or a redirect. Local content with a
 `Content-Range` header must already contain the selected bytes and is written as
 HTTP 206; other local content is passed to `ServeContent` for conditional and

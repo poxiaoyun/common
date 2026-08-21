@@ -4,7 +4,7 @@
 HTTP routes.
 
 ```go
-client, err := confighttp.New(ctx, "https://iam.example/v1", token)
+client, err := confighttp.New("https://iam.example/v1", token)
 ```
 
 Services with rotating credentials use `NewWithTransport` to compose their

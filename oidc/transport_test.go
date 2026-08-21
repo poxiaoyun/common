@@ -140,7 +140,7 @@ func TestClientCredentialsRoundTripperAuthenticatesWebSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := httpclient.BuildClientConfig(t.Context(), &httpclient.Options{Server: server.URL}, httpclient.TransportConfig{})
+	config, err := httpclient.BuildClientConfig(&httpclient.Options{Server: server.URL}, httpclient.TransportConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

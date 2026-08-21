@@ -12,6 +12,12 @@ and then call `NewClientFromClientConfig`. Use
 `TLSClientConfig` when another protocol needs to inspect the effective TLS
 configuration through a wrapped transport chain.
 
+Constructors do not take a context or start background work. A configured CA
+file is read during construction. A client certificate and key are validated
+then and re-read for new TLS handshakes at most once per minute; a reload error
+fails that handshake. Existing connections continue with their negotiated
+credentials.
+
 Authentication transports that must also authenticate non-HTTP protocol
 handshakes implement `RequestAuthenticator`. The built-in Bearer and Basic
 transports implement it, and wrapped transports may supply their own dynamic

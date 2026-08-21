@@ -18,17 +18,15 @@ type WebhookAuthenticatorOptions struct {
 	Audiences []string `json:"audiences,omitempty" description:"Audiences requested when reviewing bearer tokens"`
 }
 
-// NewWebhookAuthenticator creates an AuthenticationReview client. ctx owns the
-// lifetime of dynamic TLS certificate watchers created for its transport.
-func NewWebhookAuthenticator(ctx context.Context, opts *WebhookAuthenticatorOptions) (*WebhookAuthenticator, error) {
-	return NewWebhookAuthenticatorWithTransport(ctx, opts, nil)
+// NewWebhookAuthenticator creates an AuthenticationReview client.
+func NewWebhookAuthenticator(opts *WebhookAuthenticatorOptions) (*WebhookAuthenticator, error) {
+	return NewWebhookAuthenticatorWithTransport(opts, nil)
 }
 
 // NewWebhookAuthenticatorWithTransport creates a Review authenticator whose
-// requests use wrapper around the configured HTTP transport. ctx owns the
-// lifetime of dynamic TLS certificate watchers created for that transport.
-func NewWebhookAuthenticatorWithTransport(ctx context.Context, opts *WebhookAuthenticatorOptions, wrapper httpclient.TransportWrapper) (*WebhookAuthenticator, error) {
-	client, err := httpclient.NewClientFromOptionsWithTransport(ctx, &opts.Options, wrapper)
+// requests use wrapper around the configured HTTP transport.
+func NewWebhookAuthenticatorWithTransport(opts *WebhookAuthenticatorOptions, wrapper httpclient.TransportWrapper) (*WebhookAuthenticator, error) {
+	client, err := httpclient.NewClientFromOptionsWithTransport(&opts.Options, wrapper)
 	if err != nil {
 		return nil, err
 	}
@@ -79,10 +77,9 @@ func (w *WebhookAuthenticator) AuthenticatePublicKey(ctx context.Context, pubkey
 	return w.Process.Process(ctx, &AuthenticationReviewSpec{SSHPublicKey: string(ssh.MarshalAuthorizedKey(pubkey))})
 }
 
-// NewWebhookAuthenticatorProcessor creates a reusable AuthenticationReview
-// client. ctx owns the lifetime of its dynamic TLS certificate watchers.
-func NewWebhookAuthenticatorProcessor(ctx context.Context, opts *httpclient.Options) (*WebhookAuthenticatorProcessor, error) {
-	cli, err := httpclient.NewClientFromOptions(ctx, opts)
+// NewWebhookAuthenticatorProcessor creates a reusable AuthenticationReview client.
+func NewWebhookAuthenticatorProcessor(opts *httpclient.Options) (*WebhookAuthenticatorProcessor, error) {
+	cli, err := httpclient.NewClientFromOptions(opts)
 	if err != nil {
 		return nil, err
 	}

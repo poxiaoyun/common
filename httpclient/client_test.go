@@ -30,7 +30,6 @@ func TestNewClientFromOptionsWithTransportPreservesTLSAndAuthentication(t *testi
 	var wrappedTLS *tls.Config
 	var tlsErr error
 	client, err := httpclient.NewClientFromOptionsWithTransport(
-		t.Context(),
 		&httpclient.Options{
 			Server:                server.URL,
 			Token:                 "secret",
@@ -66,7 +65,6 @@ func TestNewClientFromOptionsWithTransportUsesBaseTransportWhenWrapperIsNil(t *t
 	defer server.Close()
 
 	client, err := httpclient.NewClientFromOptionsWithTransport(
-		t.Context(),
 		&httpclient.Options{Server: server.URL},
 		nil,
 	)
@@ -89,7 +87,6 @@ func TestBuildClientConfigInstallsDialContext(t *testing.T) {
 	var called atomic.Bool
 	dialer := &net.Dialer{}
 	clientConfig, err := httpclient.BuildClientConfig(
-		t.Context(),
 		&httpclient.Options{Server: server.URL},
 		httpclient.TransportConfig{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			called.Store(true)
@@ -115,7 +112,6 @@ func TestBuildClientConfigInstallsDialContext(t *testing.T) {
 
 func TestBuildClientConfigRetainsProxyForWebSocket(t *testing.T) {
 	clientConfig, err := httpclient.BuildClientConfig(
-		t.Context(),
 		&httpclient.Options{
 			Server:   "https://files.example",
 			ProxyURL: "http://proxy.example:8080",

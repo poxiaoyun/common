@@ -74,7 +74,7 @@ func TestWebhookAuditSinkWrapsTransport(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sink, err := api.NewWebhookAuditSinkWithTransport(t.Context(), &api.WebhookAuditSinkOptions{
+	sink, err := api.NewWebhookAuditSinkWithTransport(&api.WebhookAuditSinkOptions{
 		Options: httpclient.Options{Server: server.URL},
 	}, func(base http.RoundTripper) http.RoundTripper {
 		return auditRoundTripperFunc(func(request *http.Request) (*http.Response, error) {

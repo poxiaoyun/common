@@ -123,14 +123,14 @@ func (s ConfigcenterSource) Load(ctx context.Context, input command.SourceInput)
 			options.Token = flag.Value
 		}
 	}
-	client, err := newDynamicConfig(ctx, options)
+	client, err := newDynamicConfig(options)
 	if err != nil {
 		return nil, err
 	}
 	return load(ctx, client, s.namespace, s.name, input)
 }
 
-func newDynamicConfig(ctx context.Context, options Options) (config.DynamicConfig, error) {
+func newDynamicConfig(options Options) (config.DynamicConfig, error) {
 	if options.Address == "" {
 		return confignoop.New(), nil
 	}
@@ -144,7 +144,7 @@ func newDynamicConfig(ctx context.Context, options Options) (config.DynamicConfi
 	}
 	switch parsed.Scheme {
 	case "http", "https":
-		return confighttp.New(ctx, parsed.String(), options.Token)
+		return confighttp.New(parsed.String(), options.Token)
 	default:
 		return nil, fmt.Errorf("unsupported configuration center address scheme %q", parsed.Scheme)
 	}

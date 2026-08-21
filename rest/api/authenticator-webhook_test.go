@@ -34,7 +34,7 @@ func TestWebhookAuthenticatorReturnsCanonicalAuthentication(t *testing.T) {
 		}})
 	}))
 	defer server.Close()
-	processor, err := api.NewWebhookAuthenticatorProcessor(t.Context(), &httpclient.Options{Server: server.URL})
+	processor, err := api.NewWebhookAuthenticatorProcessor(&httpclient.Options{Server: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,6 @@ func TestWebhookAuthenticatorValidatesRequestedAudienceAndWrapsTransport(t *test
 	defer server.Close()
 
 	authenticator, err := api.NewWebhookAuthenticatorWithTransport(
-		t.Context(),
 		&api.WebhookAuthenticatorOptions{
 			Options:   httpclient.Options{Server: server.URL},
 			Audiences: []string{"urn:apps:api"},
@@ -97,7 +96,7 @@ func TestWebhookAuthenticatorRejectsMissingRequestedAudience(t *testing.T) {
 		}})
 	}))
 	defer server.Close()
-	authenticator, err := api.NewWebhookAuthenticator(t.Context(), &api.WebhookAuthenticatorOptions{
+	authenticator, err := api.NewWebhookAuthenticator(&api.WebhookAuthenticatorOptions{
 		Options:   httpclient.Options{Server: server.URL},
 		Audiences: []string{"urn:apps:api"},
 	})

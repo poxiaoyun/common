@@ -2,11 +2,17 @@
 
 ## Transport construction
 
-`BuildClientConfig` owns the default HTTP transport, dynamic TLS, proxy, and
+`BuildClientConfig` owns the default HTTP transport, TLS, proxy, and
 configured authentication layers. Its runtime `TransportConfig` configures
 that transport without becoming part of the declarative Options. In particular,
 DialContext is installed on the default `*http.Transport` before TLS, proxy,
 and authentication are composed.
+
+Construction is synchronous and has no lifetime context. Custom roots are read
+once while building the transport. A configured client certificate and key are
+validated during construction, then re-read through the TLS handshake callback
+at most once per minute. This keeps credential rotation on the connection
+lifecycle and gives the client no background watcher or Close responsibility.
 
 `RequestAuthenticator` is the protocol-independent authentication seam. An
 authentication transport implements it in addition to `http.RoundTripper` so

@@ -31,7 +31,7 @@ type TransportConfig struct {
 }
 
 // BuildClientConfig assembles the runtime client configuration.
-func BuildClientConfig(ctx context.Context, options *Options, transportConfig TransportConfig) (*ClientConfig, error) {
+func BuildClientConfig(options *Options, transportConfig TransportConfig) (*ClientConfig, error) {
 	serverURL, err := url.Parse(options.Server)
 	if err != nil {
 		return nil, err
@@ -39,11 +39,11 @@ func BuildClientConfig(ctx context.Context, options *Options, transportConfig Tr
 	httptransport := NewDefaultHTTPTransport()
 	httptransport.DialContext = transportConfig.DialContext
 	// tls
-	tlsconfig, err := libtls.NewDynamicTLSConfig(ctx, &libtls.DynamicTLSConfigOptions{
-		CertFile:              options.CertFile,
-		KeyFile:               options.KeyFile,
-		CAFile:                options.CAFile,
-		InsecureSkipTLSVerify: options.InsecureSkipTLSVerify,
+	tlsconfig, err := libtls.NewClientConfig(libtls.ClientOptions{
+		CertFile:           options.CertFile,
+		KeyFile:            options.KeyFile,
+		CAFile:             options.CAFile,
+		InsecureSkipVerify: options.InsecureSkipTLSVerify,
 	})
 	if err != nil {
 		return nil, err
@@ -95,15 +95,15 @@ type Client struct {
 }
 
 // NewClientFromOptions builds a Client with the transport described by options.
-func NewClientFromOptions(ctx context.Context, options *Options) (*Client, error) {
-	return NewClientFromOptionsWithTransport(ctx, options, nil)
+func NewClientFromOptions(options *Options) (*Client, error) {
+	return NewClientFromOptionsWithTransport(options, nil)
 }
 
 // NewClientFromOptionsWithTransport builds the configured Client. A non-nil
 // wrapper is composed around its RoundTripper; nil keeps the configured base
 // transport unchanged.
-func NewClientFromOptionsWithTransport(ctx context.Context, options *Options, wrapper TransportWrapper) (*Client, error) {
-	clientConfig, err := BuildClientConfig(ctx, options, TransportConfig{})
+func NewClientFromOptionsWithTransport(options *Options, wrapper TransportWrapper) (*Client, error) {
+	clientConfig, err := BuildClientConfig(options, TransportConfig{})
 	if err != nil {
 		return nil, err
 	}

@@ -10,7 +10,6 @@ require (
 	github.com/coreos/go-oidc/v3 v3.11.0
 	github.com/evanphx/json-patch v5.9.11+incompatible
 	github.com/felixge/httpsnoop v1.0.4
-	github.com/fsnotify/fsnotify v1.9.0
 	github.com/getkin/kin-openapi v0.145.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-logr/logr v1.4.4

@@ -123,17 +123,15 @@ func NewDefaultWebhookAuditSinkOptions() *WebhookAuditSinkOptions {
 	}
 }
 
-// NewWebhookAuditSink creates a webhook audit sink. ctx owns the lifetime of
-// dynamic TLS certificate watchers created for its transport.
-func NewWebhookAuditSink(ctx context.Context, opts *WebhookAuditSinkOptions) (*WebhookAuditSink, error) {
-	return NewWebhookAuditSinkWithTransport(ctx, opts, nil)
+// NewWebhookAuditSink creates a webhook audit sink.
+func NewWebhookAuditSink(opts *WebhookAuditSinkOptions) (*WebhookAuditSink, error) {
+	return NewWebhookAuditSinkWithTransport(opts, nil)
 }
 
 // NewWebhookAuditSinkWithTransport creates an audit sink whose requests use
-// wrapper around the configured HTTP transport. ctx owns the lifetime of
-// dynamic TLS certificate watchers created for that transport.
-func NewWebhookAuditSinkWithTransport(ctx context.Context, opts *WebhookAuditSinkOptions, wrapper httpclient.TransportWrapper) (*WebhookAuditSink, error) {
-	client, err := httpclient.NewClientFromOptionsWithTransport(ctx, &opts.Options, wrapper)
+// wrapper around the configured HTTP transport.
+func NewWebhookAuditSinkWithTransport(opts *WebhookAuditSinkOptions, wrapper httpclient.TransportWrapper) (*WebhookAuditSink, error) {
+	client, err := httpclient.NewClientFromOptionsWithTransport(&opts.Options, wrapper)
 	if err != nil {
 		return nil, err
 	}

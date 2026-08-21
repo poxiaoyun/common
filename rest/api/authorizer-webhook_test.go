@@ -26,7 +26,7 @@ func TestWebhookAuthorizerSendsCompleteAuthentication(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.AuthorizationReview{Status: &api.AuthorizationReviewStatus{Decision: api.DecisionAllow}})
 	}))
 	defer server.Close()
-	authorizer, err := api.NewWebhookAuthorizer(t.Context(), &api.WebhookAuthorizerOptions{Options: httpclient.Options{Server: server.URL}})
+	authorizer, err := api.NewWebhookAuthorizer(&api.WebhookAuthorizerOptions{Options: httpclient.Options{Server: server.URL}})
 	if err != nil {
 		t.Fatal(err)
 	}

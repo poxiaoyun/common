@@ -12,17 +12,15 @@ type WebhookAuthorizerOptions struct {
 	httpclient.Options `json:",inline"`
 }
 
-// NewWebhookAuthorizer creates an AuthorizationReview client. ctx owns the
-// lifetime of dynamic TLS certificate watchers created for its transport.
-func NewWebhookAuthorizer(ctx context.Context, opts *WebhookAuthorizerOptions) (*WebhookAuthorizer, error) {
-	return NewWebhookAuthorizerWithTransport(ctx, opts, nil)
+// NewWebhookAuthorizer creates an AuthorizationReview client.
+func NewWebhookAuthorizer(opts *WebhookAuthorizerOptions) (*WebhookAuthorizer, error) {
+	return NewWebhookAuthorizerWithTransport(opts, nil)
 }
 
 // NewWebhookAuthorizerWithTransport creates a Review authorizer whose requests
-// use wrapper around the configured HTTP transport. ctx owns the lifetime of
-// dynamic TLS certificate watchers created for that transport.
-func NewWebhookAuthorizerWithTransport(ctx context.Context, opts *WebhookAuthorizerOptions, wrapper httpclient.TransportWrapper) (*WebhookAuthorizer, error) {
-	client, err := httpclient.NewClientFromOptionsWithTransport(ctx, &opts.Options, wrapper)
+// use wrapper around the configured HTTP transport.
+func NewWebhookAuthorizerWithTransport(opts *WebhookAuthorizerOptions, wrapper httpclient.TransportWrapper) (*WebhookAuthorizer, error) {
+	client, err := httpclient.NewClientFromOptionsWithTransport(&opts.Options, wrapper)
 	if err != nil {
 		return nil, err
 	}

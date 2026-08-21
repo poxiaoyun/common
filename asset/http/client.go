@@ -51,13 +51,13 @@ type Options struct {
 }
 
 // New returns an HTTP-backed asset Service.
-func New(ctx context.Context, options Options) (*Client, error) {
-	return NewWithTransport(ctx, options, nil)
+func New(options Options) (*Client, error) {
+	return NewWithTransport(options, nil)
 }
 
 // NewWithTransport returns an HTTP-backed asset Service using wrapper.
-func NewWithTransport(ctx context.Context, options Options, wrapper TransportWrapper) (*Client, error) {
-	client, err := httpclient.NewClientFromOptionsWithTransport(ctx, &httpclient.Options{
+func NewWithTransport(options Options, wrapper TransportWrapper) (*Client, error) {
+	client, err := httpclient.NewClientFromOptionsWithTransport(&httpclient.Options{
 		Server: options.Address,
 		Token:  options.Token,
 	}, wrapper)
