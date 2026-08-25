@@ -36,9 +36,10 @@ func TestCommandRuntimeOperatesResources(t *testing.T) {
 		t.Fatalf("CreateVolume() error = %v", err)
 	}
 	target, err := runtime.CreateContainer(t.Context(), container.ContainerSpec{
-		Name:    "database",
-		Image:   "example:1",
-		Command: []string{"serve"},
+		Name:       "database",
+		Image:      "example:1",
+		Entrypoint: "/usr/local/bin/examplectl",
+		Command:    []string{"serve"},
 		Environment: map[string]string{
 			"USER":     "tester",
 			"PASSWORD": "secret",
@@ -59,7 +60,7 @@ func TestCommandRuntimeOperatesResources(t *testing.T) {
 			{Volume: volume, Target: "/data"},
 		},
 		Binds: []container.BindMount{
-			{Source: "/fixtures", Target: "/fixtures", ReadOnly: true},
+			{Source: "/fixtures", Target: "/fixtures", ReadOnly: true, SELinuxRelabel: true},
 		},
 	})
 	if err != nil {
@@ -78,6 +79,13 @@ func TestCommandRuntimeOperatesResources(t *testing.T) {
 	}
 	if info.Ports[0].HostPort != 49152 || info.Ports[0].ContainerPort.Number != 1234 {
 		t.Fatalf("port binding = %#v", info.Ports[0])
+	}
+	exit, err := runtime.WaitContainer(t.Context(), target)
+	if err != nil {
+		t.Fatalf("WaitContainer() error = %v", err)
+	}
+	if exit.ExitCode != 23 {
+		t.Fatalf("WaitContainer() = %#v", exit)
 	}
 
 	result, err := runtime.Exec(t.Context(), target, []string{"fail"})
@@ -111,16 +119,47 @@ func TestCommandRuntimeOperatesResources(t *testing.T) {
 	}
 	run := findRuntimeCommand(string(commands), "run ")
 	for _, expected := range []string{
+		"--entrypoint /usr/local/bin/examplectl",
 		"--env PASSWORD=secret --env USER=tester",
 		"--network network-id",
 		"--publish 127.0.0.1::1234/tcp",
 		"--mount type=volume,src=volume-id,dst=/data",
-		"--mount type=bind,src=/fixtures,dst=/fixtures,readonly",
+		"--volume /fixtures:/fixtures:ro,Z",
 		"example:1 serve",
 	} {
 		if !strings.Contains(run, expected) {
 			t.Fatalf("run command %q does not contain %q", run, expected)
 		}
+	}
+}
+
+func TestCommandRuntimeWaitContainerReportsRuntimeFailure(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("get test executable: %v", err)
+	}
+	t.Setenv("CONTAINER_RUNTIME_HELPER", "1")
+	t.Setenv("CONTAINER_RUNTIME_LOG", t.TempDir()+"/commands.log")
+	runtime := container.NewCommandRuntime("example", executable)
+
+	_, err = runtime.WaitContainer(t.Context(), "missing")
+	if err == nil || !strings.Contains(err.Error(), "example wait") || !strings.Contains(err.Error(), "container not found") {
+		t.Fatalf("WaitContainer() error = %v", err)
+	}
+}
+
+func TestCommandRuntimeWaitContainerRejectsInvalidExitCode(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("get test executable: %v", err)
+	}
+	t.Setenv("CONTAINER_RUNTIME_HELPER", "1")
+	t.Setenv("CONTAINER_RUNTIME_LOG", t.TempDir()+"/commands.log")
+	runtime := container.NewCommandRuntime("example", executable)
+
+	_, err = runtime.WaitContainer(t.Context(), "invalid")
+	if err == nil || !strings.Contains(err.Error(), "decode example container exit code") {
+		t.Fatalf("WaitContainer() error = %v", err)
 	}
 }
 
@@ -162,6 +201,13 @@ func runRuntimeHelper() {
 		fmt.Println("container-id")
 	case args[0] == "inspect":
 		fmt.Println(`{"Id":"container-id","Name":"/database","State":{"Status":"running"},"NetworkSettings":{"Ports":{"1234/tcp":[{"HostIp":"127.0.0.1","HostPort":"49152"}]},"Networks":{"cluster":{"NetworkID":"network-id","IPAddress":"10.0.0.2"}}}}`)
+	case args[0] == "wait" && args[1] == "missing":
+		fmt.Fprintln(os.Stderr, "container not found")
+		os.Exit(125)
+	case args[0] == "wait" && args[1] == "invalid":
+		fmt.Println("not-an-exit-code")
+	case args[0] == "wait":
+		fmt.Println("23")
 	case args[0] == "exec" && args[len(args)-1] == "fail":
 		fmt.Fprintln(os.Stderr, "failed")
 		os.Exit(7)

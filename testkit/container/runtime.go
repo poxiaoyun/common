@@ -151,6 +151,9 @@ func (r *CommandRuntime) DestroyVolume(ctx context.Context, volume Volume) error
 // CreateContainer implements ContainerRuntime.
 func (r *CommandRuntime) CreateContainer(ctx context.Context, spec ContainerSpec) (Container, error) {
 	args := []string{"run", "--detach", "--name", spec.Name}
+	if spec.Entrypoint != "" {
+		args = append(args, "--entrypoint", spec.Entrypoint)
+	}
 	for _, name := range sortedDockerEnvironment(spec.Environment) {
 		args = append(args, "--env", name+"="+spec.Environment[name])
 	}
@@ -168,6 +171,15 @@ func (r *CommandRuntime) CreateContainer(ctx context.Context, spec ContainerSpec
 		args = append(args, "--mount", value)
 	}
 	for _, mount := range spec.Binds {
+		if mount.SELinuxRelabel {
+			options := []string{}
+			if mount.ReadOnly {
+				options = append(options, "ro")
+			}
+			options = append(options, "Z")
+			args = append(args, "--volume", mount.Source+":"+mount.Target+":"+strings.Join(options, ","))
+			continue
+		}
 		value := "type=bind,src=" + mount.Source + ",dst=" + mount.Target
 		if mount.ReadOnly {
 			value += ",readonly"
@@ -209,6 +221,26 @@ func (r *CommandRuntime) InspectContainer(ctx context.Context, target Container)
 		return ContainerInfo{}, fmt.Errorf("%s inspect: %w: %s", r.name, err, output)
 	}
 	return decodeCommandContainer(r.name, output)
+}
+
+// WaitContainer implements ContainerRuntime.
+func (r *CommandRuntime) WaitContainer(ctx context.Context, target Container) (ContainerExit, error) {
+	process := exec.CommandContext(ctx, r.executable, "wait", string(target))
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	process.Stdout = &stdout
+	process.Stderr = &stderr
+	if err := process.Run(); err != nil {
+		if ctx.Err() != nil {
+			return ContainerExit{}, ctx.Err()
+		}
+		return ContainerExit{}, fmt.Errorf("%s wait: %w: %s", r.name, err, stderr.Bytes())
+	}
+	exitCode, err := strconv.Atoi(strings.TrimSpace(stdout.String()))
+	if err != nil {
+		return ContainerExit{}, fmt.Errorf("decode %s container exit code: %w", r.name, err)
+	}
+	return ContainerExit{ExitCode: exitCode}, nil
 }
 
 // DestroyContainer implements ContainerRuntime.

@@ -41,6 +41,10 @@ type ContainerRuntime interface {
 	// InspectContainer returns the current standardized container information.
 	InspectContainer(ctx context.Context, target Container) (ContainerInfo, error)
 
+	// WaitContainer waits for the container process to exit. Every process exit
+	// code, including a non-zero code, is returned in ContainerExit.
+	WaitContainer(ctx context.Context, target Container) (ContainerExit, error)
+
 	// DestroyContainer force-stops and removes a container. Repeated calls after
 	// successful destruction return nil.
 	DestroyContainer(ctx context.Context, target Container) error
@@ -75,6 +79,7 @@ type VolumeSpec struct {
 type ContainerSpec struct {
 	Name        string
 	Image       string
+	Entrypoint  string
 	Command     []string
 	Environment map[string]string
 	Networks    []NetworkAttachment
@@ -98,9 +103,11 @@ type VolumeMount struct {
 // BindMount mounts a caller-owned host path into a container. The runtime does
 // not create, modify permissions for, or remove Source.
 type BindMount struct {
-	Source   string
-	Target   string
-	ReadOnly bool
+	Source         string
+	Target         string
+	ReadOnly       bool
+	// SELinuxRelabel gives Source a private container label before mounting it.
+	SELinuxRelabel bool
 }
 
 // Protocol identifies a published transport protocol.
@@ -162,6 +169,11 @@ type ContainerInfo struct {
 	State     ContainerState
 	Ports     []PortBinding
 	Networks  []ContainerNetwork
+}
+
+// ContainerExit is the completed result of a container's main process.
+type ContainerExit struct {
+	ExitCode int
 }
 
 // ExecResult is the completed result of a command executed in a container.

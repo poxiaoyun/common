@@ -4,7 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"strconv"
+	"time"
 )
+
+const environmentReadinessInterval = 100 * time.Millisecond
 
 // EnvironmentSpec declares related containers, networks, and shared storage.
 // Map keys are logical names local to the environment.
@@ -18,6 +24,9 @@ type EnvironmentSpec struct {
 // EnvironmentNetworkSpec declares one environment-owned network.
 type EnvironmentNetworkSpec struct {
 	Name string
+	// Network attaches a caller-owned network when non-empty. Environment does
+	// not destroy caller-owned networks.
+	Network Network
 }
 
 // EnvironmentVolumeSpec declares either environment-owned runtime storage or
@@ -32,13 +41,35 @@ type EnvironmentVolumeSpec struct {
 type EnvironmentContainerSpec struct {
 	Name        string
 	Image       string
+	Entrypoint  string
 	Command     []string
 	Environment map[string]string
 	Networks    []string
 	Ports       []PortMapping
 	Mounts      []EnvironmentMount
 	Binds       []BindMount
+	Readiness   ReadinessProbe
 }
+
+// ReadinessProbe declares how Environment observes container availability.
+type ReadinessProbe interface {
+	environmentReadinessProbe()
+}
+
+// ExecReadinessProbe observes readiness by executing Command in the container.
+type ExecReadinessProbe struct {
+	Command []string
+}
+
+func (ExecReadinessProbe) environmentReadinessProbe() {}
+
+// HTTPReadinessProbe observes readiness through a published container port.
+type HTTPReadinessProbe struct {
+	Port Port
+	Path string
+}
+
+func (HTTPReadinessProbe) environmentReadinessProbe() {}
 
 // EnvironmentMount mounts a declared environment volume into a container.
 type EnvironmentMount struct {
@@ -57,9 +88,10 @@ type Environment struct {
 }
 
 type environmentOrder struct {
-	containers []string
-	networks   []string
-	volumes    []string
+	containers    []string
+	networks      []string
+	ownedNetworks []string
+	volumes       []string
 }
 
 // EnvironmentInfo is a current aggregate view keyed by logical resource name.
@@ -89,6 +121,11 @@ func CreateEnvironment(
 	}
 
 	for _, declared := range spec.Networks {
+		if declared.Network != "" {
+			target.networks[declared.Name] = declared.Network
+			target.order.networks = append(target.order.networks, declared.Name)
+			continue
+		}
 		network, err := runtime.CreateNetwork(ctx, NetworkSpec{
 			Name: resourceName(spec.Name, declared.Name),
 		})
@@ -97,6 +134,7 @@ func CreateEnvironment(
 		}
 		target.networks[declared.Name] = network
 		target.order.networks = append(target.order.networks, declared.Name)
+		target.order.ownedNetworks = append(target.order.ownedNetworks, declared.Name)
 	}
 	volumes := make(map[string]EnvironmentVolumeSpec, len(spec.Volumes))
 	for _, declared := range spec.Volumes {
@@ -117,6 +155,7 @@ func CreateEnvironment(
 		containerSpec := ContainerSpec{
 			Name:        resourceName(spec.Name, declared.Name),
 			Image:       declared.Image,
+			Entrypoint:  declared.Entrypoint,
 			Command:     declared.Command,
 			Environment: declared.Environment,
 			Ports:       declared.Ports,
@@ -149,8 +188,88 @@ func CreateEnvironment(
 		}
 		target.containers[declared.Name] = created
 		target.order.containers = append(target.order.containers, declared.Name)
+		if err := waitEnvironmentContainerReady(ctx, runtime, created, declared.Readiness); err != nil {
+			return failed(fmt.Errorf("wait for environment container %q readiness: %w", declared.Name, err))
+		}
 	}
 	return target, nil
+}
+
+func waitEnvironmentContainerReady(
+	ctx context.Context,
+	runtime ContainerRuntime,
+	target Container,
+	probe ReadinessProbe,
+) error {
+	for {
+		var err error
+		info, inspectErr := runtime.InspectContainer(ctx, target)
+		if inspectErr != nil {
+			err = inspectErr
+		} else if info.State == ContainerStateExited {
+			return errors.New("container exited before becoming ready")
+		} else if info.State != ContainerStateRunning {
+			err = fmt.Errorf("container state is %q", info.State)
+		} else if probe == nil {
+			return nil
+		} else {
+			switch probe := probe.(type) {
+			case ExecReadinessProbe:
+				result, execErr := runtime.Exec(ctx, target, probe.Command)
+				if execErr != nil {
+					err = execErr
+					break
+				}
+				if result.ExitCode != 0 {
+					err = fmt.Errorf("exec readiness command exited with code %d", result.ExitCode)
+				}
+			case HTTPReadinessProbe:
+				err = probeEnvironmentContainerHTTP(ctx, info, probe)
+			default:
+				panic("unsupported readiness probe")
+			}
+		}
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return errors.Join(ctx.Err(), err)
+			case <-time.After(environmentReadinessInterval):
+				continue
+			}
+		}
+		return nil
+	}
+}
+
+func probeEnvironmentContainerHTTP(
+	ctx context.Context,
+	info ContainerInfo,
+	probe HTTPReadinessProbe,
+) error {
+	for _, binding := range info.Ports {
+		if binding.ContainerPort != probe.Port {
+			continue
+		}
+		host := binding.HostAddress
+		if address := net.ParseIP(host); address != nil && address.IsUnspecified() {
+			host = "127.0.0.1"
+		}
+		endpoint := "http://" + net.JoinHostPort(host, strconv.Itoa(int(binding.HostPort))) + probe.Path
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return err
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			return err
+		}
+		response.Body.Close()
+		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			return fmt.Errorf("HTTP readiness returned status %d", response.StatusCode)
+		}
+		return nil
+	}
+	return fmt.Errorf("container port %d/%s is not published", probe.Port.Number, probe.Port.Protocol)
 }
 
 // Inspect returns current information for every environment container and
@@ -193,8 +312,8 @@ func (e *Environment) Destroy(ctx context.Context) error {
 			result = errors.Join(result, fmt.Errorf("destroy environment volume %q: %w", name, err))
 		}
 	}
-	for index := len(e.order.networks) - 1; index >= 0; index-- {
-		name := e.order.networks[index]
+	for index := len(e.order.ownedNetworks) - 1; index >= 0; index-- {
+		name := e.order.ownedNetworks[index]
 		if err := e.runtime.DestroyNetwork(ctx, e.networks[name]); err != nil {
 			result = errors.Join(result, fmt.Errorf("destroy environment network %q: %w", name, err))
 		}
