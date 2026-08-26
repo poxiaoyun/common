@@ -112,6 +112,8 @@ func requirementsToFieldsSelector(reqs store.Requirements) (fields.Selector, err
 			selectors = append(selectors, fieldPresenceTerm{field: req.Key, exists: true})
 		case store.DoesNotExist:
 			selectors = append(selectors, fieldPresenceTerm{field: req.Key})
+		case store.GreaterThan, store.LessThan, store.GreaterThanOrEqual, store.LessThanOrEqual:
+			selectors = append(selectors, fieldComparisonTerm{requirement: req})
 		default:
 			return nil, fmt.Errorf("unsupported field selector operator: %s", req.Operator)
 		}
@@ -168,6 +170,58 @@ func (p fieldPresenceTerm) Transform(fn fields.TransformFunc) (fields.Selector, 
 }
 
 var _ fields.Selector = fieldPresenceTerm{}
+
+type fieldComparisonTerm struct {
+	requirement store.Requirement
+}
+
+func (term fieldComparisonTerm) DeepCopySelector() fields.Selector {
+	term.requirement.Values = append([]any(nil), term.requirement.Values...)
+	return term
+}
+
+func (term fieldComparisonTerm) Empty() bool {
+	return false
+}
+
+func (term fieldComparisonTerm) Matches(values fields.Fields) bool {
+	fieldsMap := map[string]string{}
+	if values.Has(term.requirement.Key) {
+		fieldsMap[term.requirement.Key] = values.Get(term.requirement.Key)
+	}
+	return store.RequirementMatchLabels(term.requirement, fieldsMap)
+}
+
+func (term fieldComparisonTerm) Requirements() fields.Requirements {
+	return fields.Requirements{{
+		Field:    term.requirement.Key,
+		Operator: selection.Operator(term.requirement.Operator),
+		Value:    store.AnyToString(term.requirement.Values[0]),
+	}}
+}
+
+func (term fieldComparisonTerm) RequiresExactMatch(string) (string, bool) {
+	return "", false
+}
+
+func (term fieldComparisonTerm) String() string {
+	return term.requirement.String()
+}
+
+func (term fieldComparisonTerm) Transform(fn fields.TransformFunc) (fields.Selector, error) {
+	field, value, err := fn(term.requirement.Key, store.AnyToString(term.requirement.Values[0]))
+	if err != nil {
+		return nil, err
+	}
+	if field == "" && value == "" {
+		return fields.Everything(), nil
+	}
+	term.requirement.Key = field
+	term.requirement.Values = []any{value}
+	return term, nil
+}
+
+var _ fields.Selector = fieldComparisonTerm{}
 
 func OneTermInSelector(key string, values []string) fields.Selector {
 	return inTerm{field: key, values: values}

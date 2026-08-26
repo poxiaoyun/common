@@ -127,6 +127,124 @@ func Run(t *testing.T, fixture Fixture) {
 			t.Fatalf("Delete transition object = %#v, want complete previous object", previous)
 		}
 	})
+	t.Run("watch reports comparison selector membership transitions", func(t *testing.T) {
+		if !fixture.Capabilities.Watch || !fixture.Capabilities.FieldSelector {
+			t.Skip("watch with field selectors is not declared")
+		}
+		storage := NewStore(t, fixture)
+		watcher := OpenWatcher(t, func() (commonstore.Watcher, error) {
+			return storage.Watch(
+				t.Context(),
+				&commonstore.List[Object]{Resource: "storetests"},
+				commonstore.WithSendInitialEvents(),
+				commonstore.WithFieldRequirements(commonstore.NewRequirement("rank", commonstore.GreaterThan, 7)),
+			)
+		})
+		defer watcher.Stop()
+		AssertWatchEvent(t, NextWatchEvent(t, watcher), commonstore.WatchEventBookmark, "")
+
+		object := &Object{ObjectMeta: commonstore.ObjectMeta{ID: "comparison-transition"}, Rank: 7}
+		if err := storage.Create(t.Context(), object); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		object.Rank = 8
+		if err := storage.Update(t.Context(), object); err != nil {
+			t.Fatalf("entering Update() error = %v", err)
+		}
+		created := NextObjectWatchEvent(t, watcher)
+		AssertWatchEvent(t, created, commonstore.WatchEventCreate, "comparison-transition")
+		if entered := created.Object.(*Object); entered.Rank != 8 {
+			t.Fatalf("Create transition object rank = %d, want 8", entered.Rank)
+		}
+
+		object.Rank = 9
+		if err := storage.Update(t.Context(), object); err != nil {
+			t.Fatalf("matching Update() error = %v", err)
+		}
+		updated := NextObjectWatchEvent(t, watcher)
+		AssertWatchEvent(t, updated, commonstore.WatchEventUpdate, "comparison-transition")
+		if current := updated.Object.(*Object); current.Rank != 9 {
+			t.Fatalf("Update transition object rank = %d, want 9", current.Rank)
+		}
+
+		object.Rank = 7
+		if err := storage.Update(t.Context(), object); err != nil {
+			t.Fatalf("leaving Update() error = %v", err)
+		}
+		deleted := NextObjectWatchEvent(t, watcher)
+		AssertWatchEvent(t, deleted, commonstore.WatchEventDelete, "comparison-transition")
+		if previous := deleted.Object.(*Object); previous.Rank != 9 {
+			t.Fatalf("Delete transition object rank = %d, want 9", previous.Rank)
+		}
+	})
+	t.Run("field comparisons use typed values before pagination", func(t *testing.T) {
+		if !fixture.Capabilities.FieldSelector {
+			t.Skip("field selectors are not declared")
+		}
+		storage := NewStore(t, fixture)
+		objects := []*Object{
+			{ObjectMeta: commonstore.ObjectMeta{ID: "missing"}},
+			{ObjectMeta: commonstore.ObjectMeta{ID: "low"}, Rank: 2},
+			{ObjectMeta: commonstore.ObjectMeta{ID: "middle"}, Rank: 3},
+			{ObjectMeta: commonstore.ObjectMeta{ID: "high"}, Rank: 10},
+		}
+		for _, object := range objects {
+			if err := storage.Create(t.Context(), object); err != nil {
+				t.Fatalf("Create(%q) error = %v", object.ID, err)
+			}
+		}
+
+		tests := []struct {
+			name     string
+			operator commonstore.Operator
+			value    int
+			wantIDs  []string
+		}{
+			{name: "greater than", operator: commonstore.GreaterThan, value: 2, wantIDs: []string{"high", "middle"}},
+			{name: "less than", operator: commonstore.LessThan, value: 3, wantIDs: []string{"low"}},
+			{name: "greater than or equal", operator: commonstore.GreaterThanOrEqual, value: 3, wantIDs: []string{"high", "middle"}},
+			{name: "less than or equal", operator: commonstore.LessThanOrEqual, value: 2, wantIDs: []string{"low"}},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				list := &commonstore.List[Object]{Resource: "storetests"}
+				if err := storage.List(t.Context(), list, commonstore.WithFieldRequirements(commonstore.NewRequirement("rank", test.operator, test.value))); err != nil {
+					t.Fatalf("List() error = %v", err)
+				}
+				ids := ObjectIDs(list.Items)
+				sort.Strings(ids)
+				if !reflect.DeepEqual(ids, test.wantIDs) {
+					t.Fatalf("List() IDs = %v, want %v", ids, test.wantIDs)
+				}
+				if list.Total == nil || *list.Total != len(test.wantIDs) {
+					t.Fatalf("List() total = %v, want %d", list.Total, len(test.wantIDs))
+				}
+			})
+		}
+
+		greaterThanTwo := commonstore.WithFieldRequirements(
+			commonstore.NewRequirement("rank", commonstore.GreaterThan, 2),
+		)
+		count, err := storage.Count(t.Context(), &Object{}, greaterThanTwo)
+		if err != nil {
+			t.Fatalf("Count() error = %v", err)
+		}
+		if count != 2 {
+			t.Fatalf("Count() = %d, want 2", count)
+		}
+		if fixture.Capabilities.Page {
+			list := &commonstore.List[Object]{Resource: "storetests"}
+			if err := storage.List(t.Context(), list, greaterThanTwo, commonstore.WithSort("id+"), commonstore.WithPage(1, 1)); err != nil {
+				t.Fatalf("page List() error = %v", err)
+			}
+			if ids := ObjectIDs(list.Items); !reflect.DeepEqual(ids, []string{"high"}) {
+				t.Fatalf("page List() IDs = %v, want [high]", ids)
+			}
+			if list.Total == nil || *list.Total != 2 || list.Page != 1 || list.Size != 1 {
+				t.Fatalf("page List() metadata = %#v", list)
+			}
+		}
+	})
 	t.Run("watch checkpoint resumes or expires", func(t *testing.T) {
 		if !fixture.Capabilities.Watch {
 			t.Skip("watch is not declared")
