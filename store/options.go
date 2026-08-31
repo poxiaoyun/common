@@ -6,6 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/utils/ptr"
+	"xiaoshiai.cn/common/selector"
 )
 
 // SendInitialEventsOption enables the initial snapshot phase of a Watch.
@@ -154,11 +155,11 @@ func WithFieldRequirementsFromSelector(selector fields.Selector) FieldRequiremen
 
 // WithFieldRequirementsFromSet converts and appends exact field matches.
 func WithFieldRequirementsFromSet(values map[string]string) FieldRequirementsOption {
-	return FieldRequirementsOption{Requirements: RequirementsFromMap(values)}
+	return FieldRequirementsOption{Requirements: selector.RequirementsFromMap(values)}
 }
 
 // WithFieldRequirements appends field requirements.
-func WithFieldRequirements(requirements ...Requirement) FieldRequirementsOption {
+func WithFieldRequirements(requirements ...selector.Requirement) FieldRequirementsOption {
 	return FieldRequirementsOption{Requirements: requirements}
 }
 
@@ -215,7 +216,7 @@ func (option LabelRequirementsOption) ApplyToWatch(options *WatchOptions) {
 
 // WithLabelRequirementsFromSet converts and appends exact label matches.
 func WithLabelRequirementsFromSet(values map[string]string) LabelRequirementsOption {
-	return LabelRequirementsOption{Requirements: RequirementsFromMap(values)}
+	return LabelRequirementsOption{Requirements: selector.RequirementsFromMap(values)}
 }
 
 // WithLabelRequirementsFromSelector converts and appends a label selector.
@@ -224,7 +225,7 @@ func WithLabelRequirementsFromSelector(selector labels.Selector) LabelRequiremen
 }
 
 // WithLabelRequirements appends label requirements.
-func WithLabelRequirements(requirements ...Requirement) LabelRequirementsOption {
+func WithLabelRequirements(requirements ...selector.Requirement) LabelRequirementsOption {
 	return LabelRequirementsOption{Requirements: requirements}
 }
 

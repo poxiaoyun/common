@@ -23,6 +23,7 @@ import (
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/meta"
 	libreflect "xiaoshiai.cn/common/reflect"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -284,6 +285,9 @@ func (m *MongoStorage) Scope(scopes ...store.Scope) store.Store {
 // Count implements Storage.
 func (m *MongoStorage) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
 	options := store.ApplyCountOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return 0, err
+	}
 	var count int
 	err := m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
@@ -370,6 +374,9 @@ func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...sto
 		return errors.NewBadRequest("id is required")
 	}
 	options := store.ApplyDeleteOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: id})
 		for {
@@ -421,6 +428,9 @@ func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...sto
 // DeleteAllOf implements Storage.
 func (m *MongoStorage) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...store.DeleteBatchOption) error {
 	options := store.ApplyDeleteBatchOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
 		m.core.logger.V(5).Info("delete all", "collection", col.Name(), "filter", filter)
@@ -437,6 +447,9 @@ func (m *MongoStorage) Get(ctx context.Context, id string, obj store.Object, opt
 		return errors.NewBadRequest("id is required")
 	}
 	options := store.ApplyGetOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: id})
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
@@ -480,6 +493,9 @@ func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.
 // PatchBatch implements store.Store.
 func (m *MongoStorage) PatchBatch(ctx context.Context, obj store.ObjectList, patch store.PatchBatch, opts ...store.PatchBatchOption) error {
 	options := store.ApplyPatchBatchOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
 		update, err := convertBatchPatch(patch, []string{"creator", "creationTimestamp", "resourceVersion", "status", "generation"}, nil)
@@ -498,6 +514,9 @@ func (m *MongoStorage) PatchBatch(ctx context.Context, obj store.ObjectList, pat
 // List implements Storage.
 func (m *MongoStorage) List(ctx context.Context, list store.ObjectList, opts ...store.ListOption) error {
 	options := store.ApplyListOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	if options.Limit > 0 {
 		return errors.NewUnsupported("MongoDB store does not support continuation pagination")
 	}
@@ -629,116 +648,155 @@ func sortstage(sort string) bson.M {
 }
 
 func scopesmatch(match bson.D, scopes []store.Scope) bson.D {
-	conds := store.Requirements{}
 	for _, scope := range scopes {
 		resourcekey := store.ScopeResourceToFieldName(scope.Resource)
-		conds = append(conds, store.Requirement{Operator: store.Equals, Key: resourcekey, Values: []any{scope.Name}})
+		match = append(match, bson.E{Key: resourcekey, Value: scope.Name})
 	}
-	return ConditionsMatch(match, nil, conds, "")
+	return match
 }
 
 // ConditionsMatch appends label and field requirements for the selected document prefix.
 func ConditionsMatch(match bson.D, labels store.Requirements, fields store.Requirements, prefix string) bson.D {
-	for _, cond := range fields {
-		key, values := prefix+cond.Key, cond.Values
-		switch cond.Operator {
-		case store.Equals:
-			if len(values) == 0 {
-				match = append(match, bson.E{Key: key, Value: nil})
-			} else if values[0] == "" {
-				match = append(match, bson.E{Key: key, Value: ""})
-			} else {
-				match = append(match, bson.E{Key: key, Value: values[0]})
-			}
-		case store.NotEquals:
-			match = append(match, bson.E{Key: key, Value: bson.M{"$ne": values[0]}})
-		case store.In:
-			// https://www.mongodb.com/docs/manual/reference/operator/query/in/
-			// { field: { $in: [<value1>, <value2>, ... <valueN> ] } }
-			match = append(match, bson.E{Key: key, Value: bson.M{"$in": values}})
-		case store.NotIn:
-			// https://www.mongodb.com/docs/manual/reference/operator/query/nin/
-			// { field: { $nin: [ <value1>, <value2> ... <valueN> ] } }
-			match = append(match, bson.E{Key: key, Value: bson.M{"$nin": values}})
-		case store.Exists:
-			match = append(match, bson.E{Key: key, Value: bson.M{"$ne": nil}})
-		case store.DoesNotExist:
-			match = append(match, bson.E{Key: key, Value: bson.M{"$exists": false}})
-		case store.GreaterThan:
-			match = append(match, bson.E{Key: key, Value: bson.M{"$gt": values[0]}})
-		case store.LessThan:
-			match = append(match, bson.E{Key: key, Value: bson.M{"$lt": values[0]}})
-		case store.GreaterThanOrEqual:
-			match = append(match, bson.E{Key: key, Value: bson.M{"$gte": values[0]}})
-		case store.LessThanOrEqual:
-			match = append(match, bson.E{Key: key, Value: bson.M{"$lte": values[0]}})
-		case store.Contains:
-			if false {
-				match = append(match, bson.E{Key: key, Value: bson.M{"$regex": values[0]}})
-			} else {
-				// https://www.mongodb.com/docs/manual/reference/operator/query/all/
-				match = append(match, bson.E{Key: key, Value: bson.M{"$all": values}})
-			}
-		case "like", "~=":
-			match = append(match, searchStage(strings.Split(key, ","), store.AnyToString(values[0])))
-		default:
-			// support raw mongo expression
-			match = append(match, bson.E{Key: key, Value: bson.M{string(cond.Operator): values[0]}})
-		}
+	if len(fields) != 0 {
+		match = append(match, bson.E{Key: "$and", Value: mongoFieldRequirements(fields, prefix)})
 	}
-	if len(labels) == 0 {
-		return match
+	if len(labels) != 0 {
+		match = append(match, bson.E{Key: "$expr", Value: mongoLabelRequirements(labels, "$"+prefix+"labels")})
+	}
+	return match
+}
+
+func mongoFieldRequirements(requirements store.Requirements, prefix string) bson.A {
+	expressions := make(bson.A, 0, len(requirements))
+	for _, requirement := range requirements {
+		expressions = append(expressions, mongoFieldRequirement(requirement, prefix))
+	}
+	return expressions
+}
+
+func mongoFieldRequirement(requirement selector.Requirement, prefix string) bson.D {
+	key := prefix + requirement.Key
+	switch requirement.Operator {
+	case selector.None:
+		return bson.D{{Key: "$expr", Value: false}}
+	case selector.All:
+		return bson.D{}
+	case selector.And:
+		if len(requirement.Requirements) == 0 {
+			return bson.D{}
+		}
+		return bson.D{{Key: "$and", Value: mongoFieldRequirements(requirement.Requirements, prefix)}}
+	case selector.Or:
+		if len(requirement.Requirements) == 0 {
+			return bson.D{{Key: "$expr", Value: false}}
+		}
+		return bson.D{{Key: "$or", Value: mongoFieldRequirements(requirement.Requirements, prefix)}}
+	case selector.Not:
+		return bson.D{{Key: "$nor", Value: bson.A{mongoFieldRequirement(requirement.Requirements[0], prefix)}}}
+	case selector.Equals, selector.DoubleEquals:
+		return bson.D{{Key: key, Value: requirement.Values[0]}}
+	case selector.NotEquals:
+		return bson.D{{Key: key, Value: bson.M{"$ne": requirement.Values[0]}}}
+	case selector.In:
+		return bson.D{{Key: key, Value: bson.M{"$in": requirement.Values}}}
+	case selector.NotIn:
+		return bson.D{{Key: key, Value: bson.M{"$nin": requirement.Values}}}
+	case selector.Exists:
+		return bson.D{{Key: key, Value: bson.M{"$exists": true}}}
+	case selector.DoesNotExist:
+		return bson.D{{Key: key, Value: bson.M{"$exists": false}}}
+	case selector.GreaterThan:
+		return bson.D{{Key: key, Value: bson.M{"$gt": requirement.Values[0]}}}
+	case selector.LessThan:
+		return bson.D{{Key: key, Value: bson.M{"$lt": requirement.Values[0]}}}
+	case selector.GreaterThanOrEqual:
+		return bson.D{{Key: key, Value: bson.M{"$gte": requirement.Values[0]}}}
+	case selector.LessThanOrEqual:
+		return bson.D{{Key: key, Value: bson.M{"$lte": requirement.Values[0]}}}
+	case selector.Contains:
+		return bson.D{{Key: key, Value: bson.M{"$all": requirement.Values}}}
+	case selector.Like:
+		return bson.D{searchStage(strings.Split(key, ","), store.AnyToString(requirement.Values[0]))}
+	default:
+		return bson.D{{Key: "$expr", Value: false}}
+	}
+}
+
+func mongoLabelRequirements(requirements store.Requirements, input string) any {
+	if len(requirements) == 0 {
+		return true
+	}
+	expressions := make(bson.A, 0, len(requirements))
+	for _, requirement := range requirements {
+		expressions = append(expressions, mongoLabelRequirement(requirement, input))
+	}
+	return bson.D{{Key: "$and", Value: expressions}}
+}
+
+func mongoLabelRequirement(requirement selector.Requirement, input string) any {
+	switch requirement.Operator {
+	case selector.None:
+		return false
+	case selector.All:
+		return true
+	case selector.And:
+		return mongoLabelRequirements(requirement.Requirements, input)
+	case selector.Or:
+		if len(requirement.Requirements) == 0 {
+			return false
+		}
+		expressions := make(bson.A, 0, len(requirement.Requirements))
+		for _, child := range requirement.Requirements {
+			expressions = append(expressions, mongoLabelRequirement(child, input))
+		}
+		return bson.D{{Key: "$or", Value: expressions}}
+	case selector.Not:
+		return bson.D{{Key: "$not", Value: bson.A{mongoLabelRequirement(requirement.Requirements[0], input)}}}
 	}
 
-	input := "$" + prefix + "labels"
-	expressions := make(bson.A, 0, len(labels))
-	for _, requirement := range labels {
-		value := bson.D{
-			{Key: "$ifNull", Value: bson.A{
-				bson.D{
-					{Key: "$getField", Value: bson.D{
-						{Key: "field", Value: bson.D{{Key: "$literal", Value: requirement.Key}}},
-						{Key: "input", Value: input},
-					}},
-				},
-				nil,
-			}},
+	value := bson.D{{Key: "$ifNull", Value: bson.A{
+		bson.D{{Key: "$getField", Value: bson.D{
+			{Key: "field", Value: bson.D{{Key: "$literal", Value: requirement.Key}}},
+			{Key: "input", Value: input},
+		}}},
+		nil,
+	}}}
+	comparison := bson.A{value, nil}
+	switch requirement.Operator {
+	case selector.Equals, selector.DoubleEquals:
+		comparison[1] = bson.D{{Key: "$literal", Value: requirement.Values[0]}}
+		return bson.D{{Key: "$eq", Value: comparison}}
+	case selector.NotEquals:
+		comparison[1] = bson.D{{Key: "$literal", Value: requirement.Values[0]}}
+		return bson.D{{Key: "$ne", Value: comparison}}
+	case selector.In, selector.NotIn:
+		expression := bson.D{{Key: "$in", Value: bson.A{
+			value,
+			bson.D{{Key: "$literal", Value: bson.A(requirement.Values)}},
+		}}}
+		if requirement.Operator == selector.NotIn {
+			return bson.D{{Key: "$not", Value: bson.A{expression}}}
 		}
-
-		comparison := bson.A{value, nil}
-		var operator string
-		switch requirement.Operator {
-		case store.Equals, store.DoubleEquals:
-			operator = "$eq"
-			comparison[1] = bson.D{{Key: "$literal", Value: requirement.Values[0]}}
-		case store.NotEquals:
-			operator = "$ne"
-			comparison[1] = bson.D{{Key: "$literal", Value: requirement.Values[0]}}
-		case store.In, store.NotIn:
-			expression := bson.D{
-				{Key: "$in", Value: bson.A{
-					value,
-					bson.D{{Key: "$literal", Value: bson.A(requirement.Values)}},
-				}},
-			}
-			if requirement.Operator == store.NotIn {
-				expression = bson.D{{Key: "$not", Value: bson.A{expression}}}
-			}
-			expressions = append(expressions, expression)
-			continue
-		case store.Exists:
-			operator = "$ne"
-		case store.DoesNotExist:
-			operator = "$eq"
-		}
-		expressions = append(expressions, bson.D{{Key: operator, Value: comparison}})
+		return expression
+	case selector.Exists:
+		return bson.D{{Key: "$ne", Value: comparison}}
+	case selector.DoesNotExist:
+		return bson.D{{Key: "$eq", Value: comparison}}
+	case selector.GreaterThan:
+		comparison[1] = bson.D{{Key: "$literal", Value: requirement.Values[0]}}
+		return bson.D{{Key: "$gt", Value: comparison}}
+	case selector.LessThan:
+		comparison[1] = bson.D{{Key: "$literal", Value: requirement.Values[0]}}
+		return bson.D{{Key: "$lt", Value: comparison}}
+	case selector.GreaterThanOrEqual:
+		comparison[1] = bson.D{{Key: "$literal", Value: requirement.Values[0]}}
+		return bson.D{{Key: "$gte", Value: comparison}}
+	case selector.LessThanOrEqual:
+		comparison[1] = bson.D{{Key: "$literal", Value: requirement.Values[0]}}
+		return bson.D{{Key: "$lte", Value: comparison}}
+	default:
+		return false
 	}
-	return append(match, bson.E{
-		Key: "$expr",
-		Value: bson.D{
-			{Key: "$and", Value: expressions},
-		},
-	})
 }
 
 func searchStage(keys []string, search string) bson.E {
@@ -891,6 +949,9 @@ func (m *MongoStorage) replace(
 	if obj.GetID() == "" {
 		return errors.NewBadRequest("id is required")
 	}
+	if err := validateSelectorRequirements(labelRequirements, fieldRequirements); err != nil {
+		return err
+	}
 	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: obj.GetID()})
 		filter = ConditionsMatch(filter, labelRequirements, fieldRequirements, "")
@@ -938,6 +999,26 @@ func (m *MongoStorage) replace(
 		}
 		return store.CopyObject(desired, obj)
 	})
+}
+
+func validateSelectorRequirements(labelRequirements, fieldRequirements store.Requirements) error {
+	if err := store.ValidateSelectorRequirements(labelRequirements, fieldRequirements); err != nil {
+		return errors.NewBadRequest(err.Error())
+	}
+	if requirementOperatorExists(labelRequirements, selector.Contains, selector.Like) ||
+		requirementOperatorExists(fieldRequirements, selector.Contains, selector.Like) {
+		return errors.NewUnsupported("MongoDB store does not support Contains or Like requirements")
+	}
+	return nil
+}
+
+func requirementOperatorExists(requirements store.Requirements, operators ...selector.Operator) bool {
+	for _, requirement := range requirements {
+		if slices.Contains(operators, requirement.Operator) || requirementOperatorExists(requirement.Requirements, operators...) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *MongoStorage) on(ctx context.Context, into any, fn func(ctx context.Context, col *mongo.Collection, filter bson.D) error) error {

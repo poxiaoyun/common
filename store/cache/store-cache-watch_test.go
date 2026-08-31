@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 	storeinmemory "xiaoshiai.cn/common/store/inmemory"
 )
@@ -85,7 +86,7 @@ func TestCacheStoreWatchReportsSelectorMembershipTransitions(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 	storage := NewCacheStore(upstream)
-	labelSelector := store.WithLabelRequirements(store.RequirementEqual("state", "active"))
+	labelSelector := store.WithLabelRequirements(selector.RequirementEqual("state", "active"))
 	watcher, err := storage.Watch(t.Context(), &store.List[TestObject]{}, store.WithSendInitialEvents(), labelSelector)
 	if err != nil {
 		t.Fatalf("Watch() error = %v", err)

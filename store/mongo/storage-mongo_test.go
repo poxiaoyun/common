@@ -12,6 +12,7 @@ import (
 	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
 	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 	"xiaoshiai.cn/common/store/storetest"
 	testmongodb "xiaoshiai.cn/common/testkit/mongodb"
@@ -36,6 +37,21 @@ func TestMongoStorageCapabilities(t *testing.T) {
 	capabilities := (&MongoStorage{}).Capabilities()
 	if !capabilities.Watch {
 		t.Fatal("Capabilities().Watch = false, want true")
+	}
+}
+
+func TestMongoStorageRejectsUnsupportedNestedRequirement(t *testing.T) {
+	requirement := selector.Requirement{
+		Operator: selector.Or,
+		Requirements: store.Requirements{
+			selector.RequirementEqual("name", "exact"),
+			selector.NewRequirement("name", selector.Like, "partial"),
+		},
+	}
+	list := &store.List[store.Unstructured]{Resource: "testobjects"}
+	err := (&MongoStorage{}).List(t.Context(), list, store.WithFieldRequirements(requirement))
+	if !commonerrors.IsUnsupported(err) {
+		t.Fatalf("List() error = %v, want Unsupported", err)
 	}
 }
 
@@ -106,42 +122,42 @@ func TestMongoStorageIntegration(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		requirement store.Requirement
+		requirement selector.Requirement
 		want        []string
 	}{
 		{
 			name:        "equals literal dotted key",
-			requirement: store.NewRequirement("example.com/team", store.Equals, "platform"),
+			requirement: selector.NewRequirement("example.com/team", selector.Equals, "platform"),
 			want:        []string{"platform"},
 		},
 		{
 			name:        "not equals includes missing key",
-			requirement: store.NewRequirement("example.com/team", store.NotEquals, "platform"),
+			requirement: selector.NewRequirement("example.com/team", selector.NotEquals, "platform"),
 			want:        []string{"infrastructure", "unlabeled"},
 		},
 		{
 			name:        "in",
-			requirement: store.NewRequirement("example.com/team", store.In, "platform"),
+			requirement: selector.NewRequirement("example.com/team", selector.In, "platform"),
 			want:        []string{"platform"},
 		},
 		{
 			name:        "not in includes missing key",
-			requirement: store.NewRequirement("example.com/team", store.NotIn, "platform"),
+			requirement: selector.NewRequirement("example.com/team", selector.NotIn, "platform"),
 			want:        []string{"infrastructure", "unlabeled"},
 		},
 		{
 			name:        "exists",
-			requirement: store.NewRequirement("example.com/team", store.Exists),
+			requirement: selector.NewRequirement("example.com/team", selector.Exists),
 			want:        []string{"infrastructure", "platform"},
 		},
 		{
 			name:        "does not exist",
-			requirement: store.NewRequirement("example.com/team", store.DoesNotExist),
+			requirement: selector.NewRequirement("example.com/team", selector.DoesNotExist),
 			want:        []string{"unlabeled"},
 		},
 		{
 			name:        "equals literal dollar key",
-			requirement: store.NewRequirement("$owner", store.Equals, "alice"),
+			requirement: selector.NewRequirement("$owner", selector.Equals, "alice"),
 			want:        []string{"platform"},
 		},
 	}
@@ -210,7 +226,7 @@ func TestMongoStorageBatchPatchAdvancesResourceVersion(t *testing.T) {
 		t.Context(),
 		list,
 		store.RawPatchBatch(store.PatchTypeMergePatch, []byte(`{"description":"patched"}`)),
-		store.WithFieldRequirements(store.NewRequirement("id", store.Equals, object.ID)),
+		store.WithFieldRequirements(selector.NewRequirement("id", selector.Equals, object.ID)),
 	); err != nil {
 		t.Fatalf("PatchBatch() error = %v", err)
 	}
@@ -311,52 +327,52 @@ func TestMergePatchToBsonUpdate(t *testing.T) {
 func TestSelectorMatchUsesLiteralLabelKeys(t *testing.T) {
 	tests := []struct {
 		name        string
-		requirement store.Requirement
+		requirement selector.Requirement
 		want        bson.D
 	}{
 		{
 			name:        "equals",
-			requirement: store.NewRequirement("example.com/team", store.Equals, "platform"),
+			requirement: selector.NewRequirement("example.com/team", selector.Equals, "platform"),
 			want:        labelExpression("$labels", "example.com/team", "$eq", "platform"),
 		},
 		{
 			name:        "double equals",
-			requirement: store.NewRequirement("example.com/team", store.DoubleEquals, "platform"),
+			requirement: selector.NewRequirement("example.com/team", selector.DoubleEquals, "platform"),
 			want:        labelExpression("$labels", "example.com/team", "$eq", "platform"),
 		},
 		{
 			name:        "not equals",
-			requirement: store.NewRequirement("example.com/team", store.NotEquals, "platform"),
+			requirement: selector.NewRequirement("example.com/team", selector.NotEquals, "platform"),
 			want:        labelExpression("$labels", "example.com/team", "$ne", "platform"),
 		},
 		{
 			name:        "in",
-			requirement: store.NewRequirement("example.com/team", store.In, "platform", "infrastructure"),
+			requirement: selector.NewRequirement("example.com/team", selector.In, "platform", "infrastructure"),
 			want:        labelInExpression("$labels", "example.com/team", false, "platform", "infrastructure"),
 		},
 		{
 			name:        "not in",
-			requirement: store.NewRequirement("example.com/team", store.NotIn, "platform", "infrastructure"),
+			requirement: selector.NewRequirement("example.com/team", selector.NotIn, "platform", "infrastructure"),
 			want:        labelInExpression("$labels", "example.com/team", true, "platform", "infrastructure"),
 		},
 		{
 			name:        "exists",
-			requirement: store.NewRequirement("example.com/team", store.Exists),
+			requirement: selector.NewRequirement("example.com/team", selector.Exists),
 			want:        labelExpression("$labels", "example.com/team", "$ne", nil),
 		},
 		{
 			name:        "does not exist",
-			requirement: store.NewRequirement("example.com/team", store.DoesNotExist),
+			requirement: selector.NewRequirement("example.com/team", selector.DoesNotExist),
 			want:        labelExpression("$labels", "example.com/team", "$eq", nil),
 		},
 		{
 			name:        "dollar prefix",
-			requirement: store.NewRequirement("$team", store.Equals, "platform"),
+			requirement: selector.NewRequirement("$team", selector.Equals, "platform"),
 			want:        labelExpression("$labels", "$team", "$eq", "platform"),
 		},
 		{
 			name:        "ordinary key",
-			requirement: store.NewRequirement("app", store.Equals, "api"),
+			requirement: selector.NewRequirement("app", selector.Equals, "api"),
 			want:        labelExpression("$labels", "app", "$eq", "api"),
 		},
 	}
@@ -379,23 +395,25 @@ func TestSelectorMatchUsesAndWithFieldRequirements(t *testing.T) {
 	labels := store.Requirements{
 		{
 			Key:      "example.com/team",
-			Operator: store.Equals,
+			Operator: selector.Equals,
 			Values:   []any{"platform"},
 		},
 		{
 			Key:      "app",
-			Operator: store.Exists,
+			Operator: selector.Exists,
 		},
 	}
 	fields := store.Requirements{
 		{
 			Key:      "status.phase",
-			Operator: store.Equals,
+			Operator: selector.Equals,
 			Values:   []any{"active"},
 		},
 	}
 	want := bson.D{
-		{Key: "status.phase", Value: "active"},
+		{Key: "$and", Value: bson.A{
+			bson.D{{Key: "status.phase", Value: "active"}},
+		}},
 		{Key: "$expr", Value: bson.D{
 			{Key: "$and", Value: bson.A{
 				labelPredicate("$labels", "example.com/team", "$eq", "platform"),
@@ -405,6 +423,43 @@ func TestSelectorMatchUsesAndWithFieldRequirements(t *testing.T) {
 	}
 
 	got := ConditionsMatch(bson.D{}, labels, fields, "")
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("selector match = %#v, want %#v", got, want)
+	}
+}
+
+func TestSelectorMatchSupportsRecursiveFieldRequirements(t *testing.T) {
+	requirement := selector.Requirement{
+		Operator: selector.Or,
+		Requirements: store.Requirements{
+			selector.RequirementEqual("visibility", "public"),
+			{
+				Operator: selector.And,
+				Requirements: store.Requirements{
+					selector.RequirementEqual("owner", "alice"),
+					{
+						Operator: selector.Not,
+						Requirements: store.Requirements{
+							selector.RequirementEqual("state", "blocked"),
+						},
+					},
+				},
+			},
+		},
+	}
+	want := bson.D{{Key: "$and", Value: bson.A{
+		bson.D{{Key: "$or", Value: bson.A{
+			bson.D{{Key: "visibility", Value: "public"}},
+			bson.D{{Key: "$and", Value: bson.A{
+				bson.D{{Key: "owner", Value: "alice"}},
+				bson.D{{Key: "$nor", Value: bson.A{
+					bson.D{{Key: "state", Value: "blocked"}},
+				}}},
+			}}},
+		}}},
+	}}}
+
+	got := ConditionsMatch(bson.D{}, nil, store.Requirements{requirement}, "")
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("selector match = %#v, want %#v", got, want)
 	}

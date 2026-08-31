@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	commonerrors "xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/selector"
 	commonstore "xiaoshiai.cn/common/store"
 )
 
@@ -94,7 +95,7 @@ func Run(t *testing.T, fixture Fixture) {
 				t.Context(),
 				&commonstore.List[Object]{Resource: "storetests"},
 				commonstore.WithSendInitialEvents(),
-				commonstore.WithFieldRequirements(commonstore.RequirementEqual("rank", 8)),
+				commonstore.WithFieldRequirements(selector.RequirementEqual("rank", 8)),
 			)
 		})
 		defer watcher.Stop()
@@ -137,7 +138,7 @@ func Run(t *testing.T, fixture Fixture) {
 				t.Context(),
 				&commonstore.List[Object]{Resource: "storetests"},
 				commonstore.WithSendInitialEvents(),
-				commonstore.WithFieldRequirements(commonstore.NewRequirement("rank", commonstore.GreaterThan, 7)),
+				commonstore.WithFieldRequirements(selector.NewRequirement("rank", selector.GreaterThan, 7)),
 			)
 		})
 		defer watcher.Stop()
@@ -196,19 +197,19 @@ func Run(t *testing.T, fixture Fixture) {
 
 		tests := []struct {
 			name     string
-			operator commonstore.Operator
+			operator selector.Operator
 			value    int
 			wantIDs  []string
 		}{
-			{name: "greater than", operator: commonstore.GreaterThan, value: 2, wantIDs: []string{"high", "middle"}},
-			{name: "less than", operator: commonstore.LessThan, value: 3, wantIDs: []string{"low"}},
-			{name: "greater than or equal", operator: commonstore.GreaterThanOrEqual, value: 3, wantIDs: []string{"high", "middle"}},
-			{name: "less than or equal", operator: commonstore.LessThanOrEqual, value: 2, wantIDs: []string{"low"}},
+			{name: "greater than", operator: selector.GreaterThan, value: 2, wantIDs: []string{"high", "middle"}},
+			{name: "less than", operator: selector.LessThan, value: 3, wantIDs: []string{"low"}},
+			{name: "greater than or equal", operator: selector.GreaterThanOrEqual, value: 3, wantIDs: []string{"high", "middle"}},
+			{name: "less than or equal", operator: selector.LessThanOrEqual, value: 2, wantIDs: []string{"low"}},
 		}
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
 				list := &commonstore.List[Object]{Resource: "storetests"}
-				if err := storage.List(t.Context(), list, commonstore.WithFieldRequirements(commonstore.NewRequirement("rank", test.operator, test.value))); err != nil {
+				if err := storage.List(t.Context(), list, commonstore.WithFieldRequirements(selector.NewRequirement("rank", test.operator, test.value))); err != nil {
 					t.Fatalf("List() error = %v", err)
 				}
 				ids := ObjectIDs(list.Items)
@@ -223,7 +224,7 @@ func Run(t *testing.T, fixture Fixture) {
 		}
 
 		greaterThanTwo := commonstore.WithFieldRequirements(
-			commonstore.NewRequirement("rank", commonstore.GreaterThan, 2),
+			selector.NewRequirement("rank", selector.GreaterThan, 2),
 		)
 		count, err := storage.Count(t.Context(), &Object{}, greaterThanTwo)
 		if err != nil {
@@ -466,13 +467,13 @@ func Run(t *testing.T, fixture Fixture) {
 		}
 		if err := storage.Delete(t.Context(), object,
 			commonstore.WithUID("stale"),
-			commonstore.WithLabelRequirements(commonstore.RequirementEqual("team", "red")),
+			commonstore.WithLabelRequirements(selector.RequirementEqual("team", "red")),
 		); !commonerrors.IsConflict(err) {
 			t.Fatalf("precondition ordering Delete() error = %v, want Conflict", err)
 		}
 		if err := storage.Delete(t.Context(), object,
 			commonstore.WithUID(object.UID),
-			commonstore.WithLabelRequirements(commonstore.RequirementEqual("team", "red")),
+			commonstore.WithLabelRequirements(selector.RequirementEqual("team", "red")),
 		); !commonerrors.IsNotFound(err) {
 			t.Fatalf("requirement mismatch Delete() error = %v, want NotFound", err)
 		}
@@ -873,6 +874,31 @@ func AssertWatcherClosed(t testing.TB, watcher commonstore.Watcher) {
 // RunQueryCapabilities verifies behavior declared by the fixture.
 func RunQueryCapabilities(t *testing.T, fixture Fixture, storage commonstore.Store) {
 	t.Helper()
+	fieldComposition := selector.Requirement{
+		Operator: selector.Or,
+		Requirements: commonstore.Requirements{
+			selector.RequirementEqual("rank", 1),
+			{
+				Operator: selector.And,
+				Requirements: commonstore.Requirements{
+					selector.NewRequirement("rank", selector.GreaterThan, 1),
+					{
+						Operator: selector.Not,
+						Requirements: commonstore.Requirements{
+							selector.RequirementEqual("rank", 2),
+						},
+					},
+				},
+			},
+		},
+	}
+	labelComposition := selector.Requirement{
+		Operator: selector.Or,
+		Requirements: commonstore.Requirements{
+			selector.RequirementEqual("example.com/team", "red"),
+			selector.RequirementEqual("owner.name", "alice"),
+		},
+	}
 	tests := []struct {
 		name    string
 		enabled bool
@@ -880,9 +906,15 @@ func RunQueryCapabilities(t *testing.T, fixture Fixture, storage commonstore.Sto
 		wantIDs []string
 		ordered bool
 	}{
-		{name: "label selector", enabled: fixture.Capabilities.LabelSelector, options: []commonstore.ListOption{commonstore.WithLabelRequirements(commonstore.RequirementEqual("example.com/team", "blue"))}, wantIDs: []string{"a", "b"}},
-		{name: "field selector", enabled: fixture.Capabilities.FieldSelector, options: []commonstore.ListOption{commonstore.WithFieldRequirements(commonstore.RequirementEqual("rank", 2))}, wantIDs: []string{"b"}},
-		{name: "special label keys", enabled: fixture.Capabilities.LabelSelector, options: []commonstore.ListOption{commonstore.WithLabelRequirements(commonstore.RequirementEqual("owner.name", "alice"), commonstore.RequirementEqual("$owner", "alice"))}, wantIDs: []string{"a"}},
+		{name: "label selector", enabled: fixture.Capabilities.LabelSelector, options: []commonstore.ListOption{commonstore.WithLabelRequirements(selector.RequirementEqual("example.com/team", "blue"))}, wantIDs: []string{"a", "b"}},
+		{name: "field selector", enabled: fixture.Capabilities.FieldSelector, options: []commonstore.ListOption{commonstore.WithFieldRequirements(selector.RequirementEqual("rank", 2))}, wantIDs: []string{"b"}},
+		{name: "composed field selector", enabled: fixture.Capabilities.FieldSelector, options: []commonstore.ListOption{commonstore.WithFieldRequirements(fieldComposition)}, wantIDs: []string{"a", "c"}},
+		{name: "composed label selector", enabled: fixture.Capabilities.LabelSelector, options: []commonstore.ListOption{commonstore.WithLabelRequirements(labelComposition)}, wantIDs: []string{"a", "c"}},
+		{name: "none selector", enabled: fixture.Capabilities.FieldSelector, options: []commonstore.ListOption{commonstore.WithFieldRequirements(selector.Requirement{})}, wantIDs: []string{}},
+		{name: "empty in selector", enabled: fixture.Capabilities.FieldSelector, options: []commonstore.ListOption{commonstore.WithFieldRequirements(selector.NewRequirement("rank", selector.In))}, wantIDs: []string{}},
+		{name: "empty not-in selector", enabled: fixture.Capabilities.FieldSelector, options: []commonstore.ListOption{commonstore.WithFieldRequirements(selector.NewRequirement("rank", selector.NotIn))}, wantIDs: []string{}},
+		{name: "all selector", enabled: fixture.Capabilities.FieldSelector, options: []commonstore.ListOption{commonstore.WithFieldRequirements(selector.Requirement{Operator: selector.All})}, wantIDs: []string{"a", "b", "c"}},
+		{name: "special label keys", enabled: fixture.Capabilities.LabelSelector, options: []commonstore.ListOption{commonstore.WithLabelRequirements(selector.RequirementEqual("owner.name", "alice"), selector.RequirementEqual("$owner", "alice"))}, wantIDs: []string{"a"}},
 		{name: "search by name", enabled: fixture.Capabilities.Search, options: []commonstore.ListOption{commonstore.WithSearch("needle")}, wantIDs: []string{"a"}},
 		{name: "search by ID", enabled: fixture.Capabilities.Search, options: []commonstore.ListOption{commonstore.WithSearch("c")}, wantIDs: []string{"c"}},
 		{name: "explicit search fields", enabled: fixture.Capabilities.Search, options: []commonstore.ListOption{commonstore.WithSearch("c"), commonstore.WithSearchFields("name")}, wantIDs: []string{}},
@@ -916,6 +948,41 @@ func RunQueryCapabilities(t *testing.T, fixture Fixture, storage commonstore.Sto
 				t.Fatalf("unpaginated List() metadata = %#v", list)
 			}
 		})
+	}
+	if fixture.Capabilities.FieldSelector {
+		invalid := selector.Requirement{Operator: selector.And, Key: "rank"}
+		list := &commonstore.List[Object]{Resource: "storetests"}
+		err := storage.List(t.Context(), list, commonstore.WithFieldRequirements(invalid))
+		if commonerrors.ReasonForError(err) != commonerrors.StatusReasonBadRequest {
+			t.Fatalf("invalid requirement List() error = %v, want BadRequest", err)
+		}
+
+		count, err := storage.Count(t.Context(), &Object{}, commonstore.WithFieldRequirements(fieldComposition))
+		if err != nil {
+			t.Fatalf("composed Count() error = %v", err)
+		}
+		if count != 2 {
+			t.Fatalf("composed Count() = %d, want 2", count)
+		}
+		if fixture.Capabilities.Page {
+			list := &commonstore.List[Object]{Resource: "storetests"}
+			err := storage.List(
+				t.Context(),
+				list,
+				commonstore.WithFieldRequirements(fieldComposition),
+				commonstore.WithSort("id+"),
+				commonstore.WithPage(1, 1),
+			)
+			if err != nil {
+				t.Fatalf("composed page List() error = %v", err)
+			}
+			if ids := ObjectIDs(list.Items); !reflect.DeepEqual(ids, []string{"a"}) {
+				t.Fatalf("composed page List() IDs = %v, want [a]", ids)
+			}
+			if list.Total == nil || *list.Total != 2 {
+				t.Fatalf("composed page List() total = %v, want 2", list.Total)
+			}
+		}
 	}
 	if fixture.Capabilities.Projection {
 		projected := &Object{}

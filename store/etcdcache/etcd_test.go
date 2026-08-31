@@ -14,6 +14,7 @@ import (
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"k8s.io/apiserver/pkg/storage/etcd3/testserver"
 	commonerrors "xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 	"xiaoshiai.cn/common/store/storetest"
 )
@@ -194,14 +195,14 @@ func TestEtcdCacherStore(t *testing.T) {
 		assertListIDs(t, ctx, storage, []string{"root-blue", "root-red", "scope-blue", "scope-red"}, store.WithSubScopes())
 		assertListIDs(t, ctx, storage, []string{"scope-blue", "scope-red"},
 			store.WithSubScopes(),
-			store.WithFieldRequirements(store.NewRequirement("organization", store.Exists)),
+			store.WithFieldRequirements(selector.NewRequirement("organization", selector.Exists)),
 		)
 		assertListIDs(t, ctx, storage, []string{"root-blue", "root-red"},
 			store.WithSubScopes(),
-			store.WithFieldRequirements(store.NewRequirement("organization", store.DoesNotExist)),
+			store.WithFieldRequirements(selector.NewRequirement("organization", selector.DoesNotExist)),
 		)
 		assertListIDs(t, ctx, storage, []string{"root-blue"}, store.WithLabelRequirementsFromSet(map[string]string{"team": "blue"}))
-		assertListIDs(t, ctx, storage, []string{"root-blue"}, store.WithFieldRequirements(store.RequirementEqual("enabled", true)))
+		assertListIDs(t, ctx, storage, []string{"root-blue"}, store.WithFieldRequirements(selector.RequirementEqual("enabled", true)))
 		assertListIDs(t, ctx, storage, []string{"root-blue"}, store.WithSearch("blue"), store.WithSearchFields("name"))
 
 		if count, err := storage.Count(ctx, &MyObject{}); err != nil || count != 2 {
@@ -210,10 +211,10 @@ func TestEtcdCacherStore(t *testing.T) {
 		if count, err := storage.Count(ctx, &MyObject{}, store.WithSubScopes()); err != nil || count != 4 {
 			t.Fatalf("Count(subscopes) = %d, %v, want 4, nil", count, err)
 		}
-		if count, err := storage.Count(ctx, &MyObject{}, store.WithLabelRequirements(store.RequirementEqual("team", "red"))); err != nil || count != 1 {
+		if count, err := storage.Count(ctx, &MyObject{}, store.WithLabelRequirements(selector.RequirementEqual("team", "red"))); err != nil || count != 1 {
 			t.Fatalf("Count(red) = %d, %v, want 1, nil", count, err)
 		}
-		if err := storage.Get(ctx, "root-red", &MyObject{}, store.WithLabelRequirements(store.RequirementEqual("team", "blue"))); !commonerrors.IsNotFound(err) {
+		if err := storage.Get(ctx, "root-red", &MyObject{}, store.WithLabelRequirements(selector.RequirementEqual("team", "blue"))); !commonerrors.IsNotFound(err) {
 			t.Fatalf("Get() with non-matching selector error = %v, want not found", err)
 		}
 

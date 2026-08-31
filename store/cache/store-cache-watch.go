@@ -17,6 +17,9 @@ func (g *CacheStore) Watch(ctx context.Context, list store.ObjectList, opts ...s
 		return nil, err
 	}
 	options := store.ApplyWatchOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return nil, err
+	}
 	if options.ResourceVersion != nil && *options.ResourceVersion > 0 {
 		return nil, errors.NewResourceExpired(resource, "watch history is unavailable")
 	}

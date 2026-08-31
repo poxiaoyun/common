@@ -125,6 +125,16 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 			obj := &store.Unstructured{}
 			obj.SetResource(ref.Resource)
 			var options []store.GetOption
+			labelRequirements, fieldRequirements, err := decodeSelector(r)
+			if err != nil {
+				return nil, err
+			}
+			if len(labelRequirements) != 0 {
+				options = append(options, store.WithLabelRequirements(labelRequirements...))
+			}
+			if len(fieldRequirements) != 0 {
+				options = append(options, store.WithFieldRequirements(fieldRequirements...))
+			}
 			if resourceVersion := api.Query(r, "resourceVersion", ""); resourceVersion != "" {
 				parsed, err := strconv.ParseInt(resourceVersion, 10, 64)
 				if err != nil {

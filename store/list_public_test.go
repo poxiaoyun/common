@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"xiaoshiai.cn/common/meta"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 )
 
 func TestListOptionsFromMetaAppliesModifiers(t *testing.T) {
-	tenant := store.RequirementEqual("tenant", "tenant-1")
+	tenant := selector.RequirementEqual("tenant", "tenant-1")
 	modifiers, err := store.ListOptionsFromMeta(
 		meta.ListOptions{
 			Page:          2,
@@ -27,7 +28,7 @@ func TestListOptionsFromMetaAppliesModifiers(t *testing.T) {
 		t.Fatalf("pagination = %#v", options)
 	}
 	wantRequirements := store.Requirements{
-		store.RequirementEqual("environment", "production"),
+		selector.RequirementEqual("environment", "production"),
 		tenant,
 	}
 	if !reflect.DeepEqual(options.LabelRequirements, wantRequirements) {

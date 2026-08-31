@@ -13,6 +13,7 @@
 | [`errors`](./errors) | 统一的状态错误、HTTP 状态码和错误原因判断 |
 | [`log`](./log) | 基于上下文的结构化日志入口 |
 | [`meta`](./meta) | 统一的对象元数据、分页结果和列表查询选项，调用方应优先复用这些公共类型 |
+| [`selector`](./selector) | 跨 Store、授权规划和协议 adapter 共享的递归布尔选择表达式、解析与求值 |
 | [`controller`](./controller) | 基于队列和数据源的协调循环、并发控制及控制器管理 |
 | [`httpclient`](./httpclient) | HTTP 客户端配置、认证 Transport 和请求辅助能力 |
 | [`config`](./config) | 命令行参数、环境变量和动态配置加载 |

@@ -9,10 +9,15 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apiserver/pkg/storage"
+	commonerrors "xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 )
 
 func ConvertPredicate(l store.Requirements, f store.Requirements) (storage.SelectionPredicate, error) {
+	if err := store.ValidateSelectorRequirements(l, f); err != nil {
+		return storage.SelectionPredicate{}, commonerrors.NewBadRequest(err.Error())
+	}
 	labelssel := labels.Everything()
 	fieldsel := fields.Everything()
 	if l != nil {
@@ -29,10 +34,7 @@ func ConvertPredicate(l store.Requirements, f store.Requirements) (storage.Selec
 		}
 		fieldsel = newfieldsel
 	}
-	fieldkeys := make([]string, 0, len(f))
-	for _, req := range f {
-		fieldkeys = append(fieldkeys, req.Key)
-	}
+	fieldkeys := requirementKeys(f)
 	return storage.SelectionPredicate{
 		Label:    labelssel,
 		Field:    fieldsel,
@@ -49,16 +51,13 @@ type requirementLabelSelector struct {
 }
 
 func (s requirementLabelSelector) Matches(values labels.Labels) bool {
-	for _, requirement := range s.requirements {
-		labelsMap := map[string]string{}
-		if values.Has(requirement.Key) {
-			labelsMap[requirement.Key] = values.Get(requirement.Key)
-		}
-		if !store.RequirementMatchLabels(requirement, labelsMap) {
-			return false
+	labelsMap := make(map[string]string, len(requirementKeys(s.requirements)))
+	for _, key := range requirementKeys(s.requirements) {
+		if values.Has(key) {
+			labelsMap[key] = values.Get(key)
 		}
 	}
-	return true
+	return selector.RequirementsMatchLabels(s.requirements, labelsMap)
 }
 
 func (s requirementLabelSelector) Empty() bool { return len(s.requirements) == 0 }
@@ -66,11 +65,11 @@ func (s requirementLabelSelector) Empty() bool { return len(s.requirements) == 0
 func (s requirementLabelSelector) String() string { return s.requirements.String() }
 
 func (s requirementLabelSelector) Add(requirements ...labels.Requirement) labels.Selector {
-	result := requirementLabelSelector{requirements: append(store.Requirements(nil), s.requirements...)}
+	result := requirementLabelSelector{requirements: cloneRequirements(s.requirements)}
 	for _, requirement := range requirements {
-		result.requirements = append(result.requirements, store.Requirement{
+		result.requirements = append(result.requirements, selector.Requirement{
 			Key:      requirement.Key(),
-			Operator: store.Operator(requirement.Operator()),
+			Operator: selector.Operator(requirement.Operator()),
 			Values:   store.StringsToAny(requirement.Values().List()),
 		})
 	}
@@ -80,45 +79,161 @@ func (s requirementLabelSelector) Add(requirements ...labels.Requirement) labels
 func (s requirementLabelSelector) Requirements() (labels.Requirements, bool) { return nil, true }
 
 func (s requirementLabelSelector) DeepCopySelector() labels.Selector {
-	return requirementLabelSelector{requirements: append(store.Requirements(nil), s.requirements...)}
+	return requirementLabelSelector{requirements: cloneRequirements(s.requirements)}
 }
 
 func (s requirementLabelSelector) RequiresExactMatch(key string) (string, bool) {
-	for _, requirement := range s.requirements {
-		if requirement.Key == key &&
-			(requirement.Operator == store.Equals || requirement.Operator == store.DoubleEquals) &&
-			len(requirement.Values) == 1 {
-			return store.AnyToString(requirement.Values[0]), true
-		}
-	}
-	return "", false
+	return requirementsExactMatch(s.requirements, key)
 }
 
 var _ labels.Selector = requirementLabelSelector{}
 
 func requirementsToFieldsSelector(reqs store.Requirements) (fields.Selector, error) {
-	selectors := make([]fields.Selector, 0, len(reqs))
-	for _, req := range reqs {
-		switch req.Operator {
-		case store.Equals, store.DoubleEquals:
-			selectors = append(selectors, fields.OneTermEqualSelector(req.Key, store.AnyToString(req.Values[0])))
-		case store.NotEquals:
-			selectors = append(selectors, fields.OneTermNotEqualSelector(req.Key, store.AnyToString(req.Values[0])))
-		case store.In:
-			selectors = append(selectors, OneTermInSelector(req.Key, store.AnyToStrings(req.Values)))
-		case store.NotIn:
-			selectors = append(selectors, OneTermNotInSelector(req.Key, store.AnyToStrings(req.Values)))
-		case store.Exists:
-			selectors = append(selectors, fieldPresenceTerm{field: req.Key, exists: true})
-		case store.DoesNotExist:
-			selectors = append(selectors, fieldPresenceTerm{field: req.Key})
-		case store.GreaterThan, store.LessThan, store.GreaterThanOrEqual, store.LessThanOrEqual:
-			selectors = append(selectors, fieldComparisonTerm{requirement: req})
-		default:
-			return nil, fmt.Errorf("unsupported field selector operator: %s", req.Operator)
+	if requirementOperatorExists(reqs, selector.Contains, selector.Like) {
+		return nil, commonerrors.NewUnsupported("etcd cache does not support Contains or Like field requirements")
+	}
+	return requirementFieldSelector{requirements: stringifyRequirements(reqs)}, nil
+}
+
+type requirementFieldSelector struct {
+	requirements store.Requirements
+}
+
+func (s requirementFieldSelector) Matches(values fields.Fields) bool {
+	fieldsMap := make(map[string]string, len(requirementKeys(s.requirements)))
+	for _, key := range requirementKeys(s.requirements) {
+		if values.Has(key) {
+			fieldsMap[key] = values.Get(key)
 		}
 	}
-	return fields.AndSelectors(selectors...), nil
+	return selector.RequirementsMatchLabels(s.requirements, fieldsMap)
+}
+
+func (s requirementFieldSelector) Empty() bool {
+	return len(s.requirements) == 0
+}
+
+func (s requirementFieldSelector) RequiresExactMatch(field string) (string, bool) {
+	return requirementsExactMatch(s.requirements, field)
+}
+
+func (s requirementFieldSelector) Transform(fn fields.TransformFunc) (fields.Selector, error) {
+	transformed, err := transformRequirements(s.requirements, fn)
+	if err != nil {
+		return nil, err
+	}
+	return requirementFieldSelector{requirements: transformed}, nil
+}
+
+func (s requirementFieldSelector) Requirements() fields.Requirements { return nil }
+
+func (s requirementFieldSelector) String() string { return s.requirements.String() }
+
+func (s requirementFieldSelector) DeepCopySelector() fields.Selector {
+	return requirementFieldSelector{requirements: cloneRequirements(s.requirements)}
+}
+
+var _ fields.Selector = requirementFieldSelector{}
+
+func requirementKeys(requirements store.Requirements) []string {
+	seen := map[string]struct{}{}
+	var collect func(store.Requirements)
+	collect = func(current store.Requirements) {
+		for _, requirement := range current {
+			if requirement.Key != "" {
+				seen[requirement.Key] = struct{}{}
+			}
+			collect(requirement.Requirements)
+		}
+	}
+	collect(requirements)
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func requirementOperatorExists(requirements store.Requirements, operators ...selector.Operator) bool {
+	for _, requirement := range requirements {
+		if slices.Contains(operators, requirement.Operator) || requirementOperatorExists(requirement.Requirements, operators...) {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneRequirements(requirements store.Requirements) store.Requirements {
+	cloned := make(store.Requirements, len(requirements))
+	for index, requirement := range requirements {
+		cloned[index] = requirement
+		cloned[index].Values = append([]any(nil), requirement.Values...)
+		cloned[index].Requirements = cloneRequirements(requirement.Requirements)
+	}
+	return cloned
+}
+
+func stringifyRequirements(requirements store.Requirements) store.Requirements {
+	result := cloneRequirements(requirements)
+	for index := range result {
+		result[index].Requirements = stringifyRequirements(result[index].Requirements)
+		for valueIndex, value := range result[index].Values {
+			result[index].Values[valueIndex] = store.AnyToString(value)
+		}
+	}
+	return result
+}
+
+func requirementsExactMatch(requirements store.Requirements, key string) (string, bool) {
+	for _, requirement := range requirements {
+		switch requirement.Operator {
+		case selector.Equals, selector.DoubleEquals:
+			if requirement.Key == key {
+				return store.AnyToString(requirement.Values[0]), true
+			}
+		case selector.And:
+			if value, found := requirementsExactMatch(requirement.Requirements, key); found {
+				return value, true
+			}
+		}
+	}
+	return "", false
+}
+
+func transformRequirements(requirements store.Requirements, fn fields.TransformFunc) (store.Requirements, error) {
+	transformed := cloneRequirements(requirements)
+	for index := range transformed {
+		requirement := &transformed[index]
+		if len(requirement.Requirements) != 0 {
+			children, err := transformRequirements(requirement.Requirements, fn)
+			if err != nil {
+				return nil, err
+			}
+			requirement.Requirements = children
+			continue
+		}
+		if requirement.Key == "" {
+			continue
+		}
+		value := ""
+		if len(requirement.Values) == 1 {
+			value = store.AnyToString(requirement.Values[0])
+		}
+		field, transformedValue, err := fn(requirement.Key, value)
+		if err != nil {
+			return nil, err
+		}
+		if field == "" && transformedValue == "" {
+			*requirement = selector.Requirement{Operator: selector.All}
+			continue
+		}
+		requirement.Key = field
+		if len(requirement.Values) == 1 {
+			requirement.Values = []any{transformedValue}
+		}
+	}
+	return transformed, nil
 }
 
 type fieldPresenceTerm struct {
@@ -172,7 +287,7 @@ func (p fieldPresenceTerm) Transform(fn fields.TransformFunc) (fields.Selector, 
 var _ fields.Selector = fieldPresenceTerm{}
 
 type fieldComparisonTerm struct {
-	requirement store.Requirement
+	requirement selector.Requirement
 }
 
 func (term fieldComparisonTerm) DeepCopySelector() fields.Selector {
@@ -189,7 +304,7 @@ func (term fieldComparisonTerm) Matches(values fields.Fields) bool {
 	if values.Has(term.requirement.Key) {
 		fieldsMap[term.requirement.Key] = values.Get(term.requirement.Key)
 	}
-	return store.RequirementMatchLabels(term.requirement, fieldsMap)
+	return selector.RequirementMatchLabels(term.requirement, fieldsMap)
 }
 
 func (term fieldComparisonTerm) Requirements() fields.Requirements {

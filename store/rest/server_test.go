@@ -7,7 +7,9 @@ import (
 	"reflect"
 	"testing"
 
+	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/rest/api"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -119,12 +121,20 @@ func TestRemoteStoreSchemaSnapshot(t *testing.T) {
 	}
 }
 
+func TestRemoteStoreSelectorCapabilities(t *testing.T) {
+	remote := newCaptureRemoteStore(t, &optionCaptureStore{})
+	capabilities := remote.Capabilities()
+	if !capabilities.LabelSelector || !capabilities.FieldSelector {
+		t.Fatalf("Capabilities() = %#v, want recursive selectors", capabilities)
+	}
+}
+
 func TestRemoteStoreListPassesContinue(t *testing.T) {
 	underlying := &optionCaptureStore{}
 	remote := newCaptureRemoteStore(t, underlying)
 	list := &store.List[store.Unstructured]{Resource: "widgets"}
-	labelRequirement := store.RequirementEqual("environment", "production")
-	fieldRequirement := store.RequirementEqual("enabled", "true")
+	labelRequirement := selector.RequirementEqual("environment", "production")
+	fieldRequirement := selector.RequirementEqual("enabled", "true")
 
 	if err := remote.List(context.Background(), list,
 		store.WithPage(3, 10),
@@ -182,15 +192,107 @@ func TestRemoteStoreListPreservesPage(t *testing.T) {
 	}
 }
 
+func TestRemoteStoreListPassesRecursiveRequirements(t *testing.T) {
+	underlying := &optionCaptureStore{}
+	remote := newCaptureRemoteStore(t, underlying)
+	list := &store.List[store.Unstructured]{Resource: "widgets"}
+	labelRequirement := selector.Requirement{
+		Operator: selector.Or,
+		Requirements: store.Requirements{
+			selector.RequirementEqual("visibility", "public"),
+			selector.RequirementEqual("owner", "alice"),
+		},
+	}
+	fieldRequirement := selector.Requirement{
+		Operator: selector.And,
+		Requirements: store.Requirements{
+			selector.NewRequirement("rank", selector.GreaterThan, int64(1)),
+			{
+				Operator: selector.Not,
+				Requirements: store.Requirements{
+					selector.RequirementEqual("state", "blocked"),
+				},
+			},
+		},
+	}
+	if err := remote.List(t.Context(), list,
+		store.WithLabelRequirements(labelRequirement),
+		store.WithFieldRequirements(fieldRequirement),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := underlying.listOptions.LabelRequirements.String(), (store.Requirements{labelRequirement}).String(); got != want {
+		t.Fatalf("LabelRequirements = %q, want %q", got, want)
+	}
+	if got, want := underlying.listOptions.FieldRequirements.String(), (store.Requirements{fieldRequirement}).String(); got != want {
+		t.Fatalf("FieldRequirements = %q, want %q", got, want)
+	}
+}
+
+func TestRemoteStoreListEscapesSelectorValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "selector delimiters", key: "description", value: "public, but (restricted) && private"},
+		{name: "quotes and backslashes", key: "message", value: `a "quoted" \ value`},
+		{name: "URL reserved characters", key: "location", value: "a+b%#?/&"},
+		{name: "Unicode whitespace", key: "note", value: "alpha\u3000beta"},
+		{name: "control characters", key: "message", value: "line1\nline2\t\x00"},
+		{name: "special key", key: "owner,name", value: "alice"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			underlying := &optionCaptureStore{}
+			remote := newCaptureRemoteStore(t, underlying)
+			list := &store.List[store.Unstructured]{Resource: "widgets"}
+			requirement := selector.RequirementEqual(test.key, test.value)
+			if err := remote.List(t.Context(), list, store.WithFieldRequirements(requirement)); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(underlying.listOptions.FieldRequirements, store.Requirements{requirement}) {
+				t.Fatalf("FieldRequirements = %#v, want %#v", underlying.listOptions.FieldRequirements, store.Requirements{requirement})
+			}
+		})
+	}
+}
+
+func TestRemoteStoreListRejectsInvalidRequirements(t *testing.T) {
+	remote := newCaptureRemoteStore(t, &optionCaptureStore{})
+	list := &store.List[store.Unstructured]{Resource: "widgets"}
+	err := remote.List(t.Context(), list,
+		store.WithFieldRequirements(selector.Requirement{Operator: selector.Not}),
+	)
+	if commonerrors.ReasonForError(err) != commonerrors.StatusReasonBadRequest {
+		t.Fatalf("List() error = %v, want BadRequest", err)
+	}
+}
+
 func TestRemoteStoreGetPassesProtocolOptions(t *testing.T) {
 	underlying := &optionCaptureStore{}
 	remote := newCaptureRemoteStore(t, underlying)
 	object := &store.Unstructured{}
 	object.SetResource("widgets")
+	labelRequirement := selector.Requirement{
+		Operator: selector.Or,
+		Requirements: store.Requirements{
+			selector.RequirementEqual("visibility", "public"),
+			selector.RequirementEqual("owner", "alice"),
+		},
+	}
+	fieldRequirement := selector.Requirement{
+		Operator: selector.Not,
+		Requirements: store.Requirements{
+			selector.RequirementEqual("state", "blocked"),
+		},
+	}
 
 	if err := remote.Get(context.Background(), "widget-1", object,
 		store.WithResourceVersion(7),
 		store.WithFields("id", "name"),
+		store.WithLabelRequirements(labelRequirement),
+		store.WithFieldRequirements(fieldRequirement),
 	); err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -200,14 +302,20 @@ func TestRemoteStoreGetPassesProtocolOptions(t *testing.T) {
 	if !reflect.DeepEqual(underlying.getOptions.Fields, []string{"id", "name"}) {
 		t.Fatalf("GetOptions.Fields = %#v", underlying.getOptions.Fields)
 	}
+	if !reflect.DeepEqual(underlying.getOptions.LabelRequirements, store.Requirements{labelRequirement}) {
+		t.Fatalf("LabelRequirements = %#v", underlying.getOptions.LabelRequirements)
+	}
+	if !reflect.DeepEqual(underlying.getOptions.FieldRequirements, store.Requirements{fieldRequirement}) {
+		t.Fatalf("FieldRequirements = %#v", underlying.getOptions.FieldRequirements)
+	}
 }
 
 func TestRemoteStorePatchBatchPassesSelectors(t *testing.T) {
 	underlying := &optionCaptureStore{}
 	remote := newCaptureRemoteStore(t, underlying)
 	list := &store.List[store.Unstructured]{Resource: "widgets"}
-	labelRequirement := store.RequirementEqual("environment", "test")
-	fieldRequirement := store.RequirementEqual("enabled", "true")
+	labelRequirement := selector.RequirementEqual("environment", "test")
+	fieldRequirement := selector.RequirementEqual("enabled", "true")
 
 	err := remote.PatchBatch(context.Background(), list,
 		store.MapMergePatchBacth{"enabled": false},
@@ -233,8 +341,8 @@ func TestRemoteStoreDeletePassesConditions(t *testing.T) {
 	object := &store.Unstructured{}
 	object.SetResource("widgets")
 	object.SetID("widget-1")
-	labelRequirement := store.RequirementEqual("environment", "test")
-	fieldRequirement := store.RequirementEqual("enabled", "true")
+	labelRequirement := selector.RequirementEqual("environment", "test")
+	fieldRequirement := selector.RequirementEqual("enabled", "true")
 
 	if err := remote.Delete(context.Background(), object,
 		store.WithLabelRequirements(labelRequirement),

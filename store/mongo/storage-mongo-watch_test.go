@@ -9,6 +9,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	commonerrors "xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 	testmongodb "xiaoshiai.cn/common/testkit/mongodb"
 )
@@ -29,7 +30,7 @@ func TestMongoStorageWatchIntegration(t *testing.T) {
 	defer cancel()
 
 	watcher, err := storage.Watch(ctx, &store.List[Message]{},
-		store.WithLabelRequirements(store.NewRequirement("example.com/team", store.Equals, "platform")),
+		store.WithLabelRequirements(selector.NewRequirement("example.com/team", selector.Equals, "platform")),
 	)
 	if err != nil {
 		t.Fatalf("watch messages: %v", err)
@@ -84,7 +85,7 @@ func TestMongoStorageWatchInitialEventsAndSelectorTransitions(t *testing.T) {
 		t.Context(),
 		&store.List[Message]{},
 		store.WithSendInitialEvents(),
-		store.WithLabelRequirements(store.NewRequirement("team", store.Equals, "platform")),
+		store.WithLabelRequirements(selector.NewRequirement("team", selector.Equals, "platform")),
 	)
 	if err != nil {
 		t.Fatalf("watch messages: %v", err)

@@ -35,11 +35,17 @@ func (g *CacheStore) Schema() *store.Schema {
 	return g.core.store.Schema()
 }
 
-// Capabilities implements store.Store. The cache owns page pagination and
-// otherwise reports only the optional Watch behavior it delegates to the
-// underlying store.
+// Capabilities implements store.Store. The cache owns selector evaluation for
+// reads and page pagination; selector and Watch capabilities remain bounded by
+// mutation and watch behavior delegated to the underlying Store.
 func (g *CacheStore) Capabilities() store.Capabilities {
-	return store.Capabilities{Page: true, Watch: g.core.store.Capabilities().Watch}
+	capabilities := g.core.store.Capabilities()
+	return store.Capabilities{
+		LabelSelector: capabilities.LabelSelector,
+		FieldSelector: capabilities.FieldSelector,
+		Page:          true,
+		Watch:         capabilities.Watch,
+	}
 }
 
 func (g *CacheStore) Ping(ctx context.Context) error {
@@ -67,6 +73,9 @@ func (c *CacheStore) Count(ctx context.Context, obj store.Object, opts ...store.
 		return 0, err
 	}
 	options := store.ApplyCountOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return 0, err
+	}
 	// filter
 	items, _, err := c.core.
 		resource(resource).
@@ -94,6 +103,9 @@ func (g *CacheStore) Get(ctx context.Context, name string, obj store.Object, opt
 		return err
 	}
 	options := store.ApplyGetOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	if obj == nil {
 		return errors.NewBadRequest("object is nil")
 	}
@@ -106,6 +118,10 @@ func (g *CacheStore) Get(ctx context.Context, name string, obj store.Object, opt
 	uns, err := g.core.resource(resource).get(ctx, g.scopes, name)
 	if err != nil {
 		return err
+	}
+	if !store.MatchLabelReqirements(uns, options.LabelRequirements) ||
+		!store.MatchUnstructuredFieldRequirments(uns, options.FieldRequirements) {
+		return errors.NewNotFound(resource, name)
 	}
 	rev := ptr.Deref(options.ResourceVersion, int64(0))
 	if rev > 0 && uns.GetResourceVersion() < rev {
@@ -124,6 +140,9 @@ func (g *CacheStore) List(ctx context.Context, list store.ObjectList, opts ...st
 		return err
 	}
 	options := store.ApplyListOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	if options.Limit > 0 {
 		return errors.NewUnsupported("cache store does not support continuation pagination")
 	}
@@ -181,6 +200,13 @@ func (g *CacheStore) List(ctx context.Context, list store.ObjectList, opts ...st
 		store.SetPageListMetadata(list, page, options.Size, total)
 	} else {
 		store.SetUnpaginatedListMetadata(list, total)
+	}
+	return nil
+}
+
+func validateSelectorRequirements(labelRequirements, fieldRequirements store.Requirements) error {
+	if err := store.ValidateSelectorRequirements(labelRequirements, fieldRequirements); err != nil {
+		return errors.NewBadRequest(err.Error())
 	}
 	return nil
 }

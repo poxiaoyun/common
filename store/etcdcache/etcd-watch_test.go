@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.etcd.io/etcd/client/v3/kubernetes"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -89,7 +90,7 @@ func testEtcdCacherWatch(t *testing.T, client *kubernetes.Client) {
 			t,
 			ctx,
 			storage,
-			store.WithFieldRequirements(store.RequirementEqual("enabled", true)),
+			store.WithFieldRequirements(selector.RequirementEqual("enabled", true)),
 		)
 		if err := storage.Create(ctx, newMyObject("disabled", "disabled", false, "blue")); err != nil {
 			t.Fatalf("Create(disabled) error = %v", err)

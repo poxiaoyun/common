@@ -52,10 +52,11 @@ func (c *Client) Schema() *store.Schema {
 	return c.schema.Snapshot()
 }
 
-// Capabilities implements store.Store. Remote capabilities are conservative
-// until capability discovery is part of the REST protocol.
+// Capabilities implements store.Store. The REST protocol preserves recursive
+// label and field requirements; backend-specific leaf support remains a
+// server-side concern reported through Unsupported errors.
 func (c *Client) Capabilities() store.Capabilities {
-	return store.Capabilities{}
+	return store.Capabilities{LabelSelector: true, FieldSelector: true}
 }
 
 func (c *Client) Ping(ctx context.Context) error {
@@ -73,11 +74,8 @@ func (c *Client) PatchBatch(ctx context.Context, obj store.ObjectList, patch sto
 
 	options := store.ApplyPatchBatchOptions(opts)
 	queries := url.Values{}
-	if len(options.LabelRequirements) != 0 {
-		queries.Add("labelSelector", options.LabelRequirements.String())
-	}
-	if len(options.FieldRequirements) != 0 {
-		queries.Add("fieldSelector", options.FieldRequirements.String())
+	if err := addSelectorQueries(queries, options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
 	}
 	return c.cli.Patch(c.getPath(resource, "")).
 		Query("batch", "true").
@@ -95,11 +93,8 @@ func (c *Client) DeleteBatch(ctx context.Context, obj store.ObjectList, opts ...
 	}
 	options := store.ApplyDeleteBatchOptions(opts)
 	queries := url.Values{}
-	if len(options.LabelRequirements) != 0 {
-		queries.Add("labelSelector", options.LabelRequirements.String())
-	}
-	if len(options.FieldRequirements) != 0 {
-		queries.Add("fieldSelector", options.FieldRequirements.String())
+	if err := addSelectorQueries(queries, options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
 	}
 	return c.cli.Delete(c.getPath(resource, "")).Queries(queries).Return(obj).Send(ctx)
 }
@@ -112,11 +107,8 @@ func (c Client) Count(ctx context.Context, obj store.Object, opts ...store.Count
 	}
 	options := store.ApplyCountOptions(opts)
 	queries := url.Values{}
-	if len(options.LabelRequirements) != 0 {
-		queries.Add("labelSelector", options.LabelRequirements.String())
-	}
-	if len(options.FieldRequirements) != 0 {
-		queries.Add("fieldSelector", options.FieldRequirements.String())
+	if err := addSelectorQueries(queries, options.LabelRequirements, options.FieldRequirements); err != nil {
+		return 0, err
 	}
 	if options.IncludeSubScopes {
 		queries.Add("includeSubscopes", "true")
@@ -148,11 +140,8 @@ func (c Client) Delete(ctx context.Context, obj store.Object, opts ...store.Dele
 	}
 	options := store.ApplyDeleteOptions(opts)
 	queries := url.Values{}
-	if len(options.LabelRequirements) != 0 {
-		queries.Add("labelSelector", options.LabelRequirements.String())
-	}
-	if len(options.FieldRequirements) != 0 {
-		queries.Add("fieldSelector", options.FieldRequirements.String())
+	if err := addSelectorQueries(queries, options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
 	}
 	if options.Preconditions != nil {
 		if options.Preconditions.UID != nil {
@@ -180,6 +169,9 @@ func (c Client) Get(ctx context.Context, name string, obj store.Object, opts ...
 	}
 	options := store.ApplyGetOptions(opts)
 	queries := url.Values{}
+	if err := addSelectorQueries(queries, options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	if options.ResourceVersion != nil {
 		queries.Add("resourceVersion", strconv.FormatInt(*options.ResourceVersion, 10))
 	}
@@ -197,11 +189,8 @@ func (c Client) List(ctx context.Context, list store.ObjectList, opts ...store.L
 	}
 	options := store.ApplyListOptions(opts)
 	queries := url.Values{}
-	if len(options.LabelRequirements) != 0 {
-		queries.Add("labelSelector", options.LabelRequirements.String())
-	}
-	if len(options.FieldRequirements) != 0 {
-		queries.Add("fieldSelector", options.FieldRequirements.String())
+	if err := addSelectorQueries(queries, options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
 	}
 	if options.IncludeSubScopes {
 		queries.Add("includeSubscopes", "true")
@@ -251,11 +240,8 @@ func (c Client) Watch(ctx context.Context, obj store.ObjectList, opts ...store.W
 	}
 	options := store.ApplyWatchOptions(opts)
 	queries := url.Values{}
-	if len(options.LabelRequirements) != 0 {
-		queries.Add("labelSelector", options.LabelRequirements.String())
-	}
-	if len(options.FieldRequirements) != 0 {
-		queries.Add("fieldSelector", options.FieldRequirements.String())
+	if err := addSelectorQueries(queries, options.LabelRequirements, options.FieldRequirements); err != nil {
+		return nil, err
 	}
 	if options.ResourceVersion != nil {
 		queries.Add("resourceVersion", strconv.FormatInt(*options.ResourceVersion, 10))
@@ -339,11 +325,8 @@ func (s Client) update(ctx context.Context, obj store.Object, status bool, opts 
 	if options.TTL != 0 {
 		queries.Add("ttl", options.TTL.String())
 	}
-	if len(options.LabelRequirements) != 0 {
-		queries.Add("labelSelector", options.LabelRequirements.String())
-	}
-	if len(options.FieldRequirements) != 0 {
-		queries.Add("fieldSelector", options.FieldRequirements.String())
+	if err := addSelectorQueries(queries, options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
 	}
 	return s.cli.
 		Put(s.getPath(resource, obj.GetID())).
@@ -367,11 +350,8 @@ func (c Client) patch(ctx context.Context, obj store.Object, status bool, patch 
 
 	options := store.ApplyPatchOptions(opts)
 	queries := url.Values{}
-	if len(options.LabelRequirements) != 0 {
-		queries.Add("labelSelector", options.LabelRequirements.String())
-	}
-	if len(options.FieldRequirements) != 0 {
-		queries.Add("fieldSelector", options.FieldRequirements.String())
+	if err := addSelectorQueries(queries, options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
 	}
 	return c.cli.Patch(c.getPath(resource, obj.GetID())).
 		Body(bytes.NewReader(patchdata), string(patchtype)).
@@ -386,6 +366,19 @@ func (c Client) getPath(resource, name string) string {
 		rpath += "/" + name
 	}
 	return rpath
+}
+
+func addSelectorQueries(queries url.Values, labelRequirements, fieldRequirements store.Requirements) error {
+	if err := store.ValidateSelectorRequirements(labelRequirements, fieldRequirements); err != nil {
+		return errors.NewBadRequest(err.Error())
+	}
+	if len(labelRequirements) != 0 {
+		queries.Add("labelSelector", labelRequirements.String())
+	}
+	if len(fieldRequirements) != 0 {
+		queries.Add("fieldSelector", fieldRequirements.String())
+	}
+	return nil
 }
 
 // Status implements store.Store.

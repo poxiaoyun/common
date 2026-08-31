@@ -271,6 +271,9 @@ func (c *generic) Create(ctx context.Context, obj store.Object, opts ...store.Cr
 // Delete implements store.Store.
 func (c *generic) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
 	options := store.ApplyDeleteOptions(opts)
+	if err := store.ValidateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return errors.NewBadRequest(err.Error())
+	}
 	preconditions := &storage.Preconditions{}
 	if options.Preconditions != nil {
 		if options.Preconditions.UID != nil {

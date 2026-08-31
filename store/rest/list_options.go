@@ -10,7 +10,8 @@ import (
 )
 
 // ListOptionsFromRequest converts public request list options, including
-// caller-owned request defaults, into Store modifiers.
+// recursive label and field selectors, into Store modifiers. Caller-owned
+// defaults apply before selector conversion.
 func ListOptionsFromRequest(r *http.Request, defaults ...meta.ListOption) ([]store.ListOption, error) {
 	requestOptions, err := api.GetListOptions(r, defaults...)
 	if err != nil {

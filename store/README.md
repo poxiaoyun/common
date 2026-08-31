@@ -68,3 +68,43 @@ Store option 是实现 `ApplyToXxx` 的具体值；不得传入捕获闭包，�
 调用可选能力前检查 `Capabilities()`。基础 CRUD、精确 Scope 和正常的乐观并发语义不是可关闭的可选能力。
 
 保留 Store 返回的领域错误语义，例如 NotFound、AlreadyExists、Conflict、Unsupported 和 ResourceExpired。调用方可以在业务接口处映射这些错误，但不应把并发冲突或不支持的操作降级为成功。
+
+## 组合查询条件
+
+查询表达式由共享的 [`selector`](../selector) 包定义，Store 通过
+`store.Requirements` alias 暴露条件集合。`Requirements` 中的顶层条件按 AND
+组合。一个 `Requirement` 也可以用
+`And`、`Or` 和 `Not` 递归组合子条件。例如：
+
+```go
+visible := selector.Requirement{
+    Operator: selector.Or,
+    Requirements: store.Requirements{
+        selector.RequirementEqual("visibility", "public"),
+        selector.RequirementEqual("owner", subjectID),
+    },
+}
+
+err := storage.List(ctx, list, store.WithFieldRequirements(visible))
+```
+
+`None` 匹配零个对象，`All` 匹配全部对象；零值 Requirement 等同于
+`None`。空的顶层 `Requirements` 表示调用方没有增加选择条件，因此匹配全部对象。
+组合条件和普通叶子条件一样，必须在排序、分页和 Count 前执行。
+
+Label 和 Field Requirement 是两个分别求值、最后用 AND 连接的表达式；一个
+组合节点不能同时引用 label 和 field。调用前检查相应的 `LabelSelector` 或
+`FieldSelector` capability。有效但具体 adapter 无法无损执行的条件返回
+Unsupported；无效节点返回 BadRequest。
+
+`Requirements.String()` 和 `ParseRequirements` 使用同一套 selector 风格文本：
+
+```go
+expression := requirements.String()
+requirements, err = selector.ParseRequirements(expression)
+```
+
+平铺表达式沿用 Kubernetes label selector 的写法；递归表达式增加 `&&`、`||`、
+`!(...)`、`all()` 和 `none()`。包含分隔符的字符串自动加引号。协议 operand 按
+selector 语义解析成字符串，由 Requirement 求值层完成布尔值、数值和时间比较；
+`null` 单独表示 nil。Requirement 值支持 nil、字符串、布尔值、整数、有限浮点数和时间。

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	commonerrors "xiaoshiai.cn/common/errors"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 	"xiaoshiai.cn/common/store/storetest"
 )
@@ -224,7 +225,7 @@ func TestListFiltersSortsAndPagesScopedObjects(t *testing.T) {
 		ctx,
 		allEnabled,
 		store.WithSubScopes(),
-		store.WithFieldRequirements(store.RequirementEqual("enabled", true)),
+		store.WithFieldRequirements(selector.RequirementEqual("enabled", true)),
 		store.WithSort("name-"),
 		store.WithPage(0, 1),
 		store.WithContinuation("ignored", 0),
@@ -332,7 +333,7 @@ func TestCountAndBatchOperationsUseSelectors(t *testing.T) {
 	count, err := storage.Count(
 		ctx,
 		&user{},
-		store.WithFieldRequirements(store.RequirementEqual("enabled", true)),
+		store.WithFieldRequirements(selector.RequirementEqual("enabled", true)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -345,7 +346,7 @@ func TestCountAndBatchOperationsUseSelectors(t *testing.T) {
 		ctx,
 		&store.List[user]{},
 		store.MapMergePatchBacth{"team": "platform"},
-		store.WithFieldRequirements(store.RequirementEqual("enabled", true)),
+		store.WithFieldRequirements(selector.RequirementEqual("enabled", true)),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +354,7 @@ func TestCountAndBatchOperationsUseSelectors(t *testing.T) {
 	if err := storage.List(
 		ctx,
 		patched,
-		store.WithFieldRequirements(store.RequirementEqual("team", "platform")),
+		store.WithFieldRequirements(selector.RequirementEqual("team", "platform")),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +365,7 @@ func TestCountAndBatchOperationsUseSelectors(t *testing.T) {
 	if err := storage.DeleteBatch(
 		ctx,
 		&store.List[user]{},
-		store.WithFieldRequirements(store.RequirementEqual("email", "carol@example.com")),
+		store.WithFieldRequirements(selector.RequirementEqual("email", "carol@example.com")),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +398,7 @@ func TestWatchSendsInitialAndMutationEvents(t *testing.T) {
 		ctx,
 		&store.List[user]{},
 		store.WithSendInitialEvents(),
-		store.WithFieldRequirements(store.RequirementEqual("enabled", true)),
+		store.WithFieldRequirements(selector.RequirementEqual("enabled", true)),
 	)
 	if err != nil {
 		t.Fatal(err)

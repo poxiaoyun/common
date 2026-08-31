@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -55,7 +56,7 @@ func TestListObjectsAppliesCallerOptionsAfterRequestOptions(t *testing.T) {
 	storage := &objectAdapterStore{}
 	request := httptest.NewRequest(http.MethodGet, "/?page=2&size=25&labelSelector=environment%3Dproduction", nil)
 	list := &store.List[objectAdapterFixture]{}
-	serverRequirement := store.RequirementEqual("tenant", "tenant-1")
+	serverRequirement := selector.RequirementEqual("tenant", "tenant-1")
 
 	if _, err := ListObjects(request, storage, list,
 		store.WithPage(3, 10),
@@ -67,7 +68,7 @@ func TestListObjectsAppliesCallerOptionsAfterRequestOptions(t *testing.T) {
 		t.Fatalf("pagination = %#v", storage.listOptions)
 	}
 	wantRequirements := store.Requirements{
-		store.RequirementEqual("environment", "production"),
+		selector.RequirementEqual("environment", "production"),
 		serverRequirement,
 	}
 	if !reflect.DeepEqual(storage.listOptions.LabelRequirements, wantRequirements) {
@@ -96,10 +97,10 @@ func TestListObjectsOrWatchPassesRequestFiltersToWatch(t *testing.T) {
 	if storage.watchOptions.ResourceVersion == nil || *storage.watchOptions.ResourceVersion != 7 || !storage.watchOptions.IncludeSubScopes || !storage.watchOptions.SendInitialEvents {
 		t.Fatalf("snapshot options = %#v", storage.watchOptions)
 	}
-	if !reflect.DeepEqual(storage.watchOptions.LabelRequirements, store.Requirements{store.RequirementEqual("environment", "production")}) {
+	if !reflect.DeepEqual(storage.watchOptions.LabelRequirements, store.Requirements{selector.RequirementEqual("environment", "production")}) {
 		t.Fatalf("LabelRequirements = %#v", storage.watchOptions.LabelRequirements)
 	}
-	if !reflect.DeepEqual(storage.watchOptions.FieldRequirements, store.Requirements{store.RequirementEqual("enabled", "true")}) {
+	if !reflect.DeepEqual(storage.watchOptions.FieldRequirements, store.Requirements{selector.RequirementEqual("enabled", "true")}) {
 		t.Fatalf("FieldRequirements = %#v", storage.watchOptions.FieldRequirements)
 	}
 }

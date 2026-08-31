@@ -259,6 +259,9 @@ func keyHasRevision(key string, rev int64) clientv3.Cmp {
 // Delete implements Store.
 func (e *EtcdStore) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
 	deleteoptions := store.ApplyDeleteOptions(opts)
+	if err := validateSelectorRequirements(deleteoptions.LabelRequirements, deleteoptions.FieldRequirements); err != nil {
+		return err
+	}
 	if err := e.core.validateObject(obj); err != nil {
 		return err
 	}
@@ -308,6 +311,9 @@ func (e *EtcdStore) Get(ctx context.Context, name string, obj store.Object, opts
 		return err
 	}
 	options := store.ApplyGetOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	if err := e.core.validateObject(obj); err != nil {
 		return err
 	}
@@ -336,6 +342,9 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 		return err
 	}
 	options := store.ApplyListOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	if err := e.core.validateObjectList(list); err != nil {
 		return err
 	}
@@ -482,7 +491,10 @@ func (e *EtcdStore) List(ctx context.Context, list store.ObjectList, opts ...sto
 
 // Patch implements Store.
 func (e *EtcdStore) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	_ = store.ApplyPatchOptions(opts)
+	options := store.ApplyPatchOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	updatefunc := func(current store.Object) (store.Object, error) {
 		desired := store.NewObject(obj)
 		if err := store.CopyObject(current, desired); err != nil {
@@ -494,7 +506,10 @@ func (e *EtcdStore) Patch(ctx context.Context, obj store.Object, patch store.Pat
 		_, err := store.PrepareObjectForUpdate(current, desired, false)
 		return desired, err
 	}
-	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{})
+	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{
+		LabelRequirements: options.LabelRequirements,
+		FieldRequirements: options.FieldRequirements,
+	})
 }
 
 // Scope implements Store.
@@ -510,6 +525,9 @@ func (e *EtcdStore) Status() store.StatusStorage {
 // Update implements Store.
 func (e *EtcdStore) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
 	options := store.ApplyUpdateOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	requested := store.NewObject(obj)
 	if err := store.CopyObject(obj, requested); err != nil {
 		return err
@@ -528,7 +546,11 @@ func (e *EtcdStore) Update(ctx context.Context, obj store.Object, opts ...store.
 		_, err := store.PrepareObjectForUpdate(current, desired, false)
 		return desired, err
 	}
-	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{TTL: int64(options.TTL.Seconds())})
+	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{
+		TTL:               int64(options.TTL.Seconds()),
+		LabelRequirements: options.LabelRequirements,
+		FieldRequirements: options.FieldRequirements,
+	})
 }
 
 var _ store.StatusStorage = &EtcdStatusStore{}
@@ -540,7 +562,10 @@ type EtcdStatusStore struct {
 
 // Patch implements StatusStorage.
 func (e *EtcdStatusStore) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
-	_ = store.ApplyPatchOptions(opts)
+	options := store.ApplyPatchOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	updatefunc := func(current store.Object) (store.Object, error) {
 		desired := store.NewObject(obj)
 		if err := store.CopyObject(current, desired); err != nil {
@@ -552,7 +577,10 @@ func (e *EtcdStatusStore) Patch(ctx context.Context, obj store.Object, patch sto
 		_, err := store.PrepareObjectForUpdate(current, desired, true)
 		return desired, err
 	}
-	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{})
+	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{
+		LabelRequirements: options.LabelRequirements,
+		FieldRequirements: options.FieldRequirements,
+	})
 }
 
 // Update implements StatusStorage.
@@ -562,6 +590,9 @@ func (e *EtcdStatusStore) Update(ctx context.Context, obj store.Object, opts ...
 		return err
 	}
 	options := store.ApplyUpdateOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	requested := store.NewObject(obj)
 	if err := store.CopyObject(obj, requested); err != nil {
 		return err
@@ -580,7 +611,11 @@ func (e *EtcdStatusStore) Update(ctx context.Context, obj store.Object, opts ...
 		_, err := store.PrepareObjectForUpdate(current, desired, true)
 		return desired, err
 	}
-	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{TTL: int64(options.TTL.Seconds())})
+	return e.core.tryUpdate(ctx, e.scopes, obj, updatefunc, tryUpdateOptions{
+		TTL:               int64(options.TTL.Seconds()),
+		LabelRequirements: options.LabelRequirements,
+		FieldRequirements: options.FieldRequirements,
+	})
 }
 
 type etcdStoreCore struct {
@@ -641,7 +676,9 @@ func (e *etcdStoreCore) getkey(scopes []store.Scope, resource, name string) stri
 }
 
 type tryUpdateOptions struct {
-	TTL int64
+	TTL               int64
+	LabelRequirements store.Requirements
+	FieldRequirements store.Requirements
 }
 
 type tryUpdateFunc func(current store.Object) (store.Object, error)
@@ -671,6 +708,14 @@ func (e *etcdStoreCore) tryUpdate(ctx context.Context, scopes []store.Scope, obj
 	}
 	for {
 		currentversion := current.GetResourceVersion()
+		unstructured, err := store.ToUnstructured(current)
+		if err != nil {
+			return err
+		}
+		if !store.MatchLabelReqirements(current, options.LabelRequirements) ||
+			!store.MatchUnstructuredFieldRequirments(unstructured, options.FieldRequirements) {
+			return errors.NewNotFound(resource, id)
+		}
 		updated, err := do(current)
 		if err != nil {
 			return err
@@ -756,6 +801,13 @@ func (e *etcdStoreCore) tryUpdate(ctx context.Context, scopes []store.Scope, obj
 		obj.SetResourceVersion(currentversion)
 		return nil
 	}
+}
+
+func validateSelectorRequirements(labelRequirements, fieldRequirements store.Requirements) error {
+	if err := store.ValidateSelectorRequirements(labelRequirements, fieldRequirements); err != nil {
+		return errors.NewBadRequest(err.Error())
+	}
+	return nil
 }
 
 func (s *etcdStoreCore) getCurrent(ctx context.Context, key string, into store.Object, rev int64) ([]byte, error) {

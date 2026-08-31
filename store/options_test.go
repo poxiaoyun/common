@@ -3,12 +3,14 @@ package store
 import (
 	"reflect"
 	"testing"
+
 	"time"
+	"xiaoshiai.cn/common/selector"
 )
 
 func TestApplyListOptionsComposesInOrder(t *testing.T) {
-	first := RequirementEqual("state", "active")
-	second := RequirementEqual("tenant", "tenant-1")
+	first := selector.RequirementEqual("state", "active")
+	second := selector.RequirementEqual("tenant", "tenant-1")
 
 	options := ApplyListOptions([]ListOption{
 		WithPage(1, 10),

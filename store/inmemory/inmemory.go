@@ -91,6 +91,9 @@ func (i *InMemory) PatchBatch(ctx context.Context, obj store.ObjectList, patch s
 
 func (i *InMemory) Count(ctx context.Context, obj store.Object, opts ...store.CountOption) (int, error) {
 	options := store.ApplyCountOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return 0, err
+	}
 	resource, err := store.GetResource(obj)
 	if err != nil {
 		return 0, err
@@ -128,6 +131,9 @@ func (i *InMemory) Create(ctx context.Context, obj store.Object, opts ...store.C
 
 func (i *InMemory) Delete(ctx context.Context, obj store.Object, opts ...store.DeleteOption) error {
 	options := store.ApplyDeleteOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	return i.core.on(ctx, obj, func(ctx context.Context, resources string) error {
 		i.core.eventMu.Lock()
 		defer i.core.eventMu.Unlock()
@@ -173,6 +179,9 @@ func (i *InMemory) DeleteBatch(ctx context.Context, obj store.ObjectList, opts .
 
 func (i *InMemory) Get(ctx context.Context, name string, obj store.Object, opts ...store.GetOption) error {
 	options := store.ApplyGetOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	return i.core.on(ctx, obj, func(ctx context.Context, resources string) error {
 		if err := i.core.get(resources, i.scopes, name, obj); err != nil {
 			return err
@@ -195,6 +204,9 @@ func (i *InMemory) List(ctx context.Context, list store.ObjectList, opts ...stor
 		return err
 	}
 	options := store.ApplyListOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	if options.Limit > 0 {
 		return errors.NewUnsupported("in-memory store does not support continuation pagination")
 	}
@@ -257,6 +269,9 @@ func (i *InMemory) List(ctx context.Context, list store.ObjectList, opts ...stor
 
 func (i *InMemory) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
 	options := store.ApplyPatchOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	return i.core.on(ctx, obj, func(ctx context.Context, resource string) error {
 		i.core.eventMu.Lock()
 		defer i.core.eventMu.Unlock()
@@ -279,6 +294,9 @@ func (i *InMemory) Patch(ctx context.Context, obj store.Object, patch store.Patc
 
 func (i *InMemory) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
 	options := store.ApplyUpdateOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return err
+	}
 	return i.core.on(ctx, obj, func(ctx context.Context, resources string) error {
 		i.core.eventMu.Lock()
 		defer i.core.eventMu.Unlock()
@@ -305,6 +323,9 @@ func (i *InMemory) Watch(ctx context.Context, obj store.ObjectList, opts ...stor
 		return nil, err
 	}
 	options := store.ApplyWatchOptions(opts)
+	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return nil, err
+	}
 	if options.ResourceVersion != nil && *options.ResourceVersion > 0 {
 		return nil, errors.NewResourceExpired(resource, "watch history is unavailable")
 	}
@@ -336,6 +357,13 @@ func (i *InMemory) Watch(ctx context.Context, obj store.ObjectList, opts ...stor
 		i.core.watcherMu.Unlock()
 	}()
 	return watcher, nil
+}
+
+func validateSelectorRequirements(labelRequirements, fieldRequirements store.Requirements) error {
+	if err := store.ValidateSelectorRequirements(labelRequirements, fieldRequirements); err != nil {
+		return errors.NewBadRequest(err.Error())
+	}
+	return nil
 }
 
 func (i *InMemory) Scope(scope ...store.Scope) store.Store {

@@ -1,14 +1,16 @@
-package store
+package store_test
 
 import (
 	"reflect"
 	"testing"
 
 	"xiaoshiai.cn/common/meta"
+	"xiaoshiai.cn/common/selector"
+	"xiaoshiai.cn/common/store"
 )
 
 func TestListOptionsFromMeta(t *testing.T) {
-	modifiers, err := ListOptionsFromMeta(meta.ListOptions{
+	modifiers, err := store.ListOptionsFromMeta(meta.ListOptions{
 		Page:          2,
 		Size:          25,
 		Search:        "worker",
@@ -19,9 +21,9 @@ func TestListOptionsFromMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := ApplyListOptions(modifiers)
-	wantLabels := Requirements{RequirementEqual("environment", "production")}
-	wantFields := Requirements{RequirementEqual("enabled", "true")}
+	options := store.ApplyListOptions(modifiers)
+	wantLabels := store.Requirements{selector.RequirementEqual("environment", "production")}
+	wantFields := store.Requirements{selector.RequirementEqual("enabled", "true")}
 	if options.Page != 2 || options.Size != 25 || options.Search != "worker" || options.Sort != "name-" {
 		t.Fatalf("scalar options = %#v", options)
 	}
@@ -36,122 +38,114 @@ func TestListOptionsFromMeta(t *testing.T) {
 func TestListOptionsFromMetaRejectsInvalidSelectors(t *testing.T) {
 	tests := []meta.ListOptions{
 		{LabelSelector: "environment in ("},
-		{FieldSelector: "enabled in (true)"},
+		{FieldSelector: "(enabled=true"},
 	}
 	for _, options := range tests {
-		if _, err := ListOptionsFromMeta(options); err == nil {
+		if _, err := store.ListOptionsFromMeta(options); err == nil {
 			t.Fatalf("ListOptionsFromMeta(%#v) returned no error", options)
 		}
 	}
 }
 
-func TestParseRequirements(t *testing.T) {
-	tests := []struct {
-		name    string
-		want    Requirements
-		wantErr bool
-	}{
-		{
-			name: "empty",
-			want: Requirements{},
-		},
-		{
-			name: "single",
-			want: Requirements{
-				RequirementEqual("key", "value"),
-			},
-		},
-		{
-			name: "multiple",
-			want: Requirements{
-				RequirementEqual("key1", "value1"),
-				Requirement{
-					Key:      "key2",
-					Operator: In,
-					Values:   []any{"value2", "value3"},
-				},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			expr := tt.want.String()
-			got, err := ParseRequirements(expr)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ParseRequirements() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ParseRequirements() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestMatchUnstructuredFieldRequirements(t *testing.T) {
-	obj := &Unstructured{Object: map[string]any{
-		"score": 1.5,
-		"name":  "example-widget",
-		"tags":  []any{"blue", "stable"},
+	obj := &store.Unstructured{Object: map[string]any{
+		"enabled": true,
+		"score":   1.5,
+		"name":    "example-widget",
+		"tags":    []any{"blue", "stable"},
 	}}
 	tests := []struct {
 		name string
-		req  Requirement
+		req  selector.Requirement
 		want bool
 	}{
 		{
+			name: "textual boolean equals typed boolean",
+			req:  selector.RequirementEqual("enabled", "true"),
+			want: true,
+		},
+		{
 			name: "fractional greater than",
-			req:  NewRequirement("score", GreaterThan, 1.0),
+			req:  selector.NewRequirement("score", selector.GreaterThan, 1.0),
 			want: true,
 		},
 		{
 			name: "greater than or equal",
-			req:  NewRequirement("score", GreaterThanOrEqual, 1.5),
+			req:  selector.NewRequirement("score", selector.GreaterThanOrEqual, 1.5),
 			want: true,
 		},
 		{
 			name: "less than or equal",
-			req:  NewRequirement("score", LessThanOrEqual, 1.5),
+			req:  selector.NewRequirement("score", selector.LessThanOrEqual, 1.5),
 			want: true,
 		},
 		{
 			name: "slice contains",
-			req:  NewRequirement("tags", Contains, "stable"),
+			req:  selector.NewRequirement("tags", selector.Contains, "stable"),
 			want: true,
 		},
 		{
 			name: "string contains",
-			req:  NewRequirement("name", Contains, "widget"),
+			req:  selector.NewRequirement("name", selector.Contains, "widget"),
 			want: true,
 		},
 		{
 			name: "like",
-			req:  NewRequirement("name", Like, "widget"),
+			req:  selector.NewRequirement("name", selector.Like, "widget"),
 			want: true,
 		},
 		{
 			name: "missing comparison value",
-			req:  NewRequirement("score", GreaterThan),
+			req:  selector.NewRequirement("score", selector.GreaterThan),
 			want: false,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := MatchUnstructuredFieldRequirments(obj, Requirements{test.req}); got != test.want {
+			if got := store.MatchUnstructuredFieldRequirments(obj, store.Requirements{test.req}); got != test.want {
 				t.Fatalf("MatchUnstructuredFieldRequirments() = %v, want %v", got, test.want)
 			}
 		})
 	}
 }
 
-func TestRequirementMatchLabelsMissingKey(t *testing.T) {
-	if RequirementMatchLabels(RequirementEqual("missing", ""), nil) {
-		t.Fatal("missing label matched equality with an empty string")
+func TestRecursiveRequirementMatching(t *testing.T) {
+	objects := map[string]*store.Unstructured{
+		"public": {Object: map[string]any{"visibility": "public", "owner": "bob"}},
+		"owned":  {Object: map[string]any{"visibility": "private", "owner": "alice"}},
+		"denied": {Object: map[string]any{"visibility": "private", "owner": "bob"}},
 	}
-	if !RequirementMatchLabels(NewRequirement("missing", NotEquals, "value"), nil) {
-		t.Fatal("missing label did not match NotEquals")
+	visible := selector.Requirement{
+		Operator: selector.Or,
+		Requirements: store.Requirements{
+			selector.RequirementEqual("visibility", "public"),
+			selector.RequirementEqual("owner", "alice"),
+		},
 	}
-	if !RequirementMatchLabels(NewRequirement("missing", NotIn, "value"), nil) {
-		t.Fatal("missing label did not match NotIn")
+	notDenied := selector.Requirement{
+		Operator: selector.Not,
+		Requirements: store.Requirements{
+			selector.RequirementEqual("owner", "blocked"),
+		},
+	}
+	requirements := store.Requirements{visible, notDenied}
+
+	for name, object := range objects {
+		want := name != "denied"
+		if got := store.MatchUnstructuredFieldRequirments(object, requirements); got != want {
+			t.Fatalf("MatchUnstructuredFieldRequirments(%q) = %v, want %v", name, got, want)
+		}
+	}
+	if store.MatchUnstructuredFieldRequirments(objects["public"], store.Requirements{{}}) {
+		t.Fatal("zero Requirement matched an object")
+	}
+	if !store.MatchUnstructuredFieldRequirments(objects["public"], store.Requirements{{Operator: selector.All}}) {
+		t.Fatal("All did not match an object")
+	}
+	if !store.MatchUnstructuredFieldRequirments(objects["public"], store.Requirements{{Operator: selector.And}}) {
+		t.Fatal("empty And did not match an object")
+	}
+	if store.MatchUnstructuredFieldRequirments(objects["public"], store.Requirements{{Operator: selector.Or}}) {
+		t.Fatal("empty Or matched an object")
 	}
 }

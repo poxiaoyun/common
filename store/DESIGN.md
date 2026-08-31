@@ -112,6 +112,63 @@ Store HTTP 协议字段，也不选择默认分页模式。边界默认值在转
 
 Labels 和 Annotations 必须无损保存，包括含 `.`, `/` 或 `$` 的键。声明 `LabelSelector` 的实现必须直接按 Requirement 的键匹配，不能因底层数据库路径语法或 Kubernetes label parser 改变键的含义。Annotations 不自动成为 label selector。
 
+`selector.Requirement` 是递归的共享布尔选择条件。Store 保留
+`store.Requirements = selector.Requirements` alias 作为 Store API 和各 backend
+直接使用的集合类型；selector 仍是表达式语义的唯一 owner。顶层 Requirements 按
+AND 组合，其中每个 Requirement 可以是常量、组合节点或一个键上的叶子条件：
+
+```go
+type Requirement struct {
+    Operator     Operator
+    Key          string
+    Values       []any
+    Requirements Requirements
+}
+```
+
+有效字段形状如下：
+
+| Operator | Key | Values | Requirements |
+| --- | --- | --- | --- |
+| `None`, `All` | empty | empty | empty |
+| `And`, `Or` | empty | empty | zero or more children |
+| `Not` | empty | empty | exactly one child |
+| `Exists`, `DoesNotExist` | non-empty | empty | empty |
+| single-value comparisons and `Like` | non-empty | exactly one value | empty |
+| `In`, `NotIn`, `Contains` | non-empty | zero or more values | empty |
+
+零值 Requirement 是 `None`，不匹配任何对象。空的顶层 `Requirements` 和空的
+`And` 匹配全部对象，空的 `Or` 不匹配任何对象。`Not` 对完整的唯一子表达式取反。
+缺失键只满足 `DoesNotExist`、`NotEquals` 和 `NotIn`；组合操作在叶子结果上继续
+求值。集合操作符允许空 Values；空集合条件不匹配对象。
+
+每个 Store 操作在读取或修改数据前验证 Label 和 Field Requirements。无效字段
+形状和未知 Operator 返回 BadRequest。adapter 无法无损执行某个有效操作符或组合
+时，必须在产生部分结果或效果前返回 Unsupported。Requirements 必须在排序、分页、
+Count 和修改前执行；Watch 使用同一个表达式分别判断旧对象和新对象，再生成成员关系
+转换事件。
+
+`LabelSelector` 和 `FieldSelector` capability 分别表示支持对应键空间，并能对
+adapter 已支持的叶子操作符执行 `None`、`All`、`And`、`Or`、`Not` 组合。合法但
+底层无法无损执行的叶子操作符仍返回 Unsupported。只支持更窄外部 selector 协议的
+Store 不得声明相应 capability，并且必须拒绝无法表示的 Requirement，不能弱化
+条件。Label Requirements 和 Field Requirements 仍是两个最后用 AND 连接的表达式；
+一个组合节点不能混合 label 键和 field 键。
+
+Requirement 的规范文本编码由 `selector` 拥有，并扩展 Kubernetes selector 的可读语法。
+顶层逗号仍表示 AND；组合节点使用 `&&`、`||`、`!(...)` 和括号；常量写作
+`all()` 与 `none()`。叶子沿用 `key=value`、`key in (a,b)`、`!key` 等 selector
+形式，并增加 Store 已有的比较和包含操作符。`Requirements.String` 生成规范文本，
+`ParseRequirements` 解析同一语法；常用的平铺 Kubernetes label selector 保持相同
+写法。
+
+值默认使用 selector 风格的裸文本。包含语法分隔符或空白的字符串使用双引号和 Go
+字符串转义；字符串 `"null"` 也加引号，以区别 nil 的 `null` 字面量。除 nil 外，协议
+解析出的 operand 都是字符串，与 Kubernetes selector 一致；Requirement 求值层负责
+与字段中的布尔值、数值和时间比较。因此具体 Go 数值宽度不是协议语义。Requirement
+值只接受 nil、字符串、布尔值、整数、有限浮点数和时间；其他值在 Store 或协议执行前
+验证失败。HTTP adapter 只传输该文本，不维护第二套 Requirement wire model。
+
 声明 DryRun 后，Create、Update、Patch、Delete、Batch 和 Status 写入都必须完成正常校验并返回模拟结果，但不能落库、产生 Watch 事件、创建 TTL 或修改索引。
 
 ## Watch 与缓存

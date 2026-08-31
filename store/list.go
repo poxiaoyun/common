@@ -1,9 +1,9 @@
 package store
 
 import (
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	"xiaoshiai.cn/common/meta"
+
+	"xiaoshiai.cn/common/selector"
 )
 
 // metaListOption is the parsed public portion of ListOptions. It intentionally
@@ -43,18 +43,18 @@ func ListOptionsFromMeta(options meta.ListOptions, modifiers ...ListOption) ([]L
 		Limit:    options.Limit,
 	}
 	if options.LabelSelector != "" {
-		selector, err := labels.Parse(options.LabelSelector)
+		requirements, err := selector.ParseRequirements(options.LabelSelector)
 		if err != nil {
 			return nil, err
 		}
-		resolved.LabelRequirements = LabelsSelectorToReqirements(selector)
+		resolved.LabelRequirements = requirements
 	}
 	if options.FieldSelector != "" {
-		selector, err := fields.ParseSelector(options.FieldSelector)
+		requirements, err := selector.ParseRequirements(options.FieldSelector)
 		if err != nil {
 			return nil, err
 		}
-		resolved.FieldRequirements = FieldsSelectorToReqirements(selector)
+		resolved.FieldRequirements = requirements
 	}
 	result := make([]ListOption, 0, 1+len(modifiers))
 	result = append(result, resolved)

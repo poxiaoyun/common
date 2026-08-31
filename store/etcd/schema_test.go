@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"k8s.io/apiserver/pkg/storage/etcd3/testserver"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -36,8 +37,8 @@ func TestWatchAppliesUnindexedFieldRequirements(t *testing.T) {
 	}
 	watcher, err := storage.Watch(ctx, &store.List[indexedObject]{},
 		store.WithSendInitialEvents(),
-		store.WithFieldRequirements(store.Requirement{
-			Key: "email", Operator: store.Equals, Values: []any{"two@example.com"},
+		store.WithFieldRequirements(selector.Requirement{
+			Key: "email", Operator: selector.Equals, Values: []any{"two@example.com"},
 		}),
 	)
 	if err != nil {
@@ -86,8 +87,8 @@ func TestListAppliesUnindexedFieldRequirements(t *testing.T) {
 		}
 	}
 	list := &store.List[indexedObject]{}
-	if err := storage.List(ctx, list, store.WithFieldRequirements(store.Requirement{
-		Key: "email", Operator: store.Equals, Values: []any{"two@example.com"},
+	if err := storage.List(ctx, list, store.WithFieldRequirements(selector.Requirement{
+		Key: "email", Operator: selector.Equals, Values: []any{"two@example.com"},
 	})); err != nil {
 		t.Fatalf("List() error = %v", err)
 	}

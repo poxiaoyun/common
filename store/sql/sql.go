@@ -21,6 +21,7 @@ import (
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/meta"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 )
 
@@ -610,6 +611,9 @@ func (c *core) delete(ctx context.Context, scope []store.Scope, into store.Objec
 	if id == "" {
 		return NewEmptyIDStorageError(resource)
 	}
+	if err := store.ValidateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
+		return errors.NewBadRequest(err.Error())
+	}
 
 	for {
 		current := store.NewObject(into)
@@ -835,47 +839,110 @@ func (c *core) list(ctx context.Context, scope []store.Scope, list store.ObjectL
 }
 
 func (c *core) applyLabels(db *gorm.DB, requirements store.Requirements) *gorm.DB {
-	for _, req := range requirements {
-		key := fmt.Sprintf(`%s -> '$."%s"'`, c.quoteKey("labels"), req.Key)
-		db = c.applyCondition(db, key, req.Operator, req.Values)
+	expression, args, err := c.requirementsSQL(requirements, func(key string) string {
+		return fmt.Sprintf(`%s -> '$."%s"'`, c.quoteKey("labels"), key)
+	})
+	if err != nil {
+		db.AddError(err)
+		return db
 	}
-	return db
+	if expression == "" {
+		return db
+	}
+	return db.Where(expression, args...)
 }
 
 func (c *core) applyFields(db *gorm.DB, requirements store.Requirements) *gorm.DB {
-	for _, req := range requirements {
-		key := c.quoteKey(req.Key)
-		db = c.applyCondition(db, key, req.Operator, req.Values)
+	expression, args, err := c.requirementsSQL(requirements, c.quoteKey)
+	if err != nil {
+		db.AddError(err)
+		return db
 	}
-	return db
+	if expression == "" {
+		return db
+	}
+	return db.Where(expression, args...)
 }
 
-func (c *core) applyCondition(db *gorm.DB, key string, op store.Operator, vals []any) *gorm.DB {
-	switch op {
-	case store.Equals, store.DoubleEquals:
-		return db.Where(key+" = ?", vals[0])
-	case store.NotEquals:
-		return db.Where(key+" != ?", vals[0])
-	case store.In:
-		return db.Where(key+" IN ?", vals)
-	case store.NotIn:
-		return db.Where(key+" NOT IN ?", vals)
-	case store.DoesNotExist:
-		return db.Where(key + " IS NULL")
-	case store.Exists:
-		return db.Where(key + " IS NOT NULL")
-	case store.GreaterThan:
-		return db.Where(key+" > ?", vals[0])
-	case store.LessThan:
-		return db.Where(key+" < ?", vals[0])
-	case store.GreaterThanOrEqual:
-		return db.Where(key+" >= ?", vals[0])
-	case store.LessThanOrEqual:
-		return db.Where(key+" <= ?", vals[0])
-	case store.Like:
-		return db.Where(key+" LIKE ?", fmt.Sprintf("%%%s%%", vals[0]))
+func (c *core) requirementsSQL(requirements store.Requirements, key func(string) string) (string, []any, error) {
+	if err := requirements.Validate(); err != nil {
+		return "", nil, errors.NewBadRequest(err.Error())
+	}
+	return c.requirementsSQLWithSeparator(requirements, key, " AND ")
+}
+
+func (c *core) requirementsSQLWithSeparator(requirements store.Requirements, key func(string) string, separator string) (string, []any, error) {
+	expressions := make([]string, 0, len(requirements))
+	var args []any
+	for _, requirement := range requirements {
+		expression, requirementArgs, err := c.requirementSQL(requirement, key)
+		if err != nil {
+			return "", nil, err
+		}
+		expressions = append(expressions, expression)
+		args = append(args, requirementArgs...)
+	}
+	return strings.Join(expressions, separator), args, nil
+}
+
+func (c *core) requirementSQL(requirement selector.Requirement, key func(string) string) (string, []any, error) {
+	switch requirement.Operator {
+	case selector.None:
+		return "1 = 0", nil, nil
+	case selector.All:
+		return "1 = 1", nil, nil
+	case selector.And, selector.Or:
+		separator := " AND "
+		if requirement.Operator == selector.Or {
+			separator = " OR "
+		}
+		expression, args, err := c.requirementsSQLWithSeparator(requirement.Requirements, key, separator)
+		if err != nil {
+			return "", nil, err
+		}
+		if expression == "" {
+			if requirement.Operator == selector.And {
+				return "1 = 1", nil, nil
+			}
+			return "1 = 0", nil, nil
+		}
+		return "(" + expression + ")", args, nil
+	case selector.Not:
+		expression, args, err := c.requirementSQL(requirement.Requirements[0], key)
+		if err != nil {
+			return "", nil, err
+		}
+		return "NOT (" + expression + ")", args, nil
+	}
+
+	field := key(requirement.Key)
+	switch requirement.Operator {
+	case selector.Equals, selector.DoubleEquals:
+		return "(" + field + " IS NOT NULL AND " + field + " = ?)", requirement.Values, nil
+	case selector.NotEquals:
+		return "(" + field + " IS NULL OR " + field + " != ?)", requirement.Values, nil
+	case selector.In:
+		return "(" + field + " IS NOT NULL AND " + field + " IN ?)", []any{requirement.Values}, nil
+	case selector.NotIn:
+		return "(" + field + " IS NULL OR " + field + " NOT IN ?)", []any{requirement.Values}, nil
+	case selector.DoesNotExist:
+		return field + " IS NULL", nil, nil
+	case selector.Exists:
+		return field + " IS NOT NULL", nil, nil
+	case selector.GreaterThan:
+		return "(" + field + " IS NOT NULL AND " + field + " > ?)", requirement.Values, nil
+	case selector.LessThan:
+		return "(" + field + " IS NOT NULL AND " + field + " < ?)", requirement.Values, nil
+	case selector.GreaterThanOrEqual:
+		return "(" + field + " IS NOT NULL AND " + field + " >= ?)", requirement.Values, nil
+	case selector.LessThanOrEqual:
+		return "(" + field + " IS NOT NULL AND " + field + " <= ?)", requirement.Values, nil
+	case selector.Like:
+		return "(" + field + " IS NOT NULL AND " + field + " LIKE ?)", []any{fmt.Sprintf("%%%s%%", requirement.Values[0])}, nil
+	case selector.Contains:
+		return "", nil, errors.NewUnsupported("SQL store does not support Contains requirements")
 	default:
-		return db
+		return "", nil, errors.NewUnsupported(fmt.Sprintf("SQL store does not support requirement operator %q", requirement.Operator))
 	}
 }
 

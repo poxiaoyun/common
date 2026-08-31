@@ -2,12 +2,52 @@ package rest_test
 
 import (
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"testing"
 
+	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/meta"
+	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 	storerest "xiaoshiai.cn/common/store/rest"
 )
+
+func TestListOptionsFromRequestRejectsMalformedRequirements(t *testing.T) {
+	request := httptest.NewRequest("GET", "/objects?fieldSelector=%28owner%3Dalice", nil)
+	_, err := storerest.ListOptionsFromRequest(request)
+	if commonerrors.ReasonForError(err) != commonerrors.StatusReasonBadRequest {
+		t.Fatalf("ListOptionsFromRequest() error = %v, want BadRequest", err)
+	}
+}
+
+func TestListOptionsFromRequestParsesRecursiveRequirements(t *testing.T) {
+	requirement := selector.Requirement{
+		Operator: selector.Or,
+		Requirements: store.Requirements{
+			selector.RequirementEqual("visibility", "public"),
+			selector.RequirementEqual("owner", "alice"),
+		},
+	}
+	expression := store.Requirements{
+		selector.RequirementEqual("enabled", "true"),
+		requirement,
+	}.String()
+	request := httptest.NewRequest(
+		"GET",
+		"/objects?fieldSelector="+url.QueryEscape(expression),
+		nil,
+	)
+	modifiers, err := storerest.ListOptionsFromRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := store.ApplyListOptions(modifiers)
+	want := store.Requirements{selector.RequirementEqual("enabled", "true"), requirement}
+	if !reflect.DeepEqual(options.FieldRequirements, want) {
+		t.Fatalf("FieldRequirements = %#v, want %#v", options.FieldRequirements, want)
+	}
+}
 
 func TestListOptionsFromRequestAppliesRequestDefaults(t *testing.T) {
 	request := httptest.NewRequest("GET", "/objects?includeSubscopes=true", nil)

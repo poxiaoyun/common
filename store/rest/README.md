@@ -22,7 +22,7 @@ options, err := storerest.ListOptionsFromRequest(
 ```go
 options = append(options,
 	store.WithSubScopes(),
-	store.WithFieldRequirements(store.RequirementEqual("published", true)),
+	store.WithFieldRequirements(selector.RequirementEqual("published", true)),
 )
 ```
 
@@ -46,3 +46,15 @@ selector 转换错误在 HTTP seam 返回 BadRequest。请求和 Store 都按
 调用方未提供默认策略时，由拥有请求的服务决定不分页行为。
 
 Update 不清除 ResourceVersion。请求对象携带非零版本时，底层 Store 按其乐观并发契约处理；只有调用方明确传入零值时才执行无条件更新。
+
+## Requirement 协议
+
+Client 会把 Label 和 Field Requirements 编码成 selector 风格的递归表达式，写入对应的
+`labelSelector` 和 `fieldSelector` query。`None`、`All`、`And`、`Or`、`Not` 和
+叶子节点都会传给 Server，由底层 Store 在排序、分页和修改前执行。底层 adapter
+不能执行的合法操作符由 Server 返回 Unsupported。
+
+原有的平铺 selector 写法保持不变，递归条件在同一参数中增加括号、`&&`、`||` 和
+`!(...)`。调用方直接传入
+`store.WithLabelRequirements` 或 `store.WithFieldRequirements`，由 Client 调用
+`Requirements.String()` 并完成 query 转义。

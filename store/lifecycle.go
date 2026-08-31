@@ -43,6 +43,9 @@ func ValidateDeletePreconditions(obj Object, preconditions *Preconditions) error
 
 // ValidateDeleteRequirements checks caller-supplied object selectors.
 func ValidateDeleteRequirements(obj Object, labelRequirements, fieldRequirements Requirements) error {
+	if err := ValidateSelectorRequirements(labelRequirements, fieldRequirements); err != nil {
+		return errors.NewBadRequest(err.Error())
+	}
 	unstructured, err := ToUnstructured(obj)
 	if err != nil {
 		return err
