@@ -49,7 +49,9 @@ const DefaultMaxBytes = 8 * 1024 * 1024
 
 // Policy controls content accepted by the S3-backed service.
 type Policy struct {
-	MaxBytes          int64
+	MaxBytes int64
+	// AllowedMediaTypes accepts exact media types and wildcard media ranges such
+	// as image/*. An empty list accepts every media type.
 	AllowedMediaTypes []string
 }
 
@@ -607,7 +609,7 @@ func prepareBlob(target asset.Target, name string, blob asset.Blob, policies Pol
 	if policy.MaxBytes <= 0 {
 		policy.MaxBytes = DefaultMaxBytes
 	}
-	if len(policy.AllowedMediaTypes) > 0 && !slices.Contains(policy.AllowedMediaTypes, blob.ContentType) {
+	if !asset.IsMediaTypeAllowed(blob.ContentType, policy.AllowedMediaTypes) {
 		return preparedBlob{}, commonerrors.NewBadRequest(
 			fmt.Sprintf("asset content type %q is not allowed", blob.ContentType),
 		)

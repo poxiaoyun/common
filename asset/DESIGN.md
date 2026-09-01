@@ -44,7 +44,11 @@ configuration would merely duplicate those adapter interfaces.
 
 Upload-policy, connection, and location settings are server-side concerns.
 Each local adapter owns its own Options; the caller-facing root package does
-not expose or abstract implementation configuration.
+not expose or abstract implementation configuration. Every local adapter uses
+the root package's media-type matcher for `AllowedMediaTypes`: an empty list
+accepts every media type, an exact entry accepts that media type, and a
+wildcard media range such as `image/*` accepts every subtype. Matching ignores
+media-type parameters.
 
 ## HTTP projection
 

@@ -82,6 +82,31 @@ func TestValidateBlob(t *testing.T) {
 	}
 }
 
+func TestIsMediaTypeAllowed(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		allowed     []string
+		want        bool
+	}{
+		{name: "empty policy", contentType: "application/json", want: true},
+		{name: "exact", contentType: "image/png", allowed: []string{"image/png"}, want: true},
+		{name: "parameters", contentType: "image/svg+xml; charset=utf-8", allowed: []string{"image/svg+xml"}, want: true},
+		{name: "wildcard media range", contentType: "image/avif", allowed: []string{"image/*"}, want: true},
+		{name: "universal wildcard", contentType: "application/json", allowed: []string{"*/*"}, want: true},
+		{name: "different top level", contentType: "text/plain", allowed: []string{"image/*"}},
+		{name: "invalid content type", contentType: "image/", allowed: []string{"image/*"}},
+		{name: "invalid media range", contentType: "image/png", allowed: []string{"image/"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := asset.IsMediaTypeAllowed(test.contentType, test.allowed); got != test.want {
+				t.Fatalf("IsMediaTypeAllowed(%q, %q) = %t, want %t", test.contentType, test.allowed, got, test.want)
+			}
+		})
+	}
+}
+
 func TestValidateTargetAndAssetName(t *testing.T) {
 	tests := []struct {
 		name   string

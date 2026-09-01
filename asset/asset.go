@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
 	"regexp"
+	"strings"
 	"time"
 
 	"xiaoshiai.cn/common/errors"
@@ -167,6 +169,39 @@ func ValidateBlob(blob Blob) error {
 		return errors.NewBadRequest("asset blob link URL is required")
 	}
 	return nil
+}
+
+// IsMediaTypeAllowed reports whether contentType matches an allowed media
+// range. An empty allowed list accepts every media type. Entries may be exact
+// media types or wildcard media ranges such as image/*. Parameters do not affect
+// matching.
+func IsMediaTypeAllowed(contentType string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	typeName, subtype, ok := strings.Cut(mediaType, "/")
+	if !ok {
+		return false
+	}
+	for _, mediaRange := range allowed {
+		allowedType, _, err := mime.ParseMediaType(mediaRange)
+		if err != nil {
+			continue
+		}
+		allowedTypeName, allowedSubtype, ok := strings.Cut(allowedType, "/")
+		if !ok {
+			continue
+		}
+		if (allowedTypeName == "*" || allowedTypeName == typeName) &&
+			(allowedSubtype == "*" || allowedSubtype == subtype) {
+			return true
+		}
+	}
+	return false
 }
 
 // Validate checks an asset identity.

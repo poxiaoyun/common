@@ -36,6 +36,9 @@ metadata without advancing the content version or changing Digest or ETag.
 `Get` returns the complete Asset descriptor, including metadata.
 Local service hosts configure upload policies through the selected adapter's
 Options; those server-side settings are not part of this caller contract.
+Each adapter's `AllowedMediaTypes` policy accepts exact media types and
+wildcard media ranges such as `image/*`. An empty list accepts every media type,
+and Content-Type parameters do not affect matching.
 `ResolveOptions.Range` carries an RFC 7233 byte-range request. An implementation
 may return ranged Content with ContentLength and ContentRange, or return a Link
 instead. A Service caller that receives a Link is responsible for sending the

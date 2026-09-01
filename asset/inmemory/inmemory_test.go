@@ -136,6 +136,33 @@ func TestServiceAppliesNamedPolicy(t *testing.T) {
 	}
 }
 
+func TestServiceAppliesWildcardMediaTypePolicy(t *testing.T) {
+	service := assetinmemory.New(assetinmemory.Options{Policies: assetinmemory.Policies{
+		{Kind: "user", Name: "avatar"}: {
+			MaxBytes:          assetinmemory.DefaultMaxBytes,
+			AllowedMediaTypes: []string{"image/*"},
+		},
+	}})
+	target := asset.Target{Kind: "user", Name: "alice"}
+	if _, err := service.Put(
+		t.Context(),
+		target,
+		asset.Blob{Content: strings.NewReader("<svg></svg>"), ContentType: "image/svg+xml"},
+		asset.PutOptions{Name: "avatar"},
+	); err != nil {
+		t.Fatalf("Put(SVG) error = %v", err)
+	}
+	_, err := service.Put(
+		t.Context(),
+		target,
+		asset.Blob{Content: strings.NewReader("text"), ContentType: "text/plain"},
+		asset.PutOptions{Name: "avatar"},
+	)
+	if !commonerrors.IsCode(err, 400) {
+		t.Fatalf("Put(text) error = %v, want 400", err)
+	}
+}
+
 func TestServiceStoresDirectLink(t *testing.T) {
 	service := assetinmemory.New(assetinmemory.Options{})
 	target := asset.Target{Kind: "application", Name: "cloud:database"}
