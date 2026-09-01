@@ -28,7 +28,8 @@
 | [`task`](./task) | 异步任务的提交、执行和管理；包含内存与 MongoDB 实现 |
 | [`eventbus`](./eventbus) | 异步事件发布与订阅；包含内存与 MongoDB 实现 |
 | [`lease`](./lease) | 基于 Store 的分布式锁和 Leader Election |
-| [`authn`](./authn) | 登录、会话和身份认证相关接口及 API |
+| [`authn`](./authn) | 统一的 Subject、Subject 引用、认证结果和 Token 结果元数据 |
+| [`authz`](./authz) | API 操作授权、具体资源判定、批量判定和授权资源约束规划 |
 | [`oidc`](./oidc) | OpenID Connect/OAuth 2.0 客户端操作和令牌校验 |
 | [`jsonschema`](./jsonschema) | JSON Schema 2020-12 的表示、处理和校验 |
 | [`testkit`](./testkit) | 为集成测试准备容器和数据库等外部依赖 |
