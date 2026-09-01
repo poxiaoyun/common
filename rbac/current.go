@@ -16,11 +16,11 @@ type UserRoleView struct {
 }
 
 func (a *API) CurrentRoles(w http.ResponseWriter, r *http.Request) {
-	api.OnCurrentSubject(w, r, func(ctx context.Context, username string) (any, error) {
+	api.OnCurrentSubject(w, r, func(ctx context.Context, subjectID string) (any, error) {
 		list := store.List[UserRole]{}
 		options := []store.ListOption{
 			store.WithSubScopes(),
-			store.WithFieldRequirementsFromSet(map[string]string{"name": username}),
+			store.WithFieldRequirementsFromSet(map[string]string{"name": subjectID}),
 		}
 		if err := a.Storage.List(ctx, &list, options...); err != nil {
 			return nil, err

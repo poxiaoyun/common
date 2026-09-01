@@ -7,18 +7,21 @@ import (
 	"reflect"
 	"strconv"
 
+	"xiaoshiai.cn/common/authn"
 	"xiaoshiai.cn/common/httpclient"
 )
 
 // RequestHeaderAuthenticatorOptions defines the wire format used to forward
 // authentication information between trusted services.
 type RequestHeaderAuthenticatorOptions struct {
+	SubjectTypeHeader        string `json:"subjectTypeHeader,omitempty" description:"the header containing the subject type"`
 	NameHeader               string `json:"nameHeader,omitempty" description:"the header containing the subject name"`
 	UserIDHeader             string `json:"userIDHeader,omitempty" description:"the header containing the stable subject ID"`
 	DisplayNameHeader        string `json:"displayNameHeader,omitempty" description:"the header containing the subject display name"`
 	EmailHeader              string `json:"emailHeader,omitempty" description:"the header containing the subject email"`
 	EmailVerifiedHeader      string `json:"emailVerifiedHeader,omitempty" description:"the header indicating whether the subject email is verified"`
 	GroupsHeader             string `json:"groupsHeader,omitempty" description:"the header containing subject groups"`
+	ActorTypeHeader          string `json:"actorTypeHeader,omitempty" description:"the header containing the actor type"`
 	ActorHeader              string `json:"actorHeader,omitempty" description:"the header containing the stable actor ID"`
 	ActorNameHeader          string `json:"actorNameHeader,omitempty" description:"the header containing the actor name"`
 	ActorDisplayNameHeader   string `json:"actorDisplayNameHeader,omitempty" description:"the header containing the actor display name"`
@@ -32,12 +35,14 @@ type RequestHeaderAuthenticatorOptions struct {
 
 func NewDefaultRequestHeaderAuthenticatorOptions() *RequestHeaderAuthenticatorOptions {
 	return &RequestHeaderAuthenticatorOptions{
+		SubjectTypeHeader:        "X-Remote-Extra-Subject-Type",
 		NameHeader:               "X-Remote-User",
 		UserIDHeader:             "X-Remote-Uid",
 		DisplayNameHeader:        "X-Remote-Extra-Display-Name",
 		EmailHeader:              "X-Remote-Extra-Email",
 		EmailVerifiedHeader:      "X-Remote-Extra-Email-Verified",
 		GroupsHeader:             "X-Remote-Group",
+		ActorTypeHeader:          "X-Remote-Extra-Actor-Type",
 		ActorHeader:              "X-Remote-Extra-Actor",
 		ActorNameHeader:          "X-Remote-Extra-Actor-Name",
 		ActorDisplayNameHeader:   "X-Remote-Extra-Actor-Display-Name",
@@ -50,12 +55,12 @@ func NewDefaultRequestHeaderAuthenticatorOptions() *RequestHeaderAuthenticatorOp
 	}
 }
 
-// RequestHeaderCodec maps AuthenticationInfo to and from HTTP headers. It
+// RequestHeaderCodec maps Authentication to and from HTTP headers. It
 // does not establish trust in the sender or validate authentication data.
 type RequestHeaderCodec interface {
-	Encode(*http.Request, AuthenticationInfo)
+	Encode(*http.Request, Authentication)
 	EncodeFromContext(context.Context, *http.Request)
-	Decode(*http.Request) (*AuthenticationInfo, error)
+	Decode(*http.Request) (*Authentication, error)
 	Has(http.Header) bool
 	Clear(http.Header)
 }
@@ -73,12 +78,14 @@ func NewRequestHeaderCodec(opts *RequestHeaderAuthenticatorOptions) RequestHeade
 			dst *string
 			src string
 		}{
+			{&resolved.SubjectTypeHeader, opts.SubjectTypeHeader},
 			{&resolved.NameHeader, opts.NameHeader},
 			{&resolved.UserIDHeader, opts.UserIDHeader},
 			{&resolved.DisplayNameHeader, opts.DisplayNameHeader},
 			{&resolved.EmailHeader, opts.EmailHeader},
 			{&resolved.EmailVerifiedHeader, opts.EmailVerifiedHeader},
 			{&resolved.GroupsHeader, opts.GroupsHeader},
+			{&resolved.ActorTypeHeader, opts.ActorTypeHeader},
 			{&resolved.ActorHeader, opts.ActorHeader},
 			{&resolved.ActorNameHeader, opts.ActorNameHeader},
 			{&resolved.ActorDisplayNameHeader, opts.ActorDisplayNameHeader},
@@ -99,7 +106,7 @@ func NewRequestHeaderCodec(opts *RequestHeaderAuthenticatorOptions) RequestHeade
 }
 
 // Encode replaces every configured authentication header with info.
-func (c *requestHeaderCodec) Encode(req *http.Request, info AuthenticationInfo) {
+func (c *requestHeaderCodec) Encode(req *http.Request, info Authentication) {
 	if req.Header == nil {
 		req.Header = make(http.Header)
 	}
@@ -108,15 +115,16 @@ func (c *requestHeaderCodec) Encode(req *http.Request, info AuthenticationInfo) 
 	if info.Actor != nil {
 		c.encodeSubject(req.Header, *info.Actor, true)
 	}
-	if info.Access != nil {
+	if info.Token != nil {
 		req.Header.Set(c.options.AccessHeader, "oauth2")
-		addHeaderValues(req.Header, c.options.AudiencesHeader, info.Access.Audiences)
-		addHeaderValues(req.Header, c.options.ScopesHeader, info.Access.Scopes)
+		addHeaderValues(req.Header, c.options.AudiencesHeader, info.Token.Audiences)
+		addHeaderValues(req.Header, c.options.ScopesHeader, info.Token.Scopes)
 	}
 }
 
 func (c *requestHeaderCodec) encodeSubject(header http.Header, subject Subject, actor bool) {
 	if actor {
+		setHeaderIfNotEmpty(header, c.options.ActorTypeHeader, string(subject.Type))
 		header.Set(c.options.ActorHeader, subject.ID)
 		setHeaderIfNotEmpty(header, c.options.ActorNameHeader, subject.Name)
 		setHeaderIfNotEmpty(header, c.options.ActorDisplayNameHeader, subject.DisplayName)
@@ -127,6 +135,7 @@ func (c *requestHeaderCodec) encodeSubject(header http.Header, subject Subject, 
 		addHeaderValues(header, c.options.ActorGroupsHeader, subject.Groups)
 		return
 	}
+	setHeaderIfNotEmpty(header, c.options.SubjectTypeHeader, string(subject.Type))
 	header.Set(c.options.UserIDHeader, subject.ID)
 	setHeaderIfNotEmpty(header, c.options.NameHeader, subject.Name)
 	setHeaderIfNotEmpty(header, c.options.DisplayNameHeader, subject.DisplayName)
@@ -156,7 +165,7 @@ func (c *requestHeaderCodec) EncodeFromContext(ctx context.Context, req *http.Re
 }
 
 // Decode reconstructs authentication without verifying its source.
-func (c *requestHeaderCodec) Decode(req *http.Request) (*AuthenticationInfo, error) {
+func (c *requestHeaderCodec) Decode(req *http.Request) (*Authentication, error) {
 	if !c.Has(req.Header) {
 		return nil, ErrNotProvided
 	}
@@ -168,21 +177,28 @@ func (c *requestHeaderCodec) Decode(req *http.Request) (*AuthenticationInfo, err
 	if err != nil {
 		return nil, err
 	}
-	info := &AuthenticationInfo{Subject: subject}
+	info := &Authentication{Subject: subject}
 	if hasActor {
 		info.Actor = &actor
 	}
-	_, hasAccess := headerValues(req.Header, c.options.AccessHeader)
-	audiences, hasAudiences := headerValues(req.Header, c.options.AudiencesHeader)
-	scopes, hasScopes := headerValues(req.Header, c.options.ScopesHeader)
-	if hasAccess || hasAudiences || hasScopes {
-		info.Access = &AccessConstraints{Audiences: audiences, Scopes: scopes}
+	access, hasAccess, err := singleHeader(req.Header, c.options.AccessHeader)
+	if err != nil {
+		return nil, err
+	}
+	if hasAccess && access != "oauth2" {
+		return nil, fmt.Errorf("request header codec: %s must be oauth2", c.options.AccessHeader)
+	}
+	audiences, _ := headerValues(req.Header, c.options.AudiencesHeader)
+	scopes, _ := headerValues(req.Header, c.options.ScopesHeader)
+	if hasAccess {
+		info.Token = &authn.TokenInfo{Audiences: audiences, Scopes: scopes}
 	}
 	return info, nil
 }
 
 func (c *requestHeaderCodec) decodeSubject(header http.Header, actor bool) (Subject, bool, error) {
 	options := c.options
+	typeHeader := options.SubjectTypeHeader
 	idHeader := options.UserIDHeader
 	nameHeader := options.NameHeader
 	displayNameHeader := options.DisplayNameHeader
@@ -190,12 +206,17 @@ func (c *requestHeaderCodec) decodeSubject(header http.Header, actor bool) (Subj
 	emailVerifiedHeader := options.EmailVerifiedHeader
 	groupsHeader := options.GroupsHeader
 	if actor {
+		typeHeader = options.ActorTypeHeader
 		idHeader = options.ActorHeader
 		nameHeader = options.ActorNameHeader
 		displayNameHeader = options.ActorDisplayNameHeader
 		emailHeader = options.ActorEmailHeader
 		emailVerifiedHeader = options.ActorEmailVerifiedHeader
 		groupsHeader = options.ActorGroupsHeader
+	}
+	subjectType, hasType, err := singleHeader(header, typeHeader)
+	if err != nil {
+		return Subject{}, false, err
 	}
 	id, hasID, err := singleHeader(header, idHeader)
 	if err != nil {
@@ -226,13 +247,14 @@ func (c *requestHeaderCodec) decodeSubject(header http.Header, actor bool) (Subj
 	}
 	groups, hasGroups := headerValues(header, groupsHeader)
 	return Subject{
+		Type:          authn.SubjectType(subjectType),
 		ID:            id,
 		Name:          name,
 		DisplayName:   displayName,
 		Email:         email,
 		EmailVerified: emailVerified,
 		Groups:        groups,
-	}, hasID || hasName || hasDisplayName || hasEmail || hasEmailVerified || hasGroups, nil
+	}, hasType || hasID || hasName || hasDisplayName || hasEmail || hasEmailVerified || hasGroups, nil
 }
 
 func singleHeader(header http.Header, name string) (string, bool, error) {
@@ -272,12 +294,14 @@ func (c *requestHeaderCodec) Clear(header http.Header) {
 func (c *requestHeaderCodec) headerNames() []string {
 	options := c.options
 	return []string{
+		options.SubjectTypeHeader,
 		options.NameHeader,
 		options.UserIDHeader,
 		options.DisplayNameHeader,
 		options.EmailHeader,
 		options.EmailVerifiedHeader,
 		options.GroupsHeader,
+		options.ActorTypeHeader,
 		options.ActorHeader,
 		options.ActorNameHeader,
 		options.ActorDisplayNameHeader,
@@ -350,7 +374,7 @@ type RequestHeaderAuthenticator struct {
 	verifier RequestHeaderTrustVerifier
 }
 
-var _ Authenticator = (*RequestHeaderAuthenticator)(nil)
+var _ HTTPAuthenticator = (*RequestHeaderAuthenticator)(nil)
 
 func NewRequestHeaderAuthenticator(codec RequestHeaderCodec, verifier RequestHeaderTrustVerifier) (*RequestHeaderAuthenticator, error) {
 	if codec == nil {
@@ -375,7 +399,7 @@ func isNilVerifier(verifier RequestHeaderTrustVerifier) bool {
 	}
 }
 
-func (a *RequestHeaderAuthenticator) Authenticate(_ http.ResponseWriter, req *http.Request) (*AuthenticationInfo, error) {
+func (a *RequestHeaderAuthenticator) AuthenticateHTTP(_ http.ResponseWriter, req *http.Request) (*Authentication, error) {
 	if !a.codec.Has(req.Header) {
 		return nil, ErrNotProvided
 	}
@@ -391,7 +415,7 @@ type AuthenticationProxyRoundTripper struct {
 	Codec RequestHeaderCodec
 	// Authentication resolves the assertion for one request. Nil clears
 	// configured assertion headers without injecting an identity.
-	Authentication func(context.Context) AuthenticationInfo
+	Authentication func(context.Context) Authentication
 	Transport      http.RoundTripper
 }
 
@@ -400,11 +424,11 @@ var _ httpclient.RequestAuthenticator = (*AuthenticationProxyRoundTripper)(nil)
 var _ httpclient.WrappedRoundTripper = (*AuthenticationProxyRoundTripper)(nil)
 
 // NewAuthenticationProxyRoundTripper forwards fixed authentication information.
-func NewAuthenticationProxyRoundTripper(codec RequestHeaderCodec, info AuthenticationInfo, transport http.RoundTripper) *AuthenticationProxyRoundTripper {
-	snapshot := info.Clone()
+func NewAuthenticationProxyRoundTripper(codec RequestHeaderCodec, info Authentication, transport http.RoundTripper) *AuthenticationProxyRoundTripper {
+	snapshot := copyAuthentication(info)
 	return &AuthenticationProxyRoundTripper{
 		Codec:          codec,
-		Authentication: func(context.Context) AuthenticationInfo { return snapshot },
+		Authentication: func(context.Context) Authentication { return snapshot },
 		Transport:      transport,
 	}
 }

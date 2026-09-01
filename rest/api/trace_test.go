@@ -30,7 +30,7 @@ func TestEndUserTraceFilterRecordsAuthenticatedEndUser(t *testing.T) {
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	ctx, span := provider.Tracer("test").Start(context.Background(), "request")
 	request := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(
-		WithAuthentication(ctx, AuthenticationInfo{Subject: Subject{ID: "user-1"}}),
+		WithAuthentication(ctx, Authentication{Subject: Subject{ID: "user-1"}}),
 	)
 	handlerCalled := false
 
@@ -59,7 +59,7 @@ func TestEndUserTraceFilterRecordsAnonymousUser(t *testing.T) {
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	ctx, span := provider.Tracer("test").Start(context.Background(), "request")
 	request := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(
-		WithAuthentication(ctx, AuthenticationInfo{Subject: Subject{ID: AnonymousSubjectID}}),
+		WithAuthentication(ctx, Authentication{Subject: Subject{ID: AnonymousSubjectID}}),
 	)
 
 	NewEndUserTraceFilter().Process(httptest.NewRecorder(), request, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

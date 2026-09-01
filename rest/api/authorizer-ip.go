@@ -4,15 +4,19 @@ import (
 	"net"
 	"net/http"
 	"slices"
+
+	"xiaoshiai.cn/common/authz"
 )
 
-func NewAllowCIDRAuthorizer(cidrs []string, defaultDec Decision) RequestAuthorizer {
-	return RequestAuthorizerFunc(func(r *http.Request) (Decision, string, error) {
+// NewAllowCIDRAuthorizer returns a request authorizer that allows matching
+// source addresses and otherwise returns defaultDecision.
+func NewAllowCIDRAuthorizer(cidrs []string, defaultDecision authz.Decision) RequestAuthorizerFunc {
+	return func(r *http.Request) (authz.EvaluationResult, error) {
 		if RequestSourceIPInCIDR(cidrs, r) {
-			return DecisionAllow, "", nil
+			return authz.EvaluationResult{Decision: authz.DecisionAllow}, nil
 		}
-		return defaultDec, "", nil
-	})
+		return authz.EvaluationResult{Decision: defaultDecision}, nil
+	}
 }
 
 func RequestSourceIPInCIDR(cidrs []string, r *http.Request) bool {

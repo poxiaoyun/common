@@ -167,7 +167,7 @@ func validateResourceConstraints(constraints []ResourceConstraint) error {
 }
 
 func validateConstraintScope(scope Scope) error {
-	for index, reference := range scope.Path {
+	for index, reference := range scope {
 		if reference.Type == "" || reference.ID == "" {
 			return fmt.Errorf("scope element %d requires a complete resource reference", index)
 		}
@@ -193,7 +193,7 @@ func (constraint ResourceConstraint) emptyExceptOperator() bool {
 }
 
 func (constraint ResourceConstraint) emptyLeaves() bool {
-	return len(constraint.Scope.Path) == 0 && constraint.emptyLeavesExceptScope()
+	return len(constraint.Scope) == 0 && constraint.emptyLeavesExceptScope()
 }
 
 func (constraint ResourceConstraint) emptyLeavesExceptScope() bool {
@@ -201,15 +201,15 @@ func (constraint ResourceConstraint) emptyLeavesExceptScope() bool {
 }
 
 func (constraint ResourceConstraint) emptyLeavesExceptResourcePath() bool {
-	return len(constraint.Scope.Path) == 0 && constraint.propertiesEmpty() && constraint.Related == (ResourceRelationshipConstraint{})
+	return len(constraint.Scope) == 0 && constraint.propertiesEmpty() && constraint.Related == (ResourceRelationshipConstraint{})
 }
 
 func (constraint ResourceConstraint) emptyLeavesExceptProperties() bool {
-	return len(constraint.Scope.Path) == 0 && constraint.resourcePathEmpty() && constraint.Related == (ResourceRelationshipConstraint{})
+	return len(constraint.Scope) == 0 && constraint.resourcePathEmpty() && constraint.Related == (ResourceRelationshipConstraint{})
 }
 
 func (constraint ResourceConstraint) emptyLeavesExceptRelated() bool {
-	return len(constraint.Scope.Path) == 0 && constraint.resourcePathEmpty() && constraint.propertiesEmpty()
+	return len(constraint.Scope) == 0 && constraint.resourcePathEmpty() && constraint.propertiesEmpty()
 }
 
 func (constraint ResourceConstraint) resourcePathEmpty() bool {

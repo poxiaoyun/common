@@ -9,19 +9,20 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr/funcr"
+	"xiaoshiai.cn/common/authz"
 	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 )
 
 func TestAuthorizationFilterPreservesStatusError(t *testing.T) {
-	filter := NewAuthorizationFilter(AuthorizerFunc(
-		func(context.Context, AuthenticationInfo, Attributes) (Decision, string, error) {
-			return DecisionDeny, "resource is hidden", commonerrors.NewNotFound("document", "secret")
+	filter := NewAuthorizationFilter(authz.AuthorizerFunc(
+		func(context.Context, Authentication, authz.Operation) (authz.EvaluationResult, error) {
+			return authz.EvaluationResult{Decision: authz.DecisionDeny, Reason: "resource is hidden"}, commonerrors.NewNotFound("document", "secret")
 		},
 	))
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/documents/secret", nil)
-	request = request.WithContext(WithAuthentication(request.Context(), AuthenticationInfo{
+	request = request.WithContext(WithAuthentication(request.Context(), Authentication{
 		Subject: Subject{ID: "user"},
 	}))
 	request = request.WithContext(WithAttributes(request.Context(), &Attributes{
@@ -41,8 +42,8 @@ func TestAuthorizationFilterPreservesStatusError(t *testing.T) {
 func TestRequestAuthorizationFilterPreservesCustomErrorResponse(t *testing.T) {
 	want := commonerrors.NewTooManyRequests("try again later", 0)
 	filter := NewRequestAuthorizationFilter(RequestAuthorizerFunc(
-		func(*http.Request) (Decision, string, error) {
-			return DecisionDeny, "", want
+		func(*http.Request) (authz.EvaluationResult, error) {
+			return authz.EvaluationResult{Decision: authz.DecisionDeny}, want
 		},
 	))
 	response := httptest.NewRecorder()
@@ -65,17 +66,17 @@ func TestAuthorizationFiltersRedactAndLogDiagnosticErrors(t *testing.T) {
 	}{
 		{
 			name: "domain authorizer",
-			filter: NewAuthorizationFilter(AuthorizerFunc(
-				func(context.Context, AuthenticationInfo, Attributes) (Decision, string, error) {
-					return DecisionDeny, "", diagnostic
+			filter: NewAuthorizationFilter(authz.AuthorizerFunc(
+				func(context.Context, Authentication, authz.Operation) (authz.EvaluationResult, error) {
+					return authz.EvaluationResult{Decision: authz.DecisionDeny}, diagnostic
 				},
 			)),
 		},
 		{
 			name: "request authorizer",
 			filter: NewRequestAuthorizationFilter(RequestAuthorizerFunc(
-				func(*http.Request) (Decision, string, error) {
-					return DecisionDeny, "", diagnostic
+				func(*http.Request) (authz.EvaluationResult, error) {
+					return authz.EvaluationResult{Decision: authz.DecisionDeny}, diagnostic
 				},
 			)),
 		},
@@ -90,7 +91,7 @@ func TestAuthorizationFiltersRedactAndLogDiagnosticErrors(t *testing.T) {
 			}, funcr.Options{})
 			request := httptest.NewRequest(http.MethodGet, "/documents/secret", nil)
 			request = request.WithContext(log.NewContext(request.Context(), logger))
-			request = request.WithContext(WithAuthentication(request.Context(), AuthenticationInfo{Subject: Subject{ID: "user"}}))
+			request = request.WithContext(WithAuthentication(request.Context(), Authentication{Subject: Subject{ID: "user"}}))
 			request = request.WithContext(WithAttributes(request.Context(), &Attributes{Action: "get", Path: "/documents/secret"}))
 			response := httptest.NewRecorder()
 
@@ -114,19 +115,19 @@ func TestAuthorizationFiltersRedactAndLogDiagnosticErrors(t *testing.T) {
 func TestForbiddenMessage(t *testing.T) {
 	tests := []struct {
 		name           string
-		authentication AuthenticationInfo
+		authentication Authentication
 		attributes     *Attributes
 		want           string
 	}{
 		{
 			name:           "request path without resources",
-			authentication: AuthenticationInfo{Subject: Subject{ID: "user-1"}},
+			authentication: Authentication{Subject: Subject{ID: "user-1"}},
 			attributes:     &Attributes{Action: "get", Path: "/documents/secret"},
 			want:           `subject "user-1" cannot get path "/documents/secret"`,
 		},
 		{
 			name:           "nested named resources",
-			authentication: AuthenticationInfo{Subject: Subject{ID: "user-1", Name: "Alice"}},
+			authentication: Authentication{Subject: Subject{ID: "user-1", Name: "Alice"}},
 			attributes: &Attributes{
 				Action: "update",
 				Resources: []AttributeResource{
@@ -138,7 +139,7 @@ func TestForbiddenMessage(t *testing.T) {
 		},
 		{
 			name:           "collection resource omits empty name",
-			authentication: AuthenticationInfo{Subject: Subject{ID: "user-1", Email: "alice@example.com"}},
+			authentication: Authentication{Subject: Subject{ID: "user-1", Email: "alice@example.com"}},
 			attributes: &Attributes{
 				Action: "list",
 				Resources: []AttributeResource{

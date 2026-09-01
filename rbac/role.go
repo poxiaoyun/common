@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"xiaoshiai.cn/common/authz"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/rest/api"
 	"xiaoshiai.cn/common/store"
@@ -17,11 +18,9 @@ const (
 
 type Role struct {
 	store.ObjectMeta `json:",inline"`
-	Hidden           bool        `json:"hidden,omitempty"` // hidden role will not be listed
-	Authorities      []Authority `json:"authorities,omitempty"`
+	Hidden           bool               `json:"hidden,omitempty"` // hidden role will not be listed
+	Authorities      []authz.Permission `json:"authorities,omitempty"`
 }
-
-type Authority = api.Authority
 
 type UserRole struct {
 	store.ObjectMeta `json:",inline"`

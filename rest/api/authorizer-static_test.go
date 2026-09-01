@@ -1,17 +1,21 @@
 package api
 
-import "testing"
+import (
+	"testing"
+
+	"xiaoshiai.cn/common/authz"
+)
 
 func TestStaticAuthorizer(t *testing.T) {
 	type args struct {
 		rules          []StaticAuthorizationRule
-		authentication AuthenticationInfo
+		authentication Authentication
 		attributes     Attributes
 	}
 	tests := []struct {
 		name         string
 		args         args
-		wantDecision Decision
+		wantDecision authz.Decision
 		wantReason   string
 		wantErr      bool
 	}{
@@ -32,7 +36,7 @@ func TestStaticAuthorizer(t *testing.T) {
 					},
 				},
 			},
-			wantDecision: DecisionAllow,
+			wantDecision: authz.DecisionAllow,
 		},
 		{
 			name: "matching collection rule allows",
@@ -51,7 +55,7 @@ func TestStaticAuthorizer(t *testing.T) {
 					},
 				},
 			},
-			wantDecision: DecisionAllow,
+			wantDecision: authz.DecisionAllow,
 		},
 		{
 			name: "matching rule delegates",
@@ -60,7 +64,7 @@ func TestStaticAuthorizer(t *testing.T) {
 					{
 						Actions:    []string{"get"},
 						Resources:  []string{"clusters:*:metadata:*"},
-						Authorizer: NewAlwaysDenyAuthorizer(),
+						Authorizer: authz.NewAlwaysDenyAuthorizer(),
 					},
 				},
 				attributes: Attributes{
@@ -71,7 +75,7 @@ func TestStaticAuthorizer(t *testing.T) {
 					},
 				},
 			},
-			wantDecision: DecisionDeny,
+			wantDecision: authz.DecisionDeny,
 		},
 		{
 			name: "unmatched rule has no opinion",
@@ -90,21 +94,21 @@ func TestStaticAuthorizer(t *testing.T) {
 					},
 				},
 			},
-			wantDecision: DecisionNoOpinion,
+			wantDecision: authz.DecisionNoOpinion,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			authorizer := NewStaticAuthorizer(tt.args.rules)
-			decision, reason, err := authorizer.Authorize(t.Context(), tt.args.authentication, tt.args.attributes)
+			result, err := authorizer.Authorize(t.Context(), tt.args.authentication, authorizationOperation(tt.args.attributes))
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("Authorize() error = %v, want error %t", err, tt.wantErr)
 			}
-			if decision != tt.wantDecision {
-				t.Errorf("Authorize() decision = %v, want %v", decision, tt.wantDecision)
+			if result.Decision != tt.wantDecision {
+				t.Errorf("Authorize() decision = %v, want %v", result.Decision, tt.wantDecision)
 			}
-			if reason != tt.wantReason {
-				t.Errorf("Authorize() reason = %v, want %v", reason, tt.wantReason)
+			if result.Reason != tt.wantReason {
+				t.Errorf("Authorize() reason = %v, want %v", result.Reason, tt.wantReason)
 			}
 		})
 	}

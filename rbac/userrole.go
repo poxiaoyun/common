@@ -19,12 +19,13 @@ import (
 const LastAdminCheck = false
 
 type ScopedUserRole struct {
-	User              string             `json:"user"`
-	Role              string             `json:"role"`
-	Roles             []string           `json:"roles,omitempty"`
-	CreationTimestamp meta.Time          `json:"creationTimestamp"`
-	DeleteTimestamp   *meta.Time         `json:"deleteTimestamp"`
-	UserInfo          *authn.UserProfile `json:"userInfo"`
+	// User is the globally unique stable Subject ID retained by the role binding.
+	User              string         `json:"user"`
+	Role              string         `json:"role"`
+	Roles             []string       `json:"roles,omitempty"`
+	CreationTimestamp meta.Time      `json:"creationTimestamp"`
+	DeleteTimestamp   *meta.Time     `json:"deleteTimestamp"`
+	UserInfo          *authn.Subject `json:"userInfo,omitempty"`
 }
 
 func (a *ScopedRbacAPI) ListUserRole(w http.ResponseWriter, r *http.Request) {
@@ -42,12 +43,12 @@ func (a *ScopedRbacAPI) ListUserRole(w http.ResponseWriter, r *http.Request) {
 				CreationTimestamp: rb.CreationTimestamp,
 				DeleteTimestamp:   rb.DeletionTimestamp,
 			}
-			if a.UserProvider != nil {
-				userInfo, err := a.UserProvider.GetUserProfile(ctx, rb.Name)
+			if a.SubjectGetter != nil {
+				subject, err := a.SubjectGetter.GetSubject(ctx, authn.SubjectReference{ID: rb.Name})
 				if err != nil {
-					log.FromContext(ctx).Error(err, "Failed to get user profile")
+					log.FromContext(ctx).Error(err, "Failed to get subject")
 				} else {
-					tuser.UserInfo = &authn.UserProfile{User: userInfo.User}
+					tuser.UserInfo = &subject
 				}
 			}
 			userroles = append(userroles, tuser)
@@ -128,8 +129,8 @@ func (a *ScopedRbacAPI) SetUserRole(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func SetUserRole(ctx context.Context, storage store.Store, user, role string) error {
-	roleObj := &UserRole{ObjectMeta: store.ObjectMeta{Name: user}}
+func SetUserRole(ctx context.Context, storage store.Store, subjectID, role string) error {
+	roleObj := &UserRole{ObjectMeta: store.ObjectMeta{Name: subjectID}}
 	updatefunc := func() error {
 		roleObj.Roles = []string{role}
 		return nil
@@ -137,8 +138,8 @@ func SetUserRole(ctx context.Context, storage store.Store, user, role string) er
 	return store.CreateOrUpdate(ctx, storage, roleObj, updatefunc)
 }
 
-func AddUserToScope(ctx context.Context, storage store.Store, scopes []store.Scope, user, role string) error {
-	return SetUserRole(ctx, storage.Scope(scopes...), user, role)
+func AddUserToScope(ctx context.Context, storage store.Store, scopes []store.Scope, subjectID, role string) error {
+	return SetUserRole(ctx, storage.Scope(scopes...), subjectID, role)
 }
 
 func (a *ScopedRbacAPI) RemoveUserRole(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +185,7 @@ func (a *ScopedRbacAPI) OnUser(w http.ResponseWriter, r *http.Request, fn func(c
 	api.OnScope(w, r, a.ScopePathVarNames, func(ctx context.Context, scopes []store.Scope) (any, error) {
 		user := api.Path(r, "user", "")
 		if user == "" {
-			return nil, errors.NewBadRequest("User name is required")
+			return nil, errors.NewBadRequest("Subject ID is required")
 		}
 		return fn(ctx, a.Storage.Scope(scopes...), user)
 	})
@@ -205,7 +206,7 @@ func (a *ScopedRbacAPI) CustomUserRolesGroup(prefix string) api.Group {
 				Doc("Add user to scope").
 				To(a.SetUserRole).
 				Param(
-					api.PathParam("user", "User name"),
+					api.PathParam("user", "Stable Subject ID"),
 					api.BodyParam("role", ScopedUserRole{}),
 				),
 			api.DELETE("/{user}").

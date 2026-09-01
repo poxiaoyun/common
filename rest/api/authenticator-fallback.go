@@ -7,22 +7,22 @@ import (
 
 // FallbackAuthenticator authenticates with fallback only when primary does not apply.
 type FallbackAuthenticator struct {
-	primary  Authenticator
-	fallback Authenticator
+	primary  HTTPAuthenticator
+	fallback HTTPAuthenticator
 }
 
 // NewFallbackAuthenticator composes primary with an authenticator used when primary returns ErrNotProvided.
-func NewFallbackAuthenticator(primary, fallback Authenticator) *FallbackAuthenticator {
+func NewFallbackAuthenticator(primary, fallback HTTPAuthenticator) *FallbackAuthenticator {
 	return &FallbackAuthenticator{primary: primary, fallback: fallback}
 }
 
-// Authenticate returns the primary result unless primary returns ErrNotProvided.
-func (a *FallbackAuthenticator) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
-	info, err := a.primary.Authenticate(w, r)
+// AuthenticateHTTP returns the primary result unless primary returns ErrNotProvided.
+func (a *FallbackAuthenticator) AuthenticateHTTP(w http.ResponseWriter, r *http.Request) (*Authentication, error) {
+	info, err := a.primary.AuthenticateHTTP(w, r)
 	if !errors.Is(err, ErrNotProvided) {
 		return info, err
 	}
-	return a.fallback.Authenticate(w, r)
+	return a.fallback.AuthenticateHTTP(w, r)
 }
 
-var _ Authenticator = (*FallbackAuthenticator)(nil)
+var _ HTTPAuthenticator = (*FallbackAuthenticator)(nil)

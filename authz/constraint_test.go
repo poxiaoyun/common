@@ -14,9 +14,9 @@ func TestResourceConstraintValidateAcceptsCompleteTree(t *testing.T) {
 		Constraints: []authz.ResourceConstraint{
 			{
 				Operator: authz.ConstraintWithin,
-				Scope: authz.ResourceScope(
+				Scope: authz.Scope{
 					authz.ResourceReference{Type: "iam.organization", ID: "organization-1"},
-				),
+				},
 			},
 			{
 				Operator: authz.ConstraintPathMatches,
@@ -98,7 +98,7 @@ func TestResourceConstraintValidateRejectsInvalidShapes(t *testing.T) {
 			name: "constant fields",
 			constraint: authz.ResourceConstraint{
 				Operator: authz.ConstraintAll,
-				Scope:    authz.ResourceScope(authz.ResourceReference{Type: "organization", ID: "o1"}),
+				Scope:    authz.Scope{{Type: "organization", ID: "o1"}},
 			},
 			want: "cannot carry children or leaf values",
 		},
@@ -111,7 +111,7 @@ func TestResourceConstraintValidateRejectsInvalidShapes(t *testing.T) {
 			name: "incomplete scope",
 			constraint: authz.ResourceConstraint{
 				Operator: authz.ConstraintWithin,
-				Scope:    authz.ResourceScope(authz.ResourceReference{Type: "organization"}),
+				Scope:    authz.Scope{{Type: "organization"}},
 			},
 			want: "complete resource reference",
 		},

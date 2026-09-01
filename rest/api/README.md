@@ -16,26 +16,72 @@ uses the corresponding arguments only when those headers are absent. Pass zero
 content length to omit the generated length header. The reader is always copied
 to EOF without validating its bytes against the declared length.
 
-Authenticators normalize credentials into `AuthenticationInfo`, which embeds the request `Subject` and may include a current `Actor` and OAuth access constraints. `Subject.ID` is the stable key for authorization, ownership, and audit; `Subject.Name` is the provider-verified username or principal name; `Subject.DisplayName` is a non-unique human-facing label.
+Authenticators normalize HTTP credentials into the canonical
+[`authn.Authentication`](../../authn/README.md), exposed here through the
+`Authentication` alias. It contains the effective Subject, an optional Actor,
+and optional verified access-token metadata. `HTTPAuthenticator` authenticates
+a complete request through `AuthenticateHTTP(w, r)`. Credential adapters retain
+operation-specific interfaces such as `AuthenticateToken` and
+`AuthenticateBasic`.
+`Subject.ID` is the complete globally unique stable identity. `Subject.Type` is
+its immutable classification and remains available as an authorization fact;
+it is not part of a durable identity reference. `Subject.Name` is the
+provider-verified username or principal name, and `Subject.DisplayName` is a
+non-unique human-facing label. `rest/api.Subject` is a Go alias to the
+authn-owned Subject, not a separate identity model.
 
 Callers compose authenticators and install the result through `NewAuthenticationFilter`. `FallbackAuthenticator` adds an explicit fallback around a completed request authenticator; use `NewFallbackAuthenticator(chain, NewAnonymousAuthenticator())` when requests without credentials should receive the anonymous subject. An invalid supplied credential is never downgraded to anonymous.
 
 `AuthenticationChallengeError` carries a public response status and `WWW-Authenticate` value through authenticator and authorizer composition. Provider adapters log diagnostic errors before translating them into this shared response error. The final HTTP error writer writes the challenge only after the request is rejected. `NewBearerTokenAuthenticationFilter` returns a bare `Bearer` challenge when no more specific challenge is present. Invalid OAuth access tokens add `error="invalid_token"`, while insufficient scope produces HTTP 403 with `error="insufficient_scope"`.
 
-Authorizers receive the complete `AuthenticationInfo`. OAuth scopes are access-token authorization rules. `OAuth2ScopeAuthorizer{}` parses the default `<action>:<resource>` convention and matches each granted scope against request `Attributes`. Arbitrary actions such as `create` or `publish` match exactly; `read` covers `get` and `list`, while `write` covers other actions. `NewOAuth2ScopeMatcher` composes a different aggregate-action matcher or logical-resource matcher without reversing the authorization flow into request-to-scope generation. The default resource matcher uses only the final request resource, so parent resources do not authorize nested targets. `OAuth2ScopeAuthorizer` may be composed with other complete, alternative policies through `AuthorizerChain`; deployments that require both scopes and local policy must provide an Authorizer with those explicit combining semantics before installing `NewAuthorizationFilter`.
+`authz.Authorizer` receives the complete `Authentication` and an
+`authz.Operation` as separate arguments. OAuth scopes are access-token
+authorization rules.
+`OAuth2ScopeAuthorizer{}` parses the default `<action>:<resource>` convention
+and matches each granted scope against the operation. Arbitrary actions such as
+`create` or `publish` match exactly; `read` covers `get` and `list`, while
+`write` covers other actions. `NewOAuth2ScopeMatcher` composes a different
+aggregate-action matcher or logical-resource matcher. The default resource
+matcher uses only the final operation resource, so parent resources do not
+authorize nested targets. Compose it with other complete alternative policies
+through `authz.AuthorizerChain`; deployments that require both scopes and local
+policy must provide an Authorizer with those explicit combining semantics
+before installing `NewAuthorizationFilter`.
 
 Wrap a route extractor with `ServiceAttributesExtractor("cloud", extractor)`
 when authorization and audit policy must identify the target Resource Server.
 The wrapper sets `Attributes.Service`; the wrapped extractor continues to own
 action and resource parsing.
 
+`rest/api` converts the final extracted resource into `authz.Resource` and its
+parents into `authz.Scope`. A route-derived final name is carried as the
+optional Resource ID without loading resource facts. `authz.MatchPermission`
+owns comparison with the shared `authz.Permission`.
+
 Authorization reasons are descriptive only. To intentionally return a specific denial status, such as hiding a resource with HTTP 404, an Authorizer returns the corresponding `common/errors.Status`; untyped evaluation errors are returned as HTTP 403.
+
+`CheckerAuthorizer` adapts the model-independent `common/authz.Checker` to
+`authz.Authorizer`. Callers provide a `BuildCheckOperationFunc` because the
+logical operation cannot infer a resource domain's authoritative entity ID or
+policy facts.
+Use this adapter for a PDP-backed operation gate; an Allow does not replace the
+concrete resource check owned by a handler or domain module after it loads the
+current resource snapshot.
 
 Authentication and authorization errors are diagnostic by default: filters record their details through the logger in the request context and return generic 401 or 403 responses. Reasons and explicit `common/errors.Status` messages are considered intentionally public and must not contain secrets.
 
 Authentication and authorization filters do not write trace data. OpenTelemetry behavior is owned by `trace.go` and composed explicitly: install `NewEndUserTraceFilter` after authentication and `NewAuthorizationTraceFilter` after request attributes only when those potentially sensitive or high-cardinality attributes are required. Route tracing records the low-cardinality `http.route` template and does not record dynamic path-variable values.
 
-`StaticTokenAuthenticator` maps one opaque token to a fixed `AuthenticationInfo`. Request-header and webhook adapters transport the same canonical value without provider-specific attribute maps. Trusted request-header propagation uses one multi-header representation based on the Kubernetes authenticating-proxy convention: `X-Remote-User`, `X-Remote-Uid`, and repeated `X-Remote-Group` carry the standard fields, while display name, email, Actor, Access, audiences, and scopes use fixed `X-Remote-Extra-*` extension fields. `X-Remote-Extra-Access: oauth2` distinguishes a non-nil empty OAuth access constraint from authentication without an access token.
+`StaticTokenAuthenticator` maps one opaque token to a fixed
+`Authentication`. Request-header and webhook adapters transport the
+same canonical value without provider-specific attribute maps. Trusted
+request-header propagation uses one multi-header representation based on the
+Kubernetes authenticating-proxy convention: `X-Remote-User`, `X-Remote-Uid`,
+and repeated `X-Remote-Group` carry the standard fields. Subject and Actor Type
+use `X-Remote-Extra-Subject-Type` and `X-Remote-Extra-Actor-Type`; display name,
+email, Actor, Token metadata, audiences, and scopes use the remaining fixed
+`X-Remote-Extra-*` fields. `X-Remote-Extra-Access: oauth2` distinguishes a
+non-nil empty Token from authentication without an access token.
 
 Proxy transports clone the outbound request and remove all configured authentication headers before either injecting fixed/context authentication or forwarding a route without authentication. This prevents client-supplied assertions from crossing either protected or public proxy routes.
 

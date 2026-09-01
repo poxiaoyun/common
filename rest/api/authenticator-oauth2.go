@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"xiaoshiai.cn/common/authn"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/oidc"
 )
@@ -23,7 +24,7 @@ func NewOAuth2AccessTokenAuthenticator(client *oidc.Client) *OAuth2AccessTokenAu
 
 // AuthenticateToken verifies raw and returns its subject, current actor, and
 // access constraints. OAuth client metadata remains in the protocol result.
-func (a *OAuth2AccessTokenAuthenticator) AuthenticateToken(ctx context.Context, raw string) (*AuthenticationInfo, error) {
+func (a *OAuth2AccessTokenAuthenticator) AuthenticateToken(ctx context.Context, raw string) (*Authentication, error) {
 	token, err := a.Client.VerifyAccessToken(ctx, raw)
 	if err != nil {
 		if errors.Is(err, oidc.ErrInvalidAccessToken) {
@@ -32,17 +33,17 @@ func (a *OAuth2AccessTokenAuthenticator) AuthenticateToken(ctx context.Context, 
 		}
 		return nil, err
 	}
-	info := &AuthenticationInfo{
-		Subject: Subject{ID: token.Subject, Name: token.Username},
-		Access: &AccessConstraints{
-			Audiences: append([]string(nil), token.Audience...),
-			Scopes:    append([]string(nil), token.Scopes...),
+	info := Authentication{
+		Subject: authn.Subject{ID: token.Subject, Name: token.Username},
+		Token: &authn.TokenInfo{
+			Audiences: token.Audience,
+			Scopes:    token.Scopes,
 		},
 	}
 	if token.Actor != nil {
-		info.Actor = &Subject{ID: token.Actor.Subject}
+		info.Actor = &authn.Subject{ID: token.Actor.Subject}
 	}
-	return info, nil
+	return &info, nil
 }
 
 var _ TokenAuthenticator = &OAuth2AccessTokenAuthenticator{}

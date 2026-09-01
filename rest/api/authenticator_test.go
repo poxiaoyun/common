@@ -11,118 +11,122 @@ import (
 
 	"github.com/go-logr/logr/funcr"
 	"golang.org/x/crypto/ssh"
+	"xiaoshiai.cn/common/authn"
 	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 )
 
-type tokenAuthenticatorFunc func(context.Context, string) (*AuthenticationInfo, error)
+type tokenAuthenticatorFunc func(context.Context, string) (*Authentication, error)
 
-func (f tokenAuthenticatorFunc) AuthenticateToken(ctx context.Context, token string) (*AuthenticationInfo, error) {
+func (f tokenAuthenticatorFunc) AuthenticateToken(ctx context.Context, token string) (*Authentication, error) {
 	return f(ctx, token)
 }
 
-type basicAuthenticatorFunc func(context.Context, string, string) (*AuthenticationInfo, error)
+type basicAuthenticatorFunc func(context.Context, string, string) (*Authentication, error)
 
-func (f basicAuthenticatorFunc) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticationInfo, error) {
+func (f basicAuthenticatorFunc) AuthenticateBasic(ctx context.Context, username, password string) (*Authentication, error) {
 	return f(ctx, username, password)
 }
 
 type sshAuthenticatorFuncs struct {
 	basic     basicAuthenticatorFunc
-	publicKey func(context.Context, ssh.PublicKey) (*AuthenticationInfo, error)
+	publicKey func(context.Context, string, ssh.PublicKey) (*Authentication, error)
 }
 
-func (f sshAuthenticatorFuncs) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticationInfo, error) {
+func (f sshAuthenticatorFuncs) AuthenticateBasic(ctx context.Context, username, password string) (*Authentication, error) {
 	return f.basic(ctx, username, password)
 }
 
-func (f sshAuthenticatorFuncs) AuthenticatePublicKey(ctx context.Context, key ssh.PublicKey) (*AuthenticationInfo, error) {
-	return f.publicKey(ctx, key)
+func (f sshAuthenticatorFuncs) AuthenticateSSHPublicKey(ctx context.Context, username string, publicKey ssh.PublicKey) (*Authentication, error) {
+	return f.publicKey(ctx, username, publicKey)
 }
 
 func TestAuthenticatorChainsSkipWrappedErrNotProvided(t *testing.T) {
 	wrapped := fmt.Errorf("wrapped: %w", ErrNotProvided)
 	if _, err := (TokenAuthenticatorChain{
-		tokenAuthenticatorFunc(func(context.Context, string) (*AuthenticationInfo, error) { return nil, wrapped }),
+		tokenAuthenticatorFunc(func(context.Context, string) (*Authentication, error) { return nil, wrapped }),
 	}).AuthenticateToken(context.Background(), "token"); !errors.Is(err, ErrNotProvided) {
 		t.Fatalf("TokenAuthenticatorChain error = %v", err)
 	}
 	if _, err := (BasicAuthenticatorChain{
-		basicAuthenticatorFunc(func(context.Context, string, string) (*AuthenticationInfo, error) { return nil, wrapped }),
+		basicAuthenticatorFunc(func(context.Context, string, string) (*Authentication, error) { return nil, wrapped }),
 	}).AuthenticateBasic(context.Background(), "user", "pass"); !errors.Is(err, ErrNotProvided) {
 		t.Fatalf("BasicAuthenticatorChain error = %v", err)
 	}
 	sshAuth := sshAuthenticatorFuncs{
-		basic:     func(context.Context, string, string) (*AuthenticationInfo, error) { return nil, wrapped },
-		publicKey: func(context.Context, ssh.PublicKey) (*AuthenticationInfo, error) { return nil, wrapped },
+		basic:     func(context.Context, string, string) (*Authentication, error) { return nil, wrapped },
+		publicKey: func(context.Context, string, ssh.PublicKey) (*Authentication, error) { return nil, wrapped },
 	}
 	if _, err := (SSHAuthenticatorChain{sshAuth}).AuthenticateBasic(context.Background(), "user", "pass"); !errors.Is(err, ErrNotProvided) {
 		t.Fatalf("SSHAuthenticatorChain.AuthenticateBasic error = %v", err)
 	}
-	if _, err := (SSHAuthenticatorChain{sshAuth}).AuthenticatePublicKey(context.Background(), nil); !errors.Is(err, ErrNotProvided) {
-		t.Fatalf("SSHAuthenticatorChain.AuthenticatePublicKey error = %v", err)
+	if _, err := (SSHAuthenticatorChain{sshAuth}).AuthenticateSSHPublicKey(context.Background(), "user", nil); !errors.Is(err, ErrNotProvided) {
+		t.Fatalf("SSHAuthenticatorChain.AuthenticateSSHPublicKey error = %v", err)
 	}
-	if _, err := (AuthenticatorChain{
-		AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) { return nil, wrapped }),
-	}).Authenticate(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil)); !errors.Is(err, ErrNotProvided) {
-		t.Fatalf("AuthenticatorChain error = %v", err)
+	if _, err := (HTTPAuthenticatorChain{
+		HTTPAuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*Authentication, error) { return nil, wrapped }),
+	}).AuthenticateHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil)); !errors.Is(err, ErrNotProvided) {
+		t.Fatalf("HTTPAuthenticatorChain error = %v", err)
 	}
 }
 
-func TestAuthenticatorChainPreservesFallbackAndRealErrors(t *testing.T) {
+func TestHTTPAuthenticatorChainPreservesFallbackAndRealErrors(t *testing.T) {
 	realError := errors.New("backend unavailable")
-	want := &AuthenticationInfo{Subject: Subject{ID: "alice"}}
-	chain := AuthenticatorChain{
-		AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) { return nil, ErrNotProvided }),
-		AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) { return nil, realError }),
-		AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) { return want, nil }),
+	want := &Authentication{Subject: Subject{ID: "alice"}}
+	chain := HTTPAuthenticatorChain{
+		HTTPAuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*Authentication, error) { return nil, ErrNotProvided }),
+		HTTPAuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*Authentication, error) { return nil, realError }),
+		HTTPAuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*Authentication, error) { return want, nil }),
 	}
-	got, err := chain.Authenticate(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	got, err := chain.AuthenticateHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 	if err != nil || got != want {
 		t.Fatalf("Authenticate() = %#v, %v", got, err)
 	}
 
 	chain = chain[:2]
-	if _, err := chain.Authenticate(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil)); !errors.Is(err, realError) {
+	if _, err := chain.AuthenticateHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil)); !errors.Is(err, realError) {
 		t.Fatalf("Authenticate() error = %v, want aggregate containing real error", err)
 	}
 }
 
 func TestFallbackAuthenticatorUsesAnonymousWhenCredentialsAreNotProvided(t *testing.T) {
 	authenticator := NewFallbackAuthenticator(
-		AuthenticatorChain{
-			AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) {
+		HTTPAuthenticatorChain{
+			HTTPAuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*Authentication, error) {
 				return nil, ErrNotProvided
 			}),
 		},
 		NewAnonymousAuthenticator(),
 	)
 
-	got, err := authenticator.Authenticate(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	got, err := authenticator.AuthenticateHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v", err)
 	}
 	if got.ID != AnonymousSubjectID {
 		t.Fatalf("Authenticate() subject = %q, want %q", got.ID, AnonymousSubjectID)
 	}
+	if got.Type != authn.SubjectTypeAnonymous {
+		t.Fatalf("Authenticate() subject type = %q, want %q", got.Type, authn.SubjectTypeAnonymous)
+	}
 }
 
 func TestFallbackAuthenticatorAllowsLaterAuthenticatorToAcceptRejectedCredential(t *testing.T) {
 	rejected := errors.New("OAuth2 credential rejected")
-	want := &AuthenticationInfo{Subject: Subject{ID: "webhook-user"}}
+	want := &Authentication{Subject: Subject{ID: "webhook-user"}}
 	authenticator := NewFallbackAuthenticator(
-		AuthenticatorChain{
-			AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) {
+		HTTPAuthenticatorChain{
+			HTTPAuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*Authentication, error) {
 				return nil, rejected
 			}),
-			AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) {
+			HTTPAuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*Authentication, error) {
 				return want, nil
 			}),
 		},
 		NewAnonymousAuthenticator(),
 	)
 
-	got, err := authenticator.Authenticate(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	got, err := authenticator.AuthenticateHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 	if err != nil || got != want {
 		t.Fatalf("Authenticate() = %#v, %v, want later authenticator result", got, err)
 	}
@@ -131,13 +135,13 @@ func TestFallbackAuthenticatorAllowsLaterAuthenticatorToAcceptRejectedCredential
 func TestFallbackAuthenticatorDoesNotReplaceRejectedCredentialsWithAnonymous(t *testing.T) {
 	rejected := errors.New("credential rejected")
 	authenticator := NewFallbackAuthenticator(
-		AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) {
+		HTTPAuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*Authentication, error) {
 			return nil, rejected
 		}),
 		NewAnonymousAuthenticator(),
 	)
 
-	_, err := authenticator.Authenticate(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	_, err := authenticator.AuthenticateHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 	if !errors.Is(err, rejected) {
 		t.Fatalf("Authenticate() error = %v, want rejected credential", err)
 	}
@@ -145,8 +149,8 @@ func TestFallbackAuthenticatorDoesNotReplaceRejectedCredentialsWithAnonymous(t *
 
 func TestAuthenticationFilterTreatsInvalidSuccessfulAuthenticationAsServerError(t *testing.T) {
 	filter := NewAuthenticationFilter(
-		AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) {
-			return &AuthenticationInfo{}, nil
+		HTTPAuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*Authentication, error) {
+			return &Authentication{}, nil
 		}),
 		nil,
 	)
@@ -165,7 +169,7 @@ func TestAuthenticationFilterTreatsInvalidSuccessfulAuthenticationAsServerError(
 func TestAuthenticationFilterRedactsAndLogsDiagnosticError(t *testing.T) {
 	diagnostic := errors.New("LDAP bind failed with password hunter2")
 	filter := NewAuthenticationFilter(
-		AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) {
+		HTTPAuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*Authentication, error) {
 			return nil, diagnostic
 		}),
 		nil,
@@ -196,8 +200,8 @@ func TestAuthenticationFilterRedactsAndLogsDiagnosticError(t *testing.T) {
 
 func TestAuthenticationFilterWritesAuthenticationChallengeError(t *testing.T) {
 	filter := NewAuthenticationFilter(
-		AuthenticatorChain{
-			AuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*AuthenticationInfo, error) {
+		HTTPAuthenticatorChain{
+			HTTPAuthenticatorFunc(func(http.ResponseWriter, *http.Request) (*Authentication, error) {
 				return nil, NewUnauthorizedChallengeError(`Bearer error="invalid_token"`, "Unauthorized")
 			}),
 		},
@@ -220,14 +224,14 @@ func TestAuthenticationFilterWritesAuthenticationChallengeError(t *testing.T) {
 
 func TestBearerTokenAuthenticatorRejectsUnrecognizedCredential(t *testing.T) {
 	authenticator := NewBearerTokenAuthenticator(tokenAuthenticatorFunc(
-		func(context.Context, string) (*AuthenticationInfo, error) {
+		func(context.Context, string) (*Authentication, error) {
 			return nil, ErrNotProvided
 		},
 	))
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.Header.Set("Authorization", "Bearer unrecognized-token")
 
-	_, err := authenticator.Authenticate(httptest.NewRecorder(), request)
+	_, err := authenticator.AuthenticateHTTP(httptest.NewRecorder(), request)
 	if !commonerrors.IsUnauthorized(err) {
 		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
 	}
@@ -236,7 +240,7 @@ func TestBearerTokenAuthenticatorRejectsUnrecognizedCredential(t *testing.T) {
 func TestFallbackAuthenticatorDoesNotTreatEmptyBearerAsMissingCredential(t *testing.T) {
 	authenticator := NewFallbackAuthenticator(
 		NewBearerTokenAuthenticator(tokenAuthenticatorFunc(
-			func(context.Context, string) (*AuthenticationInfo, error) {
+			func(context.Context, string) (*Authentication, error) {
 				return nil, ErrNotProvided
 			},
 		)),
@@ -245,7 +249,7 @@ func TestFallbackAuthenticatorDoesNotTreatEmptyBearerAsMissingCredential(t *test
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.Header.Set("Authorization", "Bearer ")
 
-	_, err := authenticator.Authenticate(httptest.NewRecorder(), request)
+	_, err := authenticator.AuthenticateHTTP(httptest.NewRecorder(), request)
 	if !commonerrors.IsUnauthorized(err) {
 		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
 	}
@@ -254,7 +258,7 @@ func TestFallbackAuthenticatorDoesNotTreatEmptyBearerAsMissingCredential(t *test
 func TestFallbackAuthenticatorDoesNotTreatBearerSchemeWithoutValueAsMissingCredential(t *testing.T) {
 	authenticator := NewFallbackAuthenticator(
 		NewBearerTokenAuthenticator(tokenAuthenticatorFunc(
-			func(context.Context, string) (*AuthenticationInfo, error) {
+			func(context.Context, string) (*Authentication, error) {
 				return nil, ErrNotProvided
 			},
 		)),
@@ -263,7 +267,7 @@ func TestFallbackAuthenticatorDoesNotTreatBearerSchemeWithoutValueAsMissingCrede
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.Header.Set("Authorization", "Bearer")
 
-	_, err := authenticator.Authenticate(httptest.NewRecorder(), request)
+	_, err := authenticator.AuthenticateHTTP(httptest.NewRecorder(), request)
 	if !commonerrors.IsUnauthorized(err) {
 		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
 	}
@@ -273,7 +277,7 @@ func TestWebhookAuthenticatorRejectsEmptyBearerCredential(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.Header.Set("Authorization", "Bearer ")
 
-	_, err := (&WebhookAuthenticator{}).Authenticate(httptest.NewRecorder(), request)
+	_, err := (&WebhookAuthenticator{}).AuthenticateHTTP(httptest.NewRecorder(), request)
 	if !commonerrors.IsUnauthorized(err) {
 		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
 	}
@@ -281,14 +285,14 @@ func TestWebhookAuthenticatorRejectsEmptyBearerCredential(t *testing.T) {
 
 func TestBasicAuthenticatorRejectsUnrecognizedCredential(t *testing.T) {
 	authenticator := NewBasicAuthenticator(basicAuthenticatorFunc(
-		func(context.Context, string, string) (*AuthenticationInfo, error) {
+		func(context.Context, string, string) (*Authentication, error) {
 			return nil, ErrNotProvided
 		},
 	))
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.SetBasicAuth("alice", "incorrect-password")
 
-	_, err := authenticator.Authenticate(httptest.NewRecorder(), request)
+	_, err := authenticator.AuthenticateHTTP(httptest.NewRecorder(), request)
 	if !commonerrors.IsUnauthorized(err) {
 		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
 	}
@@ -296,14 +300,14 @@ func TestBasicAuthenticatorRejectsUnrecognizedCredential(t *testing.T) {
 
 func TestSessionAuthenticatorRejectsUnrecognizedCredential(t *testing.T) {
 	authenticator := NewSessionAuthenticator(tokenAuthenticatorFunc(
-		func(context.Context, string) (*AuthenticationInfo, error) {
+		func(context.Context, string) (*Authentication, error) {
 			return nil, ErrNotProvided
 		},
 	), "session")
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.AddCookie(&http.Cookie{Name: "session", Value: "unrecognized-token"})
 
-	_, err := authenticator.Authenticate(httptest.NewRecorder(), request)
+	_, err := authenticator.AuthenticateHTTP(httptest.NewRecorder(), request)
 	if !commonerrors.IsUnauthorized(err) {
 		t.Fatalf("Authenticate() error = %v, want unauthorized", err)
 	}

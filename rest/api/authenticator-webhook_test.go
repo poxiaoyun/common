@@ -17,10 +17,10 @@ func (f webhookRoundTripperFunc) RoundTrip(request *http.Request) (*http.Respons
 }
 
 func TestWebhookAuthenticatorReturnsCanonicalAuthentication(t *testing.T) {
-	want := api.AuthenticationInfo{
-		Subject: api.Subject{ID: "user", Groups: []string{"developers"}},
-		Actor:   &api.Subject{ID: "worker"},
-		Access:  &api.AccessConstraints{Audiences: []string{"cloud"}, Scopes: []string{"instances.read"}},
+	want := api.Authentication{
+		Subject: api.Subject{Type: "iam.user", ID: "user", Groups: []string{"developers"}},
+		Actor:   &api.Subject{Type: "iam.workload", ID: "worker"},
+		Token:   &api.TokenInfo{Audiences: []string{"cloud"}, Scopes: []string{"instances.read"}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		review := &api.AuthenticationReview{}
@@ -61,7 +61,7 @@ func TestWebhookAuthenticatorValidatesRequestedAudienceAndWrapsTransport(t *test
 		}
 		_ = json.NewEncoder(w).Encode(api.AuthenticationReview{Status: &api.AuthenticationReviewStatus{
 			Authenticated:  true,
-			Authentication: &api.AuthenticationInfo{Subject: api.Subject{ID: "user"}},
+			Authentication: &api.Authentication{Subject: api.Subject{ID: "user"}},
 			Audiences:      []string{"urn:apps:api"},
 		}})
 	}))
@@ -92,7 +92,7 @@ func TestWebhookAuthenticatorRejectsMissingRequestedAudience(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.AuthenticationReview{Status: &api.AuthenticationReviewStatus{
 			Authenticated:  true,
-			Authentication: &api.AuthenticationInfo{Subject: api.Subject{ID: "user"}},
+			Authentication: &api.Authentication{Subject: api.Subject{ID: "user"}},
 		}})
 	}))
 	defer server.Close()

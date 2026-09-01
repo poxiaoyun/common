@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
+	"xiaoshiai.cn/common/authz"
 )
 
 // NewCacheAuthorizer caches successful decisions from authorizer for ttl.
-func NewCacheAuthorizer(authorizer Authorizer, size int, ttl time.Duration) Authorizer {
+func NewCacheAuthorizer(authorizer authz.Authorizer, size int, ttl time.Duration) *LRUCacheAuthorizer {
 	return &LRUCacheAuthorizer{
 		Authorizer: authorizer,
-		cache:      expirable.NewLRU[[sha256.Size]byte, Decision](size, nil, ttl),
+		cache:      expirable.NewLRU[[sha256.Size]byte, authz.EvaluationResult](size, nil, ttl),
 	}
 }
 
@@ -21,32 +22,34 @@ func NewCacheAuthorizer(authorizer Authorizer, size int, ttl time.Duration) Auth
 // NoOpinion decisions, and errors are evaluated on every request.
 type LRUCacheAuthorizer struct {
 	// Authorizer supplies decisions that are not present in the cache.
-	Authorizer Authorizer
-	cache      *expirable.LRU[[sha256.Size]byte, Decision]
+	Authorizer authz.Authorizer
+	cache      *expirable.LRU[[sha256.Size]byte, authz.EvaluationResult]
 }
 
 // Authorize implements Authorizer.
-func (c *LRUCacheAuthorizer) Authorize(ctx context.Context, authentication AuthenticationInfo, attributes Attributes) (Decision, string, error) {
+func (c *LRUCacheAuthorizer) Authorize(ctx context.Context, authentication Authentication, operation authz.Operation) (authz.EvaluationResult, error) {
 	if c.cache == nil {
-		return c.Authorizer.Authorize(ctx, authentication, attributes)
+		return c.Authorizer.Authorize(ctx, authentication, operation)
 	}
 	payload, err := json.Marshal(struct {
-		Authentication AuthenticationInfo `json:"authentication"`
-		Attributes     Attributes         `json:"attributes"`
-	}{Authentication: authentication, Attributes: attributes})
+		Authentication Authentication
+		Operation      authz.Operation
+	}{Authentication: authentication, Operation: operation})
 	if err != nil {
-		return DecisionDeny, "", err
+		return authz.EvaluationResult{Decision: authz.DecisionDeny}, err
 	}
 	key := sha256.Sum256(payload)
-	if decision, ok := c.cache.Get(key); ok {
-		return decision, "", nil
+	if result, ok := c.cache.Get(key); ok {
+		return result, nil
 	}
-	decision, reason, err := c.Authorizer.Authorize(ctx, authentication, attributes)
+	result, err := c.Authorizer.Authorize(ctx, authentication, operation)
 	if err != nil {
-		return decision, reason, err
+		return result, err
 	}
-	if decision == DecisionAllow {
-		c.cache.Add(key, decision)
+	if result.Decision == authz.DecisionAllow {
+		c.cache.Add(key, result)
 	}
-	return decision, reason, nil
+	return result, nil
 }
+
+var _ authz.Authorizer = (*LRUCacheAuthorizer)(nil)

@@ -5,23 +5,25 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"xiaoshiai.cn/common/authz"
 )
 
 // ScopeMatcher reports whether one granted OAuth 2.0 scope authorizes request
 // attributes.
-type ScopeMatcher func(scope string, attributes Attributes) bool
+type ScopeMatcher func(scope string, operation authz.Operation) bool
 
 // ScopeActionMatcher reports whether an aggregate action from a granted scope
 // authorizes the request attributes. Exact actions are matched before this
 // adapter is called.
-type ScopeActionMatcher func(grantedAction string, attributes Attributes) bool
+type ScopeActionMatcher func(grantedAction string, operation authz.Operation) bool
 
 // ScopeResourceMatcher reports whether a resource from a granted scope names
 // the logical target represented by the request attributes.
-type ScopeResourceMatcher func(grantedResource string, attributes Attributes) bool
+type ScopeResourceMatcher func(grantedResource string, operation authz.Operation) bool
 
 // OAuth2ScopeAuthorizer authorizes access-token requests using their granted
-// scopes. It returns DecisionNoOpinion for other authentication modes so
+// scopes. It returns NoOpinion for other authentication modes so
 // callers can compose it with alternative Authorizers.
 type OAuth2ScopeAuthorizer struct {
 	// MatchScope reports whether one granted scope authorizes the target API
@@ -31,23 +33,23 @@ type OAuth2ScopeAuthorizer struct {
 
 // Authorize decides access-token requests and returns an RFC 6750 challenge
 // error when the required scope is missing.
-func (authorizer OAuth2ScopeAuthorizer) Authorize(ctx context.Context, authentication AuthenticationInfo, attributes Attributes) (Decision, string, error) {
-	if authentication.Access == nil {
-		return DecisionNoOpinion, "", nil
+func (authorizer OAuth2ScopeAuthorizer) Authorize(ctx context.Context, authentication Authentication, operation authz.Operation) (authz.EvaluationResult, error) {
+	if authentication.Token == nil {
+		return authz.EvaluationResult{Decision: authz.DecisionNoOpinion}, nil
 	}
 
 	match := authorizer.MatchScope
 	if match == nil {
 		match = DefaultOAuth2ScopeMatcher
 	}
-	if slices.ContainsFunc(authentication.Access.Scopes, func(scope string) bool {
-		return match(scope, attributes)
+	if slices.ContainsFunc(authentication.Token.Scopes, func(scope string) bool {
+		return match(scope, operation)
 	}) {
-		return DecisionAllow, "", nil
+		return authz.EvaluationResult{Decision: authz.DecisionAllow}, nil
 	}
 
 	reason := "missing required OAuth 2.0 scope"
-	return DecisionDeny, reason, NewForbiddenChallengeError(
+	return authz.EvaluationResult{Decision: authz.DecisionDeny, Reason: reason}, NewForbiddenChallengeError(
 		`Bearer error="insufficient_scope"`,
 		reason,
 	)
@@ -62,17 +64,17 @@ func NewOAuth2ScopeMatcher(matchAction ScopeActionMatcher, matchResource ScopeRe
 	if matchResource == nil {
 		matchResource = DefaultOAuth2ScopeResourceMatcher
 	}
-	return func(scope string, attributes Attributes) bool {
-		return matchOAuth2Scope(scope, attributes, matchAction, matchResource)
+	return func(scope string, operation authz.Operation) bool {
+		return matchOAuth2Scope(scope, operation, matchAction, matchResource)
 	}
 }
 
 // DefaultOAuth2ScopeMatcher matches an action:resource scope against request
 // attributes using the default action and final-resource conventions.
-func DefaultOAuth2ScopeMatcher(scope string, attributes Attributes) bool {
+func DefaultOAuth2ScopeMatcher(scope string, operation authz.Operation) bool {
 	return matchOAuth2Scope(
 		scope,
-		attributes,
+		operation,
 		DefaultOAuth2ScopeActionMatcher,
 		DefaultOAuth2ScopeResourceMatcher,
 	)
@@ -80,12 +82,12 @@ func DefaultOAuth2ScopeMatcher(scope string, attributes Attributes) bool {
 
 // DefaultOAuth2ScopeActionMatcher lets read cover get and list and lets write
 // cover every other non-empty request action.
-func DefaultOAuth2ScopeActionMatcher(grantedAction string, attributes Attributes) bool {
+func DefaultOAuth2ScopeActionMatcher(grantedAction string, operation authz.Operation) bool {
 	switch grantedAction {
 	case "read":
-		return attributes.Action == "get" || attributes.Action == "list"
+		return operation.Action == "get" || operation.Action == "list"
 	case "write":
-		return attributes.Action != "" && attributes.Action != "get" && attributes.Action != "list"
+		return operation.Action != "" && operation.Action != "get" && operation.Action != "list"
 	default:
 		return false
 	}
@@ -94,27 +96,25 @@ func DefaultOAuth2ScopeActionMatcher(grantedAction string, attributes Attributes
 // SafeMethodOAuth2ScopeActionMatcher lets read cover GET and HEAD and lets
 // write cover every other non-empty HTTP method. Requests without a method use
 // the default action convention.
-func SafeMethodOAuth2ScopeActionMatcher(grantedAction string, attributes Attributes) bool {
-	if attributes.Method == "" {
-		return DefaultOAuth2ScopeActionMatcher(grantedAction, attributes)
+func SafeMethodOAuth2ScopeActionMatcher(grantedAction string, operation authz.Operation) bool {
+	method := operation.Context[authorizationContextHTTPMethod]
+	if method == "" {
+		return DefaultOAuth2ScopeActionMatcher(grantedAction, operation)
 	}
-	if attributes.Method == http.MethodGet || attributes.Method == http.MethodHead {
+	if method == http.MethodGet || method == http.MethodHead {
 		return grantedAction == "read"
 	}
 	return grantedAction == "write"
 }
 
 // DefaultOAuth2ScopeResourceMatcher matches only the final request resource.
-func DefaultOAuth2ScopeResourceMatcher(grantedResource string, attributes Attributes) bool {
-	if len(attributes.Resources) == 0 {
-		return false
-	}
-	return grantedResource == attributes.Resources[len(attributes.Resources)-1].Resource
+func DefaultOAuth2ScopeResourceMatcher(grantedResource string, operation authz.Operation) bool {
+	return grantedResource == operation.Resource.Type
 }
 
 func matchOAuth2Scope(
 	scope string,
-	attributes Attributes,
+	operation authz.Operation,
 	matchAction ScopeActionMatcher,
 	matchResource ScopeResourceMatcher,
 ) bool {
@@ -122,10 +122,10 @@ func matchOAuth2Scope(
 	if !ok || grantedAction == "" || grantedResource == "" {
 		return false
 	}
-	if grantedAction != attributes.Action && !matchAction(grantedAction, attributes) {
+	if grantedAction != operation.Action && !matchAction(grantedAction, operation) {
 		return false
 	}
-	return matchResource(grantedResource, attributes)
+	return matchResource(grantedResource, operation)
 }
 
-var _ Authorizer = OAuth2ScopeAuthorizer{}
+var _ authz.Authorizer = OAuth2ScopeAuthorizer{}

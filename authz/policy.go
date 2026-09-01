@@ -122,20 +122,20 @@ type PolicyAttributeNamespace string
 const (
 	// PolicyAttributeResource identifies a Resource.Properties fact.
 	PolicyAttributeResource PolicyAttributeNamespace = "resource"
-	// PolicyAttributeRequest identifies a CheckInput.Request fact.
+	// PolicyAttributeRequest identifies an Operation.Context fact.
 	PolicyAttributeRequest PolicyAttributeNamespace = "request"
 )
 
 // PolicyAttributeReference identifies one service-owned typed policy fact.
 type PolicyAttributeReference struct {
-	Service   ServiceID
+	Service   string
 	Namespace PolicyAttributeNamespace
 	Name      string
 }
 
 // RelationshipReference identifies one service-owned relationship predicate.
 type RelationshipReference struct {
-	Service ServiceID
+	Service string
 	Name    string
 }
 
@@ -246,7 +246,7 @@ func Builtin(value PolicyBuiltin) PolicyValue {
 }
 
 // ResourceProperty constructs a service-owned resource property value.
-func ResourceProperty(service ServiceID, name string) PolicyValue {
+func ResourceProperty(service string, name string) PolicyValue {
 	return PolicyValue{
 		Source: PolicyValueProperty,
 		Property: PolicyAttributeReference{
@@ -258,7 +258,7 @@ func ResourceProperty(service ServiceID, name string) PolicyValue {
 }
 
 // RequestProperty constructs a service-owned request property value.
-func RequestProperty(service ServiceID, name string) PolicyValue {
+func RequestProperty(service string, name string) PolicyValue {
 	return PolicyValue{
 		Source: PolicyValueProperty,
 		Property: PolicyAttributeReference{

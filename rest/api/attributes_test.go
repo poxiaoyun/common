@@ -18,15 +18,3 @@ func TestServiceAttributesExtractor(t *testing.T) {
 		t.Fatalf("attributes = %#v", attributes)
 	}
 }
-
-func TestAuthorityMatchesTargetService(t *testing.T) {
-	authority := api.Authority{Service: "cloud", Actions: []string{"list"}, Resources: []string{"clusters"}}
-	attributes := api.Attributes{Service: "apps", Action: "list", Resources: []api.AttributeResource{{Resource: "clusters"}}}
-	if authority.MatchAttributes(attributes) {
-		t.Fatal("cloud authority matched Apps attributes")
-	}
-	attributes.Service = "cloud"
-	if !authority.MatchAttributes(attributes) {
-		t.Fatal("cloud authority did not match Cloud attributes")
-	}
-}

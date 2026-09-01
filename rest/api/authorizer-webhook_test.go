@@ -6,15 +6,17 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+
+	"xiaoshiai.cn/common/authz"
 	"xiaoshiai.cn/common/httpclient"
 	"xiaoshiai.cn/common/rest/api"
 )
 
 func TestWebhookAuthorizerSendsCompleteAuthentication(t *testing.T) {
-	authentication := api.AuthenticationInfo{
-		Subject: api.Subject{ID: "user", Groups: []string{"developers"}},
-		Actor:   &api.Subject{ID: "worker"},
-		Access:  &api.AccessConstraints{Scopes: []string{"instances.read"}},
+	authentication := api.Authentication{
+		Subject: api.Subject{Type: "iam.user", ID: "user", Groups: []string{"developers"}},
+		Actor:   &api.Subject{Type: "iam.workload", ID: "worker"},
+		Token:   &api.TokenInfo{Scopes: []string{"instances.read"}},
 	}
 	attributes := api.Attributes{Service: "cloud", Action: "get", Path: "/instances/one"}
 	request := &api.AuthorizationReview{}
@@ -23,20 +25,23 @@ func TestWebhookAuthorizerSendsCompleteAuthentication(t *testing.T) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(api.AuthorizationReview{Status: &api.AuthorizationReviewStatus{Decision: api.DecisionAllow}})
+		_ = json.NewEncoder(w).Encode(api.AuthorizationReview{Status: &api.AuthorizationReviewStatus{Decision: authz.DecisionAllow}})
 	}))
 	defer server.Close()
 	authorizer, err := api.NewWebhookAuthorizer(&api.WebhookAuthorizerOptions{Options: httpclient.Options{Server: server.URL}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	decision, _, err := authorizer.Authorize(t.Context(), authentication, attributes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision != api.DecisionAllow || request.Spec == nil ||
+	filter := api.NewAuthorizationFilter(authorizer)
+	httpRequest := httptest.NewRequest(http.MethodGet, attributes.Path, nil)
+	httpRequest = httpRequest.WithContext(api.WithAuthentication(httpRequest.Context(), authentication))
+	httpRequest = httpRequest.WithContext(api.WithAttributes(httpRequest.Context(), &attributes))
+	response := httptest.NewRecorder()
+	filter.Process(response, httpRequest, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	if response.Code != http.StatusOK || request.Spec == nil ||
 		!reflect.DeepEqual(request.Spec.Authentication, authentication) ||
 		!reflect.DeepEqual(request.Spec.Attributes, attributes) {
-		t.Fatalf("request = %#v, decision = %s", request, decision)
+		t.Fatalf("request = %#v, status = %d", request, response.Code)
 	}
 }

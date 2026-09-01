@@ -10,8 +10,8 @@ import (
 )
 
 func TestPolicyBuildersDescribeResourceAndRelationshipFacts(t *testing.T) {
-	moha := authz.ServiceID("moha")
-	iam := authz.ServiceID("iam")
+	moha := "moha"
+	iam := "iam"
 	policy := authz.NewPolicy(authz.Any(
 		authz.Equal(authz.ResourceProperty(moha, "visibility"), authz.Literal("public")),
 		authz.All(

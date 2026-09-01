@@ -82,14 +82,14 @@ func TestOAuth2AccessTokenAuthenticator(t *testing.T) {
 	if discoveryCalls.Load() != 1 {
 		t.Fatalf("Discovery calls = %d, want 1", discoveryCalls.Load())
 	}
-	if info.Access == nil || !slices.Equal(info.Access.Audiences, []string{"urn:orders:api", "urn:other:api"}) {
-		t.Fatalf("access = %#v", info.Access)
+	if info.Token == nil || !slices.Equal(info.Token.Audiences, []string{"urn:orders:api", "urn:other:api"}) {
+		t.Fatalf("access = %#v", info.Token)
 	}
 	if info.ID != "service-client" || info.Name != "Orders Worker" {
 		t.Fatalf("subject = %#v", info.Subject)
 	}
-	if !slices.Equal(info.Access.Scopes, []string{"orders.read", "orders.write"}) {
-		t.Fatalf("scopes = %#v", info.Access.Scopes)
+	if !slices.Equal(info.Token.Scopes, []string{"orders.read", "orders.write"}) {
+		t.Fatalf("scopes = %#v", info.Token.Scopes)
 	}
 	if info.Actor == nil || info.Actor.ID != "gateway" {
 		t.Fatalf("actor = %#v", info.Actor)
@@ -161,7 +161,7 @@ func TestBearerTokenAuthenticationFilterWritesOAuth2Challenge(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			filter := NewBearerTokenAuthenticationFilter(TokenAuthenticatorChain{
-				tokenAuthenticatorFunc(func(context.Context, string) (*AuthenticationInfo, error) {
+				tokenAuthenticatorFunc(func(context.Context, string) (*Authentication, error) {
 					return nil, test.err
 				}),
 			})

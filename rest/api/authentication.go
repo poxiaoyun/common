@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"golang.org/x/crypto/ssh"
+	"xiaoshiai.cn/common/authn"
 	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 )
@@ -16,7 +17,7 @@ import (
 // adapters may use it to let another adapter inspect the same credential, but
 // must translate chain exhaustion into an authentication error before returning
 // to the request seam.
-var ErrNotProvided = fmt.Errorf("no authentication provided")
+var ErrNotProvided = errors.New("authentication not provided")
 
 const AnonymousSubjectID = "anonymous"
 
@@ -53,119 +54,74 @@ func (err *AuthenticationChallengeError) Unwrap() error {
 	return err.Status
 }
 
-// Subject is the identity a request is about. It may represent a person,
-// application, workload, or another authenticated principal.
-type Subject struct {
-	// ID is the stable identifier used by authorization, ownership, and audit.
-	ID string `json:"id"`
-	// Name is the provider-verified username or principal name within the
-	// authentication domain. It is not a stable ownership key.
-	Name string `json:"name,omitempty"`
-	// DisplayName is a human-facing, non-unique label.
-	DisplayName string `json:"displayName,omitempty"`
-	// Email is the authenticated subject email when the authentication method
-	// provides one.
-	Email string `json:"email,omitempty"`
-	// EmailVerified reports whether the authentication provider verified Email.
-	EmailVerified bool `json:"emailVerified,omitempty"`
-	// Groups contains authorization groups assigned to the subject.
-	Groups []string `json:"groups,omitempty"`
-}
+// Subject aliases the canonical authenticated subject owned by authn.
+type Subject = authn.Subject
 
-// AccessConstraints contains authorization constraints carried by an OAuth
-// 2.0 access token. A non-nil value identifies an access-token authentication,
-// including when Scopes is empty.
-type AccessConstraints struct {
-	Audiences []string `json:"audiences,omitempty"`
-	Scopes    []string `json:"scopes,omitempty"`
-}
+// Authentication aliases the canonical verified authentication result owned
+// by authn.
+type Authentication = authn.Authentication
 
-type Authenticator interface {
-	// Authenticate authenticates the request and returns the authentication info.
-	// if the request has no applicable credential, return nil, [ErrNotProvided]
+// TokenInfo aliases canonical verified access-token metadata owned by authn.
+type TokenInfo = authn.TokenInfo
+
+// HTTPAuthenticator authenticates credentials carried by an HTTP request.
+type HTTPAuthenticator interface {
+	// AuthenticateHTTP authenticates credentials carried by r. If r has no
+	// applicable credential, it returns nil, [ErrNotProvided]
 	// so that another authenticator or fallback can run. A rejected request that
 	// requires an HTTP challenge returns [AuthenticationChallengeError].
 	// A returned [commonerrors.Status] is intentionally public response data;
 	// any other error is diagnostic and receives the default response.
-	// once authenticated, return the AuthenticationInfo, nil
-	Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error)
+	// Successful authentication returns authn.Authentication and a nil error.
+	AuthenticateHTTP(w http.ResponseWriter, r *http.Request) (*authn.Authentication, error)
 }
 
+// TokenAuthenticator authenticates token credentials accepted by HTTP
+// Bearer, cookie, or protocol-specific request adapters.
 type TokenAuthenticator interface {
-	// AuthenticateToken authenticates the token and returns the authentication info.
-	// if unauthorized, return nil, err
-	// if no decision can be made, return nil, [ErrNotProvided]
-	// if unexpected error, return nil, "", err
-	AuthenticateToken(ctx context.Context, token string) (*AuthenticationInfo, error)
+	// AuthenticateToken authenticates token and returns the REST request
+	// authentication. ErrNotProvided lets another configured token adapter try
+	// the same credential.
+	AuthenticateToken(ctx context.Context, token string) (*authn.Authentication, error)
 }
 
+// BasicAuthenticator authenticates an HTTP Basic username/password or API key
+// pair.
 type BasicAuthenticator interface {
-	// AuthenticateBasic authenticates the username and password and returns the authentication info.
-	// It also use for APIKey/SecretKey authentication.
-	// if unauthorized, return nil, err
-	// if no decision can be made, return nil, [ErrNotProvided]
-	// if unexpected error, return nil, "", err
-	AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticationInfo, error)
+	// AuthenticateBasic authenticates the HTTP Basic credential. ErrNotProvided
+	// lets another configured Basic adapter try the same credential.
+	AuthenticateBasic(ctx context.Context, username, password string) (*authn.Authentication, error)
 }
 
-// AuthenticationInfo is the verified identity and authentication context
-// installed on a request after authentication succeeds. Subject is embedded so
-// the simplest authentication result is the subject itself.
-type AuthenticationInfo struct {
-	Subject
-	// Actor is the current subject acting on behalf of Subject.
-	Actor *Subject `json:"actor,omitempty"`
-	// Access contains constraints from an OAuth 2.0 access token.
-	Access *AccessConstraints `json:"access,omitempty"`
+// SSHAuthenticator authenticates SSH password and public-key credentials used
+// by REST-adjacent SSH adapters in this package.
+type SSHAuthenticator interface {
+	BasicAuthenticator
+	// AuthenticateSSHPublicKey authenticates the SSH username and public-key
+	// credential after the protocol has verified private-key possession.
+	AuthenticateSSHPublicKey(ctx context.Context, username string, publicKey ssh.PublicKey) (*authn.Authentication, error)
 }
 
-// Clone returns an independent snapshot for implementations that retain
-// authentication across requests, such as static authenticators and caches.
-// Request-local context, audit, and transport propagation do not need it.
-func (info AuthenticationInfo) Clone() AuthenticationInfo {
-	cloned := info
-	cloned.Groups = append([]string(nil), info.Groups...)
-	if info.Actor != nil {
-		actor := *info.Actor
-		actor.Groups = append([]string(nil), info.Actor.Groups...)
-		cloned.Actor = &actor
-	}
-	if info.Access != nil {
-		cloned.Access = &AccessConstraints{
-			Audiences: append([]string(nil), info.Access.Audiences...),
-			Scopes:    append([]string(nil), info.Access.Scopes...),
-		}
-	}
-	return cloned
-}
-
-// ValidateAuthenticationInfo validates the canonical authentication value at a
-// transport seam.
-func ValidateAuthenticationInfo(info AuthenticationInfo) error {
-	if info.ID == "" {
+// ValidateAuthentication validates authentication received at an external
+// seam.
+func ValidateAuthentication(authentication authn.Authentication) error {
+	if authentication.ID == "" {
 		return fmt.Errorf("subject ID is required")
 	}
-	if info.Actor != nil && info.Actor.ID == "" {
+	if authentication.Actor != nil && authentication.Actor.ID == "" {
 		return fmt.Errorf("actor ID is required")
 	}
 	return nil
 }
 
-type SSHAuthenticator interface {
-	// BasicAuthenticator is ssh user/password mode authenticator
-	BasicAuthenticator
-	// AuthenticatePublicKey authenticate in ssh public key mode
-	AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticationInfo, error)
-}
-
 // WithAuthentication returns a context carrying authentication.
-func WithAuthentication(ctx context.Context, info AuthenticationInfo) context.Context {
-	return SetContextValue(ctx, "authentication", info)
+func WithAuthentication(ctx context.Context, authentication authn.Authentication) context.Context {
+	return SetContextValue(ctx, "authentication", authentication)
 }
 
 // AuthenticationFromContext returns the authentication carried by ctx.
-func AuthenticationFromContext(ctx context.Context) AuthenticationInfo {
-	return GetContextValue[AuthenticationInfo](ctx, "authentication")
+func AuthenticationFromContext(ctx context.Context) authn.Authentication {
+	return GetContextValue[authn.Authentication](ctx, "authentication")
 }
 
 // WithAuthenticationAudiences returns a context carrying the audiences a
@@ -194,9 +150,9 @@ type AuthenticationErrorHandlerFunc func(w http.ResponseWriter, r *http.Request,
 
 // NewAuthenticationFilter authenticates requests and installs successful
 // authentication in the request context.
-func NewAuthenticationFilter(authenticator Authenticator, onError AuthenticationErrorHandlerFunc) Filter {
+func NewAuthenticationFilter(authenticator HTTPAuthenticator, onError AuthenticationErrorHandlerFunc) Filter {
 	return FilterFunc(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		info, err := authenticator.Authenticate(w, r)
+		info, err := authenticator.AuthenticateHTTP(w, r)
 		if err != nil {
 			if onError != nil {
 				onError(w, r, err)
@@ -213,7 +169,7 @@ func NewAuthenticationFilter(authenticator Authenticator, onError Authentication
 			}
 			return
 		}
-		if err := ValidateAuthenticationInfo(*info); err != nil {
+		if err := ValidateAuthentication(*info); err != nil {
 			ServerError(w, fmt.Errorf("authenticator returned invalid authentication info: %w", err))
 			return
 		}

@@ -6,31 +6,31 @@ import (
 	"crypto/subtle"
 )
 
-// StaticTokenAuthenticator maps one opaque token to fixed authentication info.
+// StaticTokenAuthenticator maps one opaque token to fixed authentication.
 // It retains only a digest of the credential and copies returned values.
 type StaticTokenAuthenticator struct {
 	// Digest is the SHA-256 digest compared with presented credentials.
 	Digest [sha256.Size]byte
 	// Authentication is returned for a matching credential.
-	Authentication AuthenticationInfo
+	Authentication Authentication
 }
 
 // NewStaticTokenAuthenticator creates an authenticator for one opaque token and
-// fixed authentication info.
-func NewStaticTokenAuthenticator(token string, authentication AuthenticationInfo) *StaticTokenAuthenticator {
+// fixed authentication.
+func NewStaticTokenAuthenticator(token string, authentication Authentication) *StaticTokenAuthenticator {
 	return &StaticTokenAuthenticator{
 		Digest:         sha256.Sum256([]byte(token)),
-		Authentication: authentication.Clone(),
+		Authentication: copyAuthentication(authentication),
 	}
 }
 
 // AuthenticateToken returns the configured identity when token matches.
-func (a *StaticTokenAuthenticator) AuthenticateToken(_ context.Context, token string) (*AuthenticationInfo, error) {
+func (a *StaticTokenAuthenticator) AuthenticateToken(_ context.Context, token string) (*Authentication, error) {
 	digest := sha256.Sum256([]byte(token))
 	if subtle.ConstantTimeCompare(a.Digest[:], digest[:]) != 1 {
 		return nil, ErrNotProvided
 	}
-	info := a.Authentication.Clone()
+	info := copyAuthentication(a.Authentication)
 	return &info, nil
 }
 

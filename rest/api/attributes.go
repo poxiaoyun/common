@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"strings"
+
+	"xiaoshiai.cn/common/authz"
 )
 
 // AttributeResource identifies one resource in an authorization target path.
@@ -20,6 +22,51 @@ type Attributes struct {
 	Action    string              `json:"action,omitempty"`
 	Resources []AttributeResource `json:"resources,omitempty"`
 	Path      string              `json:"path,omitempty"`
+}
+
+const (
+	authorizationContextHTTPMethod = "http.method"
+	authorizationContextHTTPPath   = "http.path"
+)
+
+func authorizationOperation(attributes Attributes) authz.Operation {
+	operation := authz.Operation{
+		Service: attributes.Service,
+		Action:  attributes.Action,
+		Context: authz.Context{
+			authorizationContextHTTPMethod: attributes.Method,
+			authorizationContextHTTPPath:   attributes.Path,
+		},
+	}
+	if len(attributes.Resources) == 0 {
+		operation.Path = attributes.Path
+		return operation
+	}
+	operation.Resource.Scope = make(authz.Scope, len(attributes.Resources)-1)
+	for index, resource := range attributes.Resources[:len(attributes.Resources)-1] {
+		operation.Resource.Scope[index] = authz.ResourceReference{Type: resource.Resource, ID: resource.Name}
+	}
+	target := attributes.Resources[len(attributes.Resources)-1]
+	operation.Resource.Type = target.Resource
+	operation.Resource.ID = target.Name
+	return operation
+}
+
+func attributesFromOperation(operation authz.Operation) Attributes {
+	resources := make([]AttributeResource, 0, len(operation.Resource.Scope)+1)
+	for _, resource := range operation.Resource.Scope {
+		resources = append(resources, AttributeResource{Resource: resource.Type, Name: resource.ID})
+	}
+	if operation.Resource.Type != "" {
+		resources = append(resources, AttributeResource{Resource: operation.Resource.Type, Name: operation.Resource.ID})
+	}
+	return Attributes{
+		Service:   operation.Service,
+		Method:    operation.Context[authorizationContextHTTPMethod],
+		Action:    operation.Action,
+		Resources: resources,
+		Path:      operation.Context[authorizationContextHTTPPath],
+	}
 }
 
 // AttributeExtractor derives authorization attributes from a request.

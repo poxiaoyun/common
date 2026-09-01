@@ -1,5 +1,7 @@
 package api
 
+import "xiaoshiai.cn/common/authz"
+
 // AuthenticationReviewSpec contains exactly one credential to authenticate.
 // Audiences applies only to Token credentials.
 type AuthenticationReviewSpec struct {
@@ -15,8 +17,8 @@ type AuthenticationReviewSpec struct {
 
 // AuthenticationReviewStatus is the result of an authentication review.
 type AuthenticationReviewStatus struct {
-	Authenticated  bool                `json:"authenticated"`
-	Authentication *AuthenticationInfo `json:"authentication,omitempty"`
+	Authenticated  bool            `json:"authenticated"`
+	Authentication *Authentication `json:"authentication,omitempty"`
 	// Audiences is the validated intersection of the requested and token
 	// audiences. It is omitted when the request did not delegate validation.
 	Audiences []string `json:"audiences,omitempty"`
@@ -31,15 +33,15 @@ type AuthenticationReview struct {
 
 // AuthorizationReviewSpec describes the identity and operation to authorize.
 type AuthorizationReviewSpec struct {
-	Authentication AuthenticationInfo `json:"authentication"`
-	Attributes     Attributes         `json:"attributes"`
+	Authentication Authentication `json:"authentication"`
+	Attributes     Attributes     `json:"attributes"`
 }
 
 // AuthorizationReviewStatus is the result of an authorization review.
 type AuthorizationReviewStatus struct {
-	Decision Decision `json:"decision"`
-	Reason   string   `json:"reason,omitempty"`
-	Error    string   `json:"error,omitempty"`
+	Decision authz.Decision `json:"decision"`
+	Reason   string         `json:"reason,omitempty"`
+	Error    string         `json:"error,omitempty"`
 }
 
 // AuthorizationReview requests an authorization decision without persisting a resource.

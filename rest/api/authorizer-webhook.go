@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrors "errors"
 
+	"xiaoshiai.cn/common/authz"
 	"xiaoshiai.cn/common/httpclient"
 )
 
@@ -27,26 +28,29 @@ func NewWebhookAuthorizerWithTransport(opts *WebhookAuthorizerOptions, wrapper h
 	return &WebhookAuthorizer{httpclient: client}, nil
 }
 
-var _ Authorizer = &WebhookAuthorizer{}
+var _ authz.Authorizer = &WebhookAuthorizer{}
 
 type WebhookAuthorizer struct {
 	httpclient *httpclient.Client
 }
 
-func (t WebhookAuthorizer) Authorize(ctx context.Context, authentication AuthenticationInfo, attr Attributes) (authorized Decision, reason string, err error) {
+func (t WebhookAuthorizer) Authorize(ctx context.Context, authentication Authentication, operation authz.Operation) (authz.EvaluationResult, error) {
 	review := &AuthorizationReview{Spec: &AuthorizationReviewSpec{
 		Authentication: authentication,
-		Attributes:     attr,
+		Attributes:     attributesFromOperation(operation),
 	}}
 	response := &AuthorizationReview{}
 	if err := t.httpclient.Post("").JSON(review).Return(response).Send(ctx); err != nil {
-		return DecisionNoOpinion, "", err
+		return authz.EvaluationResult{Decision: authz.DecisionNoOpinion}, err
 	}
 	if response.Status == nil {
-		return DecisionNoOpinion, "", stderrors.New("authorization review returned no status")
+		return authz.EvaluationResult{Decision: authz.DecisionNoOpinion}, stderrors.New("authorization review returned no status")
 	}
 	if response.Status.Error != "" {
-		return DecisionNoOpinion, response.Status.Reason, stderrors.New(response.Status.Error)
+		return authz.EvaluationResult{
+			Decision: authz.DecisionNoOpinion,
+			Reason:   response.Status.Reason,
+		}, stderrors.New(response.Status.Error)
 	}
-	return response.Status.Decision, response.Status.Reason, nil
+	return authz.EvaluationResult{Decision: response.Status.Decision, Reason: response.Status.Reason}, nil
 }

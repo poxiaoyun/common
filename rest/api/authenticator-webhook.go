@@ -37,7 +37,7 @@ func NewWebhookAuthenticatorWithTransport(opts *WebhookAuthenticatorOptions, wra
 }
 
 var (
-	_ Authenticator      = &WebhookAuthenticator{}
+	_ HTTPAuthenticator  = &WebhookAuthenticator{}
 	_ TokenAuthenticator = &WebhookAuthenticator{}
 	_ BasicAuthenticator = &WebhookAuthenticator{}
 	_ SSHAuthenticator   = &WebhookAuthenticator{}
@@ -48,9 +48,10 @@ type WebhookAuthenticator struct {
 	Audiences []string
 }
 
-var _ Authenticator = &WebhookAuthenticator{}
+var _ HTTPAuthenticator = &WebhookAuthenticator{}
 
-func (w *WebhookAuthenticator) Authenticate(wr http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
+// AuthenticateHTTP reviews Bearer or Basic credentials carried by r.
+func (w *WebhookAuthenticator) AuthenticateHTTP(wr http.ResponseWriter, r *http.Request) (*Authentication, error) {
 	token, provided := extractBearerTokenFromRequest(r)
 	if provided {
 		if token == "" {
@@ -65,16 +66,22 @@ func (w *WebhookAuthenticator) Authenticate(wr http.ResponseWriter, r *http.Requ
 	return nil, ErrNotProvided
 }
 
-func (w *WebhookAuthenticator) AuthenticateToken(ctx context.Context, token string) (*AuthenticationInfo, error) {
+// AuthenticateToken reviews a token credential.
+func (w *WebhookAuthenticator) AuthenticateToken(ctx context.Context, token string) (*Authentication, error) {
 	return w.Process.Process(ctx, &AuthenticationReviewSpec{Token: token, Audiences: w.Audiences})
 }
 
-func (w *WebhookAuthenticator) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticationInfo, error) {
+// AuthenticateBasic reviews a username and password credential.
+func (w *WebhookAuthenticator) AuthenticateBasic(ctx context.Context, username, password string) (*Authentication, error) {
 	return w.Process.Process(ctx, &AuthenticationReviewSpec{Username: username, Password: password})
 }
 
-func (w *WebhookAuthenticator) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticationInfo, error) {
-	return w.Process.Process(ctx, &AuthenticationReviewSpec{SSHPublicKey: string(ssh.MarshalAuthorizedKey(pubkey))})
+// AuthenticateSSHPublicKey reviews an SSH username and public-key credential.
+func (w *WebhookAuthenticator) AuthenticateSSHPublicKey(ctx context.Context, username string, publicKey ssh.PublicKey) (*Authentication, error) {
+	return w.Process.Process(ctx, &AuthenticationReviewSpec{
+		Username:     username,
+		SSHPublicKey: string(ssh.MarshalAuthorizedKey(publicKey)),
+	})
 }
 
 // NewWebhookAuthenticatorProcessor creates a reusable AuthenticationReview client.
@@ -90,7 +97,7 @@ type WebhookAuthenticatorProcessor struct {
 	httpclient *httpclient.Client
 }
 
-func (w *WebhookAuthenticatorProcessor) Process(ctx context.Context, spec *AuthenticationReviewSpec) (*AuthenticationInfo, error) {
+func (w *WebhookAuthenticatorProcessor) Process(ctx context.Context, spec *AuthenticationReviewSpec) (*Authentication, error) {
 	review := &AuthenticationReview{Spec: spec}
 	response := &AuthenticationReview{}
 	if err := w.httpclient.Post("").JSON(review).Return(response).Send(ctx); err != nil {
@@ -110,7 +117,7 @@ func (w *WebhookAuthenticatorProcessor) Process(ctx context.Context, spec *Authe
 	}) {
 		return nil, errors.NewUnauthorized("authentication review returned no compatible audience")
 	}
-	if err := ValidateAuthenticationInfo(*response.Status.Authentication); err != nil {
+	if err := ValidateAuthentication(*response.Status.Authentication); err != nil {
 		return nil, errors.NewUnauthorized(err.Error())
 	}
 	return response.Status.Authentication, nil

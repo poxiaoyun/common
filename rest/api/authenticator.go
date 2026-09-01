@@ -10,11 +10,13 @@ import (
 	"xiaoshiai.cn/common/errors"
 )
 
+// TokenAuthenticatorChain tries token authenticators in declaration order.
 type TokenAuthenticatorChain []TokenAuthenticator
 
 var _ TokenAuthenticator = TokenAuthenticatorChain{}
 
-func (c TokenAuthenticatorChain) AuthenticateToken(ctx context.Context, token string) (*AuthenticationInfo, error) {
+// AuthenticateToken returns the first successful token authentication.
+func (c TokenAuthenticatorChain) AuthenticateToken(ctx context.Context, token string) (*Authentication, error) {
 	var errlist []error
 	for _, authn := range c {
 		info, err := authn.AuthenticateToken(ctx, token)
@@ -33,11 +35,14 @@ func (c TokenAuthenticatorChain) AuthenticateToken(ctx context.Context, token st
 	return nil, errors.NewAggregate(errlist)
 }
 
+// BasicAuthenticatorChain tries Basic credential authenticators in declaration
+// order.
 type BasicAuthenticatorChain []BasicAuthenticator
 
 var _ BasicAuthenticator = BasicAuthenticatorChain{}
 
-func (c BasicAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticationInfo, error) {
+// AuthenticateBasic returns the first successful Basic authentication.
+func (c BasicAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, password string) (*Authentication, error) {
 	var errlist []error
 	for _, authn := range c {
 		info, err := authn.AuthenticateBasic(ctx, username, password)
@@ -56,11 +61,13 @@ func (c BasicAuthenticatorChain) AuthenticateBasic(ctx context.Context, username
 	return nil, errors.NewAggregate(errlist)
 }
 
+// SSHAuthenticatorChain tries SSH authenticators in declaration order.
 type SSHAuthenticatorChain []SSHAuthenticator
 
 var _ SSHAuthenticator = SSHAuthenticatorChain{}
 
-func (c SSHAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, password string) (*AuthenticationInfo, error) {
+// AuthenticateBasic returns the first successful SSH password authentication.
+func (c SSHAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, password string) (*Authentication, error) {
 	var errlist []error
 	for _, authn := range c {
 		info, err := authn.AuthenticateBasic(ctx, username, password)
@@ -79,10 +86,12 @@ func (c SSHAuthenticatorChain) AuthenticateBasic(ctx context.Context, username, 
 	return nil, errors.NewAggregate(errlist)
 }
 
-func (c SSHAuthenticatorChain) AuthenticatePublicKey(ctx context.Context, pubkey ssh.PublicKey) (*AuthenticationInfo, error) {
+// AuthenticateSSHPublicKey returns the first successful SSH public-key
+// authentication.
+func (c SSHAuthenticatorChain) AuthenticateSSHPublicKey(ctx context.Context, username string, publicKey ssh.PublicKey) (*Authentication, error) {
 	var errlist []error
 	for _, authn := range c {
-		info, err := authn.AuthenticatePublicKey(ctx, pubkey)
+		info, err := authn.AuthenticateSSHPublicKey(ctx, username, publicKey)
 		if err != nil {
 			if stderrors.Is(err, ErrNotProvided) {
 				continue
@@ -98,11 +107,11 @@ func (c SSHAuthenticatorChain) AuthenticatePublicKey(ctx context.Context, pubkey
 	return nil, errors.NewAggregate(errlist)
 }
 
-var _ Authenticator = AuthenticatorFunc(nil)
+var _ HTTPAuthenticator = HTTPAuthenticatorFunc(nil)
 
 // NewSessionAuthenticator adapts token authentication to a session cookie.
-func NewSessionAuthenticator(authenticator TokenAuthenticator, sessionKey string) Authenticator {
-	return AuthenticatorFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
+func NewSessionAuthenticator(authenticator TokenAuthenticator, sessionKey string) HTTPAuthenticator {
+	return HTTPAuthenticatorFunc(func(w http.ResponseWriter, r *http.Request) (*Authentication, error) {
 		token := ExtractTokenFromCookie(r, sessionKey)
 		if token == "" {
 			return nil, ErrNotProvided
@@ -125,8 +134,8 @@ func ExtractTokenFromCookie(r *http.Request, cookieName string) string {
 
 // NewBearerTokenAuthenticator adapts token authentication to HTTP Bearer
 // credentials.
-func NewBearerTokenAuthenticator(authenticator TokenAuthenticator) Authenticator {
-	return AuthenticatorFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
+func NewBearerTokenAuthenticator(authenticator TokenAuthenticator) HTTPAuthenticator {
+	return HTTPAuthenticatorFunc(func(w http.ResponseWriter, r *http.Request) (*Authentication, error) {
 		token, provided := extractBearerTokenFromRequest(r)
 		if !provided {
 			return nil, ErrNotProvided
@@ -178,8 +187,8 @@ func extractBearerTokenFromRequest(r *http.Request) (string, bool) {
 
 // NewBasicAuthenticator adapts basic authentication to HTTP Basic
 // credentials.
-func NewBasicAuthenticator(authenticator BasicAuthenticator) Authenticator {
-	return AuthenticatorFunc(func(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
+func NewBasicAuthenticator(authenticator BasicAuthenticator) HTTPAuthenticator {
+	return HTTPAuthenticatorFunc(func(w http.ResponseWriter, r *http.Request) (*Authentication, error) {
 		username, password, ok := r.BasicAuth()
 		if !ok {
 			return nil, ErrNotProvided
@@ -192,12 +201,14 @@ func NewBasicAuthenticator(authenticator BasicAuthenticator) Authenticator {
 	})
 }
 
-type AuthenticatorChain []Authenticator
+// HTTPAuthenticatorChain tries HTTP authenticators in declaration order.
+type HTTPAuthenticatorChain []HTTPAuthenticator
 
-func (d AuthenticatorChain) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
+// AuthenticateHTTP returns the first successful HTTP authentication.
+func (d HTTPAuthenticatorChain) AuthenticateHTTP(w http.ResponseWriter, r *http.Request) (*Authentication, error) {
 	var errs []error
 	for _, a := range d {
-		info, err := a.Authenticate(w, r)
+		info, err := a.AuthenticateHTTP(w, r)
 		if err != nil {
 			if stderrors.Is(err, ErrNotProvided) {
 				continue
@@ -213,10 +224,10 @@ func (d AuthenticatorChain) Authenticate(w http.ResponseWriter, r *http.Request)
 	return nil, errors.NewAggregate(errs)
 }
 
-// AuthenticatorFunc adapts a function to Authenticator.
-type AuthenticatorFunc func(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error)
+// HTTPAuthenticatorFunc adapts a function to HTTPAuthenticator.
+type HTTPAuthenticatorFunc func(w http.ResponseWriter, r *http.Request) (*Authentication, error)
 
-// Authenticate calls f.
-func (f AuthenticatorFunc) Authenticate(w http.ResponseWriter, r *http.Request) (*AuthenticationInfo, error) {
+// AuthenticateHTTP calls f.
+func (f HTTPAuthenticatorFunc) AuthenticateHTTP(w http.ResponseWriter, r *http.Request) (*Authentication, error) {
 	return f(w, r)
 }

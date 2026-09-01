@@ -7,24 +7,10 @@ import (
 	"net/http"
 	"strings"
 
+	"xiaoshiai.cn/common/authz"
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
 	"xiaoshiai.cn/common/meta"
-)
-
-// Decision is an Authorizer's opinion about one request. DecisionAllow and
-// DecisionDeny are final decisions; DecisionNoOpinion lets another Authorizer
-// decide.
-type Decision string
-
-const (
-	// DecisionNoOpinion indicates that the Authorizer does not handle the
-	// request. An authorization chain may continue with its next Authorizer.
-	DecisionNoOpinion Decision = "NoOpinion"
-	// DecisionDeny rejects the request and stops an authorization chain.
-	DecisionDeny Decision = "Deny"
-	// DecisionAllow authorizes the request and stops an authorization chain.
-	DecisionAllow Decision = "Allow"
 )
 
 const (
@@ -37,30 +23,18 @@ const (
 // RequestAuthorizer decides whether an HTTP request may proceed.
 type RequestAuthorizer interface {
 	// AuthorizeRequest returns an authorization decision and an optional
-	// public reason. DecisionNoOpinion means this Authorizer does not handle the
+	// public reason. NoOpinion means this Authorizer does not handle the
 	// request. A returned [errors.Status] intentionally defines the public error
 	// response; any other error is diagnostic and receives the default Forbidden
 	// response.
-	AuthorizeRequest(r *http.Request) (Decision, string, error)
-}
-
-// Authorizer decides whether an authenticated principal may perform an API
-// operation.
-type Authorizer interface {
-	// Authorize returns an authorization decision and an optional public
-	// reason. DecisionNoOpinion means this Authorizer does not handle the
-	// principal or operation. An error means the request must not proceed. A
-	// wrapped [errors.Status] defines the intentional denial response; other
-	// errors are returned as Forbidden. [AuthenticationChallengeError]
-	// additionally describes a challenged denial.
-	Authorize(ctx context.Context, authentication AuthenticationInfo, a Attributes) (authorized Decision, reason string, err error)
+	AuthorizeRequest(r *http.Request) (authz.EvaluationResult, error)
 }
 
 // AuthorizationFilter authorizes an authenticated principal against request
 // attributes.
 type AuthorizationFilter struct {
 	// Authorizer evaluates the authenticated principal and request attributes.
-	Authorizer Authorizer
+	Authorizer authz.Authorizer
 }
 
 // RequestAuthorizationFilter authorizes an HTTP request directly.
@@ -77,20 +51,20 @@ var (
 
 // WithAuthorizationDecision records a decision for downstream authorization
 // filters on the same request.
-func WithAuthorizationDecision(ctx context.Context, decision Decision) context.Context {
+func WithAuthorizationDecision(ctx context.Context, decision authz.Decision) context.Context {
 	return SetContextValue(ctx, "decision", decision)
 }
 
 // AuthorizationDecisionFromContext returns the decision recorded for the
 // request. Its zero value means no previous filter made a decision.
-func AuthorizationDecisionFromContext(ctx context.Context) Decision {
-	return GetContextValue[Decision](ctx, "decision")
+func AuthorizationDecisionFromContext(ctx context.Context) authz.Decision {
+	return GetContextValue[authz.Decision](ctx, "decision")
 }
 
 // NewAuthorizationFilter authorizes the authenticated principal against the
 // Attributes installed on the request. Allow proceeds, while Deny, NoOpinion,
 // and errors stop the request.
-func NewAuthorizationFilter(authorizer Authorizer) *AuthorizationFilter {
+func NewAuthorizationFilter(authorizer authz.Authorizer) *AuthorizationFilter {
 	return &AuthorizationFilter{Authorizer: authorizer}
 }
 
@@ -106,23 +80,24 @@ func (filter *AuthorizationFilter) Process(w http.ResponseWriter, r *http.Reques
 }
 
 // AuthorizeRequest adapts the configured domain Authorizer to RequestAuthorizer.
-func (filter *AuthorizationFilter) AuthorizeRequest(r *http.Request) (Decision, string, error) {
+func (filter *AuthorizationFilter) AuthorizeRequest(r *http.Request) (authz.EvaluationResult, error) {
 	attributes := AttributesFromContext(r.Context())
 	authentication := AuthenticationFromContext(r.Context())
-	decision, message, err := filter.Authorizer.Authorize(r.Context(), authentication, *attributes)
+	result, err := filter.Authorizer.Authorize(r.Context(), authentication, authorizationOperation(*attributes))
 	if err != nil {
-		return DecisionDeny, message, err
+		result.Decision = authz.DecisionDeny
+		return result, err
 	}
-	if decision == DecisionDeny && message == "" {
-		message = ForbiddenMessage(r.Context(), authentication, attributes)
+	if result.Decision == authz.DecisionDeny && result.Reason == "" {
+		result.Reason = ForbiddenMessage(r.Context(), authentication, attributes)
 	}
-	return decision, message, nil
+	return result, nil
 }
 
 // ForbiddenMessage returns the default authorization-denial message. It uses
 // Path when Resources is empty and otherwise renders a colon-delimited target.
 // ctx is reserved for request-scoped localization.
-func ForbiddenMessage(ctx context.Context, authentication AuthenticationInfo, a *Attributes) string {
+func ForbiddenMessage(ctx context.Context, authentication Authentication, a *Attributes) string {
 	res := []string{}
 	if len(a.Resources) == 0 {
 		return fmt.Sprintf(
@@ -165,15 +140,15 @@ func processRequestAuthorization(w http.ResponseWriter, r *http.Request, next ht
 	// earlier filter records its final Allow before invoking next. Reuse that
 	// decision so downstream filters do not authorize the same request again.
 	decision := AuthorizationDecisionFromContext(r.Context())
-	if decision == DecisionAllow {
+	if decision == authz.DecisionAllow {
 		next.ServeHTTP(w, r)
 		return
 	}
-	if decision == DecisionDeny {
+	if decision == authz.DecisionDeny {
 		Forbidden(w, "access denied")
 		return
 	}
-	decision, reason, err := authorizer.AuthorizeRequest(r)
+	result, err := authorizer.AuthorizeRequest(r)
 	if err != nil {
 		// Preserve an intentional response status or authentication challenge
 		// carried by the authorization error. Untyped diagnostic errors are logged
@@ -189,19 +164,19 @@ func processRequestAuthorization(w http.ResponseWriter, r *http.Request, next ht
 		}
 		return
 	}
-	if decision == DecisionAllow {
+	if result.Decision == authz.DecisionAllow {
 		// Record the final Allow for downstream request-authorization filters.
-		r = r.WithContext(WithAuthorizationDecision(r.Context(), decision))
+		r = r.WithContext(WithAuthorizationDecision(r.Context(), result.Decision))
 		next.ServeHTTP(w, r)
 		return
 	}
-	if decision == DecisionDeny {
-		if reason == "" {
-			reason = "access denied"
+	if result.Decision == authz.DecisionDeny {
+		if result.Reason == "" {
+			result.Reason = "access denied"
 		}
-		Forbidden(w, reason)
+		Forbidden(w, result.Reason)
 		return
 	}
-	// DecisionNoOpinion
+	// NoOpinion and unknown decisions fail closed.
 	Forbidden(w, "access denied")
 }

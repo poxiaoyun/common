@@ -9,24 +9,27 @@ import (
 	"xiaoshiai.cn/common/store"
 )
 
-type UserInfoGetter interface {
-	GetUserProfile(ctx context.Context, username string) (authn.UserProfile, error)
+// SubjectGetter resolves canonical subject display data from its stable
+// reference.
+type SubjectGetter interface {
+	// GetSubject returns the subject identified by reference.
+	GetSubject(ctx context.Context, reference authn.SubjectReference) (authn.Subject, error)
 }
 
-func NewAPI(storage store.Store, users UserInfoGetter, events events.Recorder) *API {
-	return &API{Storage: storage, UserProvider: users, Recorder: events}
+func NewAPI(storage store.Store, subjects SubjectGetter, events events.Recorder) *API {
+	return &API{Storage: storage, SubjectGetter: subjects, Recorder: events}
 }
 
 type API struct {
-	Storage      store.Store
-	UserProvider UserInfoGetter
-	Recorder     events.Recorder
+	Storage       store.Store
+	SubjectGetter SubjectGetter
+	Recorder      events.Recorder
 }
 
-func NewRBACAPIGroup(storage store.Store, users UserInfoGetter, recorder events.Recorder, scopePathVarNames ...api.ScopeVar) api.Group {
+func NewRBACAPIGroup(storage store.Store, subjects SubjectGetter, recorder events.Recorder, scopePathVarNames ...api.ScopeVar) api.Group {
 	return ScopedRbacAPI{
 		Storage:           storage,
-		UserProvider:      users,
+		SubjectGetter:     subjects,
 		Recorder:          recorder,
 		ScopePathVarNames: scopePathVarNames,
 	}.Group()
@@ -35,7 +38,7 @@ func NewRBACAPIGroup(storage store.Store, users UserInfoGetter, recorder events.
 type ScopedRbacAPI struct {
 	Storage           store.Store
 	ScopePathVarNames []api.ScopeVar
-	UserProvider      UserInfoGetter
+	SubjectGetter     SubjectGetter
 	Recorder          events.Recorder
 }
 
@@ -55,8 +58,8 @@ func (a ScopedRbacAPI) Group() api.Group {
 
 func (a *API) Group() api.Group {
 	adminscopedapi := &ScopedRbacAPI{
-		UserProvider: a.UserProvider,
-		Recorder:     a.Recorder,
+		SubjectGetter: a.SubjectGetter,
+		Recorder:      a.Recorder,
 	}
 	return api.
 		NewGroup("").
@@ -68,9 +71,9 @@ func (a *API) Group() api.Group {
 			// admin userroles
 			adminscopedapi.CustomUserRolesGroup("/userroles"),
 
-			NewRBACAPIGroup(a.Storage, a.UserProvider, a.Recorder,
+			NewRBACAPIGroup(a.Storage, a.SubjectGetter, a.Recorder,
 				api.ScopeVar{Resource: "tenants", PathVarName: "tenant"}),
-			NewRBACAPIGroup(a.Storage, a.UserProvider, a.Recorder,
+			NewRBACAPIGroup(a.Storage, a.SubjectGetter, a.Recorder,
 				api.ScopeVar{Resource: "tenants", PathVarName: "tenant"},
 				api.ScopeVar{Resource: "organizations", PathVarName: "organization"}),
 		)

@@ -1,62 +1,63 @@
-package rbac
+package rbac_test
 
 import (
 	"testing"
 
-	"xiaoshiai.cn/common/rest/api"
+	"xiaoshiai.cn/common/authz"
+	"xiaoshiai.cn/common/rbac"
 	"xiaoshiai.cn/common/store"
 )
 
-func TestAuthorityMatch(t *testing.T) {
+func TestScopedPermissionMatch(t *testing.T) {
 	tests := []struct {
-		name      string
-		scopes    []store.Scope
-		authority []Authority
-		attr      api.Attributes
-		want      bool
+		name        string
+		scopes      []store.Scope
+		permissions []authz.Permission
+		operation   authz.Operation
+		want        bool
 	}{
 		{
-			authority: []Authority{{Actions: []string{"get", "list"}, Resources: []string{"**"}}},
-			attr: api.Attributes{
-				Action:    "get",
-				Resources: []api.AttributeResource{{Resource: "namespaces", Name: "default"}},
+			permissions: []authz.Permission{{Service: "*", Actions: []string{"get", "list"}, Resources: []string{"**"}}},
+			operation: authz.Operation{
+				Action:   "get",
+				Resource: resourcePath(authz.ResourceReference{Type: "namespaces", ID: "default"}),
 			},
 			want: true,
 		},
 		{
-			authority: []Authority{{Actions: []string{"get", "list"}, Resources: []string{"applications:**"}}},
-			attr: api.Attributes{
-				Action:    "list",
-				Resources: []api.AttributeResource{{Resource: "applications"}},
+			permissions: []authz.Permission{{Service: "*", Actions: []string{"get", "list"}, Resources: []string{"applications:**"}}},
+			operation: authz.Operation{
+				Action:   "list",
+				Resource: resourcePath(authz.ResourceReference{Type: "applications"}),
 			},
 			want: true,
 		},
 		{
-			authority: []Authority{{Actions: []string{"*"}, Resources: []string{"applications:**"}}},
-			attr: api.Attributes{
-				Action:    "get",
-				Resources: []api.AttributeResource{{Resource: "applications", Name: "default"}},
+			permissions: []authz.Permission{{Service: "*", Actions: []string{"*"}, Resources: []string{"applications:**"}}},
+			operation: authz.Operation{
+				Action:   "get",
+				Resource: resourcePath(authz.ResourceReference{Type: "applications", ID: "default"}),
 			},
 			want: true,
 		},
 		{
-			authority: []Authority{
-				{Actions: []string{"*"}, Resources: []string{"applications:**"}},
+			permissions: []authz.Permission{
+				{Service: "*", Actions: []string{"*"}, Resources: []string{"applications:**"}},
 			},
-			attr: api.Attributes{
+			operation: authz.Operation{
 				Action: "get",
-				Resources: []api.AttributeResource{
-					{Resource: "applications", Name: "default"},
-					{Resource: "resources", Name: "pods"},
-				},
+				Resource: resourcePath(
+					authz.ResourceReference{Type: "applications", ID: "default"},
+					authz.ResourceReference{Type: "resources", ID: "pods"},
+				),
 			},
 			want: true,
 		},
 		{
-			authority: []Authority{{Actions: []string{"*"}, Resources: []string{"applications:**"}}},
-			attr: api.Attributes{
-				Action:    "list",
-				Resources: []api.AttributeResource{{Resource: "applications"}},
+			permissions: []authz.Permission{{Service: "*", Actions: []string{"*"}, Resources: []string{"applications:**"}}},
+			operation: authz.Operation{
+				Action:   "list",
+				Resource: resourcePath(authz.ResourceReference{Type: "applications"}),
 			},
 			want: true,
 		},
@@ -64,15 +65,15 @@ func TestAuthorityMatch(t *testing.T) {
 			scopes: []store.Scope{
 				{Resource: "tenants", Name: "default"},
 			},
-			authority: []Authority{
-				{Actions: []string{"*"}, Resources: []string{"applications:**"}},
+			permissions: []authz.Permission{
+				{Service: "*", Actions: []string{"*"}, Resources: []string{"applications:**"}},
 			},
-			attr: api.Attributes{
+			operation: authz.Operation{
 				Action: "list",
-				Resources: []api.AttributeResource{
-					{Resource: "tenants", Name: "default"},
-					{Resource: "applications"},
-				},
+				Resource: resourcePath(
+					authz.ResourceReference{Type: "tenants", ID: "default"},
+					authz.ResourceReference{Type: "applications"},
+				),
 			},
 			want: true,
 		},
@@ -80,25 +81,56 @@ func TestAuthorityMatch(t *testing.T) {
 			scopes: []store.Scope{
 				{Resource: "tenants", Name: "abc"},
 			},
-			authority: []Authority{
-				{Actions: []string{"*"}, Resources: []string{"applications:**"}},
+			permissions: []authz.Permission{
+				{Service: "*", Actions: []string{"*"}, Resources: []string{"applications:**"}},
 			},
-			attr: api.Attributes{
+			operation: authz.Operation{
 				Action: "list",
-				Resources: []api.AttributeResource{
-					{Resource: "tenants", Name: "default"},
-					{Resource: "applications"},
-				},
+				Resource: resourcePath(
+					authz.ResourceReference{Type: "tenants", ID: "default"},
+					authz.ResourceReference{Type: "applications"},
+				),
+			},
+			want: false,
+		},
+		{
+			name: "service mismatch",
+			permissions: []authz.Permission{
+				{Service: "cloud", Actions: []string{"list"}, Resources: []string{"applications"}},
+			},
+			operation: authz.Operation{Service: "apps", Action: "list", Resource: resourcePath(authz.ResourceReference{Type: "applications"})},
+			want:      false,
+		},
+		{
+			name: "later permission matches",
+			permissions: []authz.Permission{
+				{Service: "apps", Actions: []string{"get"}, Resources: []string{"applications"}},
+				{Service: "apps", Actions: []string{"list"}, Resources: []string{"applications"}},
+			},
+			operation: authz.Operation{Service: "apps", Action: "list", Resource: resourcePath(authz.ResourceReference{Type: "applications"})},
+			want:      true,
+		},
+		{
+			name:   "binding scope itself requires permission",
+			scopes: []store.Scope{{Resource: "tenants", Name: "default"}},
+			operation: authz.Operation{
+				Service:  "apps",
+				Action:   "get",
+				Resource: resourcePath(authz.ResourceReference{Type: "tenants", ID: "default"}),
 			},
 			want: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			act, expr := tt.attr.Action, api.ResourcesToWildcard(tt.attr.Resources)
-			if got := ScopedAuthorityMatch(tt.scopes, tt.authority, act, expr); got != tt.want {
-				t.Errorf("AuthorityMatch() = %v, want %v", got, tt.want)
+			if got := rbac.ScopedPermissionMatch(tt.scopes, tt.permissions, tt.operation); got != tt.want {
+				t.Errorf("ScopedPermissionMatch() = %v, want %v", got, tt.want)
 			}
 		})
 	}
+}
+
+func resourcePath(references ...authz.ResourceReference) authz.Resource {
+	target := references[len(references)-1]
+	return authz.Resource{Type: target.Type, ID: target.ID, Scope: references[:len(references)-1]}
 }
