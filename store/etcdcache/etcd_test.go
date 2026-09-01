@@ -2,6 +2,7 @@ package etcdcache
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -32,6 +33,40 @@ func TestStoreConformance(t *testing.T) {
 			return storage, err
 		},
 	})
+}
+
+func TestCachedReadsWaitForCacheReady(t *testing.T) {
+	client := testserver.RunEtcd(t, nil)
+	storage := newTestStore(t, t.Context(), client, newMyObjectSchema(t))
+	db, err := storage.core.getResource("myobjects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readiness := db.storage.(interface{ ReadinessCheck() error })
+	assertEventually(t, 5*time.Second, readiness.ReadinessCheck)
+	if err := client.Client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertEventually(t, 5*time.Second, func() error {
+		if readiness.ReadinessCheck() == nil {
+			return stderrors.New("cache is still ready")
+		}
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	err = storage.List(ctx, &store.List[MyObject]{})
+	if !stderrors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("List() error = %v, want context deadline exceeded", err)
+	}
+
+	ctx, cancel = context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	_, err = storage.Count(ctx, &MyObject{})
+	if !stderrors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Count() error = %v, want context deadline exceeded", err)
+	}
 }
 
 type MyObject struct {

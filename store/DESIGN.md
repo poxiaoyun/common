@@ -189,6 +189,8 @@ Delete 必须携带删除前的完整对象。Update 需要同时判断旧对象
 
 Watch 不区分能力层级。`WatchEvent.ResourceVersion` 是可选的全局 Watch checkpoint，不是 `Object.ResourceVersion`。实现能够公开恢复位置时发送正数 checkpoint；调用方可以通过 `WithResourceVersion(R)` 请求其后的全部事件。实现没有历史、历史已过期或无法识别该位置时都返回 ResourceExpired，调用方转为新的 initial Watch。全局 Watch ResourceVersion 只是可选的断线恢复优化，不是缓存正确性的前提。
 
+`etcdcache` 为每种资源维护 Kubernetes cacher。首次同步和 watch 重建期间，`List` 与 `Count` 通过 cacher 自己的 Ready 条件等待，而不是猜测固定重试次数或忽略调用 Context。Ready 后才读取 cache；等待期间 Context 结束时返回其错误。实现不因 cache 暂时未就绪而把无限制或带 selector 的查询回退到 etcd，避免 cache 故障把查询流量放大到权威存储。
+
 MongoDB 声明 `Watch=true`。它以 `batchSize=0` 建立 Change Stream，并在 Find 前消费明确为空的 initial batch。Initial Find 使用 snapshot read concern，在单一时间点取得一致快照并产生 synthetic Create；Find 后的第一次 TryNext 因当前批次已耗尽，按 Go driver 的公开契约必然执行一次 getMore。实现处理该 getMore 的完整批次后才发送 Bookmark，因此切换点由一致快照和服务端 post-batch resume token 共同确定，而不是由轮询次数、延时或缓冲区状态猜测。调用方通过 UID 和对象 ResourceVersion 合并快照与该批次的重叠状态。MongoDB 不提供 Store 的整数全局 checkpoint，传入正数 WithResourceVersion 时返回 ResourceExpired。
 
 ## 实现与测试

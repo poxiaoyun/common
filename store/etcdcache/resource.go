@@ -60,7 +60,12 @@ var _ resourceBackend = (*cacherstorage.CacheDelegator)(nil)
 type resourceDB struct {
 	storage  resourceBackend
 	resource schema.GroupResource
+	ready    func(context.Context) error
 	destroy  func()
+}
+
+func (r *resourceDB) waitReady(ctx context.Context) error {
+	return r.ready(ctx)
 }
 
 func (r *resourceDB) Close() {
@@ -276,6 +281,7 @@ func newResourceStorage(
 	return &resourceDB{
 		storage:  delegator,
 		resource: groupResource,
+		ready:    cacher.Wait,
 		destroy: func() {
 			delegator.Stop()
 			cacher.Stop()

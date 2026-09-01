@@ -230,6 +230,9 @@ func (c *generic) Count(ctx context.Context, obj store.Object, opts ...store.Cou
 	}
 	count := 0
 	if err := c.core.on(ctx, obj, func(ctx context.Context, db *resourceDB) error {
+		if err := db.waitReady(ctx); err != nil {
+			return err
+		}
 		key := getlistkey(c.scopes, db.resource.String())
 		listopts := storage.ListOptions{Recursive: true, Predicate: predicate}
 		list := &StorageObjectList{}
@@ -358,25 +361,19 @@ func (c *generic) List(ctx context.Context, list store.ObjectList, opts ...store
 	return c.core.on(ctx, list, func(ctx context.Context, db *resourceDB) error {
 		keyprefix := getlistkey(c.scopes, db.resource.String())
 		getList := func(predicate storage.SelectionPredicate) (*StorageObjectList, error) {
+			if err := db.waitReady(ctx); err != nil {
+				return nil, err
+			}
 			listopts := storage.ListOptions{
 				Recursive:       true,
 				Predicate:       predicate,
 				ResourceVersion: formatResourceVersion(options.ResourceVersion),
 			}
 			unslist := &StorageObjectList{}
-			const MaxRetry = 3
-			for retries := 0; ; retries++ {
-				if err := db.storage.GetList(ctx, keyprefix, listopts, unslist); err != nil {
-					if retries < MaxRetry && apierrors.IsTooManyRequests(err) {
-						if delay, ok := apierrors.SuggestsClientDelay(err); ok {
-							time.Sleep(time.Duration(delay) * time.Second)
-							continue
-						}
-					}
-					return nil, storeerr.InterpretListError(err, db.resource)
-				}
-				return unslist, nil
+			if err := db.storage.GetList(ctx, keyprefix, listopts, unslist); err != nil {
+				return nil, storeerr.InterpretListError(err, db.resource)
 			}
+			return unslist, nil
 		}
 
 		filter := func(items []StorageObject) []StorageObject {

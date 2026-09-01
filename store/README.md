@@ -69,6 +69,8 @@ Store option 是实现 `ApplyToXxx` 的具体值；不得传入捕获闭包，�
 
 保留 Store 返回的领域错误语义，例如 NotFound、AlreadyExists、Conflict、Unsupported 和 ResourceExpired。调用方可以在业务接口处映射这些错误，但不应把并发冲突或不支持的操作降级为成功。
 
+`store/etcdcache` 的 `List` 和 `Count` 会等待对应资源的 watch cache 完成首次同步或重建。等待由调用操作的 Context 控制；cache 未能在 deadline 前恢复时返回 Context 错误。调用方应为请求设置合适的 deadline，不需要针对 `storage is (re)initializing` 设置固定次数重试。
+
 ## 组合查询条件
 
 查询表达式由共享的 [`selector`](../selector) 包定义，Store 通过
