@@ -79,6 +79,47 @@ func TestClientVerifiesJWTAccessToken(t *testing.T) {
 	}
 }
 
+func TestClientCanSkipJWTAccessTokenIssuerCheck(t *testing.T) {
+	key := NewSigningKey(t, "key-1")
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/.well-known/openid-configuration":
+			WriteProviderMetadata(t, response, server.URL)
+		case "/jwks":
+			_ = json.NewEncoder(response).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{key.Public()}})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	now := time.Now()
+	raw := SignJWT(t, key, "at+jwt", JWTAccessTokenClaims{
+		JWTClaims: JWTClaims{
+			Issuer: "https://public-iam.example.com", Subject: "service-account", Audience: Audience{"https://api.example"},
+			Expiry: NewUnixTime(now.Add(time.Hour)), IssuedAt: NewUnixTime(now), ID: "token-1",
+		},
+		ClientID: "client",
+	})
+	strict := NewTestClient(t, server, ClientOptions{
+		AccessTokenValidation: AccessTokenValidation{
+			Mode: AccessTokenValidationJWT, Audience: "https://api.example", SigningAlgorithms: []string{"RS256"},
+		},
+	})
+	if _, err := strict.VerifyAccessToken(context.Background(), raw); !errors.Is(err, ErrInvalidAccessToken) {
+		t.Fatalf("strict issuer validation error = %v", err)
+	}
+	skipping := NewTestClient(t, server, ClientOptions{
+		AccessTokenValidation: AccessTokenValidation{
+			Mode: AccessTokenValidationJWT, Audience: "https://api.example", SkipIssuerCheck: true, SigningAlgorithms: []string{"RS256"},
+		},
+	})
+	if _, err := skipping.VerifyAccessToken(context.Background(), raw); err != nil {
+		t.Fatalf("skip issuer validation: %v", err)
+	}
+}
+
 func TestClientConfigurationSharesKeySetAcrossTokenVerifiers(t *testing.T) {
 	key := NewSigningKey(t, "shared")
 	var jwksCalls atomic.Int32
@@ -238,6 +279,39 @@ func TestClientIntrospectsOpaqueAccessToken(t *testing.T) {
 	}
 	if token.Actor == nil || token.Actor.Subject != "worker" {
 		t.Fatalf("actor = %#v", token.Actor)
+	}
+}
+
+func TestClientCanSkipIntrospectionIssuerCheck(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/.well-known/openid-configuration":
+			WriteProviderMetadata(t, response, server.URL)
+		case "/introspect":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"active": true, "iss": "https://public-iam.example.com", "sub": "user-1",
+				"aud": []string{"https://api.example"}, "client_id": "client",
+			})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	newClient := func(skipIssuerCheck bool) *Client {
+		return NewTestClient(t, server, ClientOptions{
+			Authentication: ClientAuthentication{ClientID: "resource", ClientSecret: "secret"},
+			AccessTokenValidation: AccessTokenValidation{
+				Mode: AccessTokenValidationIntrospection, Audience: "https://api.example", SkipIssuerCheck: skipIssuerCheck,
+			},
+		})
+	}
+	if _, err := newClient(false).VerifyAccessToken(context.Background(), "opaque"); !errors.Is(err, ErrInvalidAccessToken) {
+		t.Fatalf("strict issuer validation error = %v", err)
+	}
+	if _, err := newClient(true).VerifyAccessToken(context.Background(), "opaque"); err != nil {
+		t.Fatalf("skip issuer validation: %v", err)
 	}
 }
 

@@ -21,20 +21,22 @@ type AccessTokenVerifier interface {
 
 // JWTAccessTokenVerifier validates RFC 9068 JWT access tokens locally.
 type JWTAccessTokenVerifier struct {
-	issuer     string
-	audience   string
-	algorithms []string
-	keys       *KeySet
+	issuer          string
+	audience        string
+	skipIssuerCheck bool
+	algorithms      []string
+	keys            *KeySet
 }
 
 // IntrospectionAccessTokenVerifier validates access tokens through RFC 7662
 // token introspection.
 type IntrospectionAccessTokenVerifier struct {
-	issuer         string
-	audience       string
-	endpoint       string
-	authentication ClientAuthentication
-	httpClient     *http.Client
+	issuer          string
+	audience        string
+	skipIssuerCheck bool
+	endpoint        string
+	authentication  ClientAuthentication
+	httpClient      *http.Client
 }
 
 // AutoAccessTokenVerifier routes JWT-shaped tokens to JWT and all other
@@ -119,10 +121,11 @@ func NewJWTAccessTokenVerifier(options ClientOptions, metadata OpenIDProviderMet
 		algorithms = DefaultJWTAccessTokenSigningAlgorithms()
 	}
 	return &JWTAccessTokenVerifier{
-		issuer:     metadata.Issuer,
-		audience:   options.AccessTokenValidation.Audience,
-		algorithms: algorithms,
-		keys:       keys,
+		issuer:          metadata.Issuer,
+		audience:        options.AccessTokenValidation.Audience,
+		skipIssuerCheck: options.AccessTokenValidation.SkipIssuerCheck,
+		algorithms:      algorithms,
+		keys:            keys,
 	}, nil
 }
 
@@ -153,11 +156,12 @@ func NewIntrospectionAccessTokenVerifier(options ClientOptions, metadata OpenIDP
 	}
 	authentication.Method = method
 	return &IntrospectionAccessTokenVerifier{
-		issuer:         metadata.Issuer,
-		audience:       options.AccessTokenValidation.Audience,
-		endpoint:       metadata.IntrospectionEndpoint,
-		authentication: authentication,
-		httpClient:     httpClient,
+		issuer:          metadata.Issuer,
+		audience:        options.AccessTokenValidation.Audience,
+		skipIssuerCheck: options.AccessTokenValidation.SkipIssuerCheck,
+		endpoint:        metadata.IntrospectionEndpoint,
+		authentication:  authentication,
+		httpClient:      httpClient,
 	}, nil
 }
 
@@ -195,7 +199,7 @@ func (v *JWTAccessTokenVerifier) Verify(ctx context.Context, raw string) (*Acces
 	if claims.Actor != nil && claims.Actor.Subject == "" {
 		return nil, fmt.Errorf("%w: JWT actor is missing sub", ErrInvalidAccessToken)
 	}
-	if claims.Issuer != v.issuer {
+	if !v.skipIssuerCheck && claims.Issuer != v.issuer {
 		return nil, fmt.Errorf("%w: JWT issuer mismatch", ErrInvalidAccessToken)
 	}
 	if !slices.Contains(claims.Audience, v.audience) {
@@ -263,7 +267,7 @@ func (v *IntrospectionAccessTokenVerifier) Verify(ctx context.Context, raw strin
 	if claims.Actor != nil && claims.Actor.Subject == "" {
 		return nil, fmt.Errorf("%w: introspection actor is missing sub", ErrInvalidAccessToken)
 	}
-	if claims.Issuer != "" && claims.Issuer != v.issuer {
+	if !v.skipIssuerCheck && claims.Issuer != "" && claims.Issuer != v.issuer {
 		return nil, fmt.Errorf("%w: introspection issuer mismatch", ErrInvalidAccessToken)
 	}
 	if !slices.Contains(claims.Audience, v.audience) {

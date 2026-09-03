@@ -7,3 +7,8 @@ RFC 7592 更新由调用方从最近一次服务端响应的完整 metadata 开�
 Client Credentials 是独立能力。一个 `Client` 对应一组 issuer 和 Client Authentication，并共享 Provider Discovery 与 metadata 刷新。调用方为每组 resource 和 scopes 创建一个 `ClientCredentialsTokenSource`；每个 source 独立缓存该目标取得的 Access Token。同一个 `Client` 因此可以服务多个 Resource Server，而不会在目标之间复用 token。
 
 Resource Server 与 scopes 在 source 创建时绑定，不由每个出站请求动态选择。Client Credentials transport 是出站请求身份的权威 owner；它通过 `httpclient.RequestAuthenticator` 为 HTTP 请求和 WebSocket 握手设置自己的 Authorization header。HTTP transport 在认证前克隆请求，不能修改调用方的请求，也不能把调用方或入站请求携带的身份继续转发给目标 Resource Server。
+
+Access Token validation 信任配置的 Provider Discovery 及其 key set，并默认校验
+issuer。当同一个 Authorization Server 通过多个外部可见 issuer URL 使用同一组权威 key
+set 和 audience 时，Resource Server 可以显式跳过 Access Token issuer 比较。该设置不影响
+Discovery issuer、签名、audience、token type 或时间校验，也不适用于 ID Token。

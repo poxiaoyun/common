@@ -44,6 +44,10 @@ type AccessTokenValidation struct {
 	// Mode selects the verifier. An empty value uses AccessTokenValidationAuto.
 	Mode     AccessTokenValidationMode
 	Audience string
+	// SkipIssuerCheck accepts an Access Token without comparing its issuer to
+	// the discovered Provider issuer. The Provider key set and audience must be
+	// authoritative for every issuer accepted through this setting.
+	SkipIssuerCheck bool
 	// SigningAlgorithms narrows the asymmetric JWT algorithms accepted from
 	// JWKS. An empty value uses DefaultJWTAccessTokenSigningAlgorithms.
 	SigningAlgorithms []string
