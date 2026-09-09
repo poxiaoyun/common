@@ -87,6 +87,12 @@ canonical `authn.Authentication`, and maps its result to the HTTP response
 policy. HTTP method and path remain transport facts in `Operation.Context`;
 they are not identity fields on the authz-owned operation model.
 
+Default REST action extraction maps `HEAD` on a resource or collection to
+`exists`. An explicit action in the URL remains authoritative. Existence is a
+distinct authorization action: the aggregate OAuth `read` scope includes
+`get`, `list`, and `exists`; aggregate `write` excludes all three. An exact
+`exists` scope does not grant content reads or listing.
+
 `CheckerAuthorizer` adapts an `authz.Checker` to `authz.Authorizer`. Its caller
 supplies `BuildCheckOperationFunc`, which owns enriching the logical Operation
 with the resource-server-specific authoritative ID and policy facts required

@@ -80,14 +80,14 @@ func DefaultOAuth2ScopeMatcher(scope string, operation authz.Operation) bool {
 	)
 }
 
-// DefaultOAuth2ScopeActionMatcher lets read cover get and list and lets write
-// cover every other non-empty request action.
+// DefaultOAuth2ScopeActionMatcher lets read cover get, list, and exists and lets
+// write cover every other non-empty request action.
 func DefaultOAuth2ScopeActionMatcher(grantedAction string, operation authz.Operation) bool {
 	switch grantedAction {
 	case "read":
-		return operation.Action == "get" || operation.Action == "list"
+		return operation.Action == "get" || operation.Action == "list" || operation.Action == "exists"
 	case "write":
-		return operation.Action != "" && operation.Action != "get" && operation.Action != "list"
+		return operation.Action != "" && operation.Action != "get" && operation.Action != "list" && operation.Action != "exists"
 	default:
 		return false
 	}

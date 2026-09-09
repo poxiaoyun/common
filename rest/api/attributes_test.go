@@ -18,3 +18,25 @@ func TestServiceAttributesExtractor(t *testing.T) {
 		t.Fatalf("attributes = %#v", attributes)
 	}
 }
+
+func TestHeadRequestAttributes(t *testing.T) {
+	for _, test := range []struct {
+		path   string
+		action string
+	}{
+		{path: "/v1/orders/known", action: "exists"},
+		{path: "/v1/orders", action: "exists"},
+		{path: "/v1/orders/known:inspect", action: "inspect"},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			extractor := api.PrefixedAttributesExtractor("/v1")
+			attributes, err := extractor(httptest.NewRequest(http.MethodHead, test.path, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if attributes.Action != test.action || attributes.Method != http.MethodHead {
+				t.Fatalf("HEAD attributes = %#v, want action %q with original method", attributes, test.action)
+			}
+		})
+	}
+}

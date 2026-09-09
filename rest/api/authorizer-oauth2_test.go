@@ -124,6 +124,116 @@ func TestAuthorizationFilterDoesNotReportBusinessDenialAsInsufficientScope(t *te
 	}
 }
 
+func TestOAuth2ScopeAuthorizationForExistenceChecks(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		method string
+		path   string
+		scope  string
+		status int
+	}{
+		{
+			name:   "read existing resource",
+			method: http.MethodHead,
+			path:   "/v1/orders/known",
+			scope:  "read:orders",
+			status: http.StatusOK,
+		},
+		{
+			name:   "read missing resource",
+			method: http.MethodHead,
+			path:   "/v1/orders/missing",
+			scope:  "read:orders",
+			status: http.StatusNotFound,
+		},
+		{
+			name:   "read collection",
+			method: http.MethodHead,
+			path:   "/v1/orders",
+			scope:  "read:orders",
+			status: http.StatusOK,
+		},
+		{
+			name:   "exact existence scope",
+			method: http.MethodHead,
+			path:   "/v1/orders/known",
+			scope:  "exists:orders",
+			status: http.StatusOK,
+		},
+		{
+			name:   "existence scope cannot read content",
+			method: http.MethodGet,
+			path:   "/v1/orders/known",
+			scope:  "exists:orders",
+			status: http.StatusForbidden,
+		},
+		{
+			name:   "existence scope cannot list",
+			method: http.MethodGet,
+			path:   "/v1/orders",
+			scope:  "exists:orders",
+			status: http.StatusForbidden,
+		},
+		{
+			name:   "write cannot check resource",
+			method: http.MethodHead,
+			path:   "/v1/orders/known",
+			scope:  "write:orders",
+			status: http.StatusForbidden,
+		},
+		{
+			name:   "write cannot check collection",
+			method: http.MethodHead,
+			path:   "/v1/orders",
+			scope:  "write:orders",
+			status: http.StatusForbidden,
+		},
+		{
+			name:   "missing scope",
+			method: http.MethodHead,
+			path:   "/v1/orders/known",
+			status: http.StatusForbidden,
+		},
+		{
+			name:   "different resource",
+			method: http.MethodHead,
+			path:   "/v1/orders/known",
+			scope:  "read:customers",
+			status: http.StatusForbidden,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, nil)
+			request = request.WithContext(api.WithAuthentication(request.Context(), api.Authentication{
+				Subject: api.Subject{ID: "client"},
+				Token:   &api.TokenInfo{Scopes: []string{test.scope}},
+			}))
+			filters := api.Filters{
+				api.NewAttributeExtractionFilter(api.PrefixedAttributesExtractor("/v1")),
+				api.NewAuthorizationFilter(api.OAuth2ScopeAuthorizer{}),
+			}
+			response := httptest.NewRecorder()
+			filters.Process(response, request, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/orders/missing" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			if response.Code != test.status {
+				t.Fatalf("%s %s with scope %q: status = %d, want %d; body=%s", test.method, test.path, test.scope, response.Code, test.status, response.Body.String())
+			}
+			wantChallenge := ""
+			if test.status == http.StatusForbidden {
+				wantChallenge = `Bearer error="insufficient_scope"`
+			}
+			if challenge := response.Header().Get("WWW-Authenticate"); challenge != wantChallenge {
+				t.Fatalf("WWW-Authenticate = %q, want %q", challenge, wantChallenge)
+			}
+		})
+	}
+}
+
 func TestDefaultOAuth2ScopeMatcher(t *testing.T) {
 	type input struct {
 		scope      string

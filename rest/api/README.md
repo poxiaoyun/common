@@ -39,9 +39,9 @@ Callers compose authenticators and install the result through `NewAuthentication
 authorization rules.
 `OAuth2ScopeAuthorizer{}` parses the default `<action>:<resource>` convention
 and matches each granted scope against the operation. Arbitrary actions such as
-`create` or `publish` match exactly; `read` covers `get` and `list`, while
-`write` covers other actions. `NewOAuth2ScopeMatcher` composes a different
-aggregate-action matcher or logical-resource matcher. The default resource
+`create` or `publish` match exactly; `read` covers `get`, `list`, and `exists`,
+while `write` covers other non-empty actions. `NewOAuth2ScopeMatcher` composes a
+different aggregate-action matcher or logical-resource matcher. The default resource
 matcher uses only the final operation resource, so parent resources do not
 authorize nested targets. Compose it with other complete alternative policies
 through `authz.AuthorizerChain`; deployments that require both scopes and local
@@ -52,6 +52,10 @@ Wrap a route extractor with `ServiceAttributesExtractor("cloud", extractor)`
 when authorization and audit policy must identify the target Resource Server.
 The wrapper sets `Attributes.Service`; the wrapped extractor continues to own
 action and resource parsing.
+
+The default REST extractor maps `HEAD` requests to `exists` for both resources
+and collections, unless the URL declares an explicit action. An exact
+`exists:resource` scope permits existence checks without granting `GET` access.
 
 `rest/api` converts the final extracted resource into `authz.Resource` and its
 parents into `authz.Scope`. A route-derived final name is carried as the

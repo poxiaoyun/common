@@ -99,6 +99,7 @@ func ServiceAttributesExtractor(service string, extractor AttributeExtractor) At
 // plural
 var MethodActionMapPlural = map[string]string{
 	"GET":    "list",
+	"HEAD":   "exists",
 	"POST":   "create",
 	"DELETE": "removeBatch",
 	"PUT":    "updateBatch",
@@ -108,6 +109,7 @@ var MethodActionMapPlural = map[string]string{
 // singular plural
 var MethodActionMapSingular = map[string]string{
 	"GET":    "get",
+	"HEAD":   "exists",
 	"PUT":    "update",
 	"DELETE": "remove",
 	"PATCH":  "patch",
