@@ -17,7 +17,6 @@ package api
 import (
 	"fmt"
 	"net/http"
-	"path"
 	"strings"
 )
 
@@ -342,7 +341,13 @@ func (t Group) Build() []Route {
 }
 
 func buildRoutes(merged Group, group Group, buildError error) []Route {
-	merged.Path = path.Join(merged.Path, group.Path)
+	if group.Path != "" {
+		if merged.Path == "" {
+			merged.Path = group.Path
+		} else {
+			merged.Path = strings.TrimSuffix(merged.Path, "/") + "/" + strings.TrimPrefix(group.Path, "/")
+		}
+	}
 	merged.Params = append(merged.Params, group.Params...)
 	merged.Tags = append(merged.Tags, group.Tags...)
 	var err error
@@ -362,7 +367,11 @@ func buildRoutes(merged Group, group Group, buildError error) []Route {
 	for _, route := range group.Routes {
 		route.Tags = append(merged.Tags, route.Tags...)
 		route.Params = append(merged.Params, route.Params...)
-		route.Path = merged.Path + route.Path
+		prefix := merged.Path
+		if strings.HasPrefix(route.Path, "/") {
+			prefix = strings.TrimSuffix(prefix, "/")
+		}
+		route.Path = prefix + route.Path
 		if !strings.HasPrefix(route.Path, "/") {
 			route.Path = "/" + route.Path
 		}

@@ -24,7 +24,7 @@ func TestMuxMediaFallbackKeepsOnlySelectedRouteEffects(t *testing.T) {
 		next.ServeHTTP(w, r)
 	})}
 	require.NoError(t, mux.Register(&rejected))
-	fallback := api.POST("/files/{path}*").
+	fallback := api.POST("/files/{path...}").
 		To(func(w http.ResponseWriter, r *http.Request) {
 			selectedCalls++
 			require.Equal(t, api.PathVarList{{Key: "path", Value: "record.json"}}, api.PathVars(r))
@@ -47,7 +47,7 @@ func TestMuxRejectsEmptyFinalPathVariableBeforeFallback(t *testing.T) {
 	require.NoError(t, mux.Handle(http.MethodGet, "/files/{name}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("empty final variable was accepted")
 	})))
-	require.NoError(t, mux.Handle(http.MethodGet, "/{path}*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	require.NoError(t, mux.Handle(http.MethodGet, "/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, api.PathVarList{{Key: "path", Value: "files/"}}, api.PathVars(r))
 		w.WriteHeader(http.StatusNoContent)
 	})))
@@ -59,7 +59,7 @@ func TestMuxRejectsEmptyFinalPathVariableBeforeFallback(t *testing.T) {
 func TestMuxGreedySuffixAllowsEmptyCapture(t *testing.T) {
 	mux := api.NewMux()
 	var matchedVars api.PathVarList
-	for _, pattern := range []string{"/v2", "/v2/{rest}*", "/org/{organization}/{repository}"} {
+	for _, pattern := range []string{"/v2", "/v2/{rest...}", "/org/{organization}/{repository}"} {
 		require.NoError(t, mux.Handle(http.MethodGet, pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			matchedVars = api.PathVars(r)
 			w.WriteHeader(http.StatusNoContent)
@@ -97,7 +97,7 @@ func TestMuxSelectedRejectionDoesNotTryFallback(t *testing.T) {
 	})}
 	protected.Priority = 1
 	require.NoError(t, mux.Register(&protected))
-	require.NoError(t, mux.Handle("", "/{path}*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	require.NoError(t, mux.Handle("", "/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("authorization denial triggered route fallback")
 	})))
 	response := httptest.NewRecorder()
@@ -108,10 +108,10 @@ func TestMuxSelectedRejectionDoesNotTryFallback(t *testing.T) {
 func TestMuxPriorityResolvesOverlappingPaths(t *testing.T) {
 	for _, priority := range []int{-1, 0, 1} {
 		mux := api.NewMux()
-		require.NoError(t, mux.Handle("", "/console/{rest}*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, mux.Handle("", "/console/{rest...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, "console")
 		})))
-		repository := api.POST("/{organization}/{kind}/{repository}.git/{rest}*").
+		repository := api.POST("/{organization}/{kind}/{repository}.git/{rest...}").
 			ContentType("application/x-git-upload-pack-request").
 			To(func(w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, api.PathVarList{
@@ -265,7 +265,7 @@ func TestMuxKeepsRegisteredRouteFiltersAndHostPatterns(t *testing.T) {
 		filterCalls++
 		next.ServeHTTP(w, r)
 	}))
-	require.NoError(t, mux.Handle("", "/{path}*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	require.NoError(t, mux.Handle("", "/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "global")
 	})))
 	for _, host := range []string{"first.example", "second.example"} {
@@ -368,7 +368,7 @@ func Test_matcher_Match(t *testing.T) {
 		{
 			registered: []string{
 				"/front/*",
-				"/{org}/{repo}*",
+				"/{org}/{repo...}",
 			},
 			req:     "/front/@iconify-json/logos-c3b8b8cf.js",
 			matched: true,
@@ -382,13 +382,13 @@ func Test_matcher_Match(t *testing.T) {
 		},
 		{
 			registered: []string{
-				"/a/{a}/b/{b}*",
-				"/a/{a}/b/{b}*/index",
-				"/a/{a}/b/{b}*/manifests/{c}",
+				"/a/{a}/b/{b...}",
+				"/a/{a}/b/{b...}/index",
+				"/a/{a}/b/{b...}/manifests/{c}",
 			},
 			req:       "/a/core/b/foo/bar/manifests/v1",
 			matched:   true,
-			wantMatch: "/a/{a}/b/{b}*/manifests/{c}",
+			wantMatch: "/a/{a}/b/{b...}/manifests/{c}",
 			vars: []MatchVar{
 				{Name: "a", Value: "core"},
 				{Name: "b", Value: "foo/bar"},
@@ -398,27 +398,27 @@ func Test_matcher_Match(t *testing.T) {
 		{
 			registered: []string{
 				"/api/{a}",
-				"/api/v{a}*",
+				"/api/v{a...}",
 				"/api/v1",
 				"/apis",
 				"/api/{a}/{b}/{c}",
-				"/api/{path}*",
+				"/api/{path...}",
 			},
 			req:       "/api/v1/g/v/k",
 			matched:   true,
-			wantMatch: "/api/v{a}*",
+			wantMatch: "/api/v{a...}",
 			vars: []MatchVar{
 				{Name: "a", Value: "1/g/v/k"},
 			},
 		},
 		{
 			registered: []string{
-				"/v1/service-proxy/{realpath}*",
+				"/v1/service-proxy/{realpath...}",
 				"/v1/{group}/{version}/{resource}",
 			},
 			req:       "/v1/service-proxy/js/t2.js",
 			matched:   true,
-			wantMatch: "/v1/service-proxy/{realpath}*",
+			wantMatch: "/v1/service-proxy/{realpath...}",
 			vars: []MatchVar{
 				{Name: "realpath", Value: "js/t2.js"},
 			},
@@ -439,13 +439,13 @@ func Test_matcher_Match(t *testing.T) {
 		},
 		{
 			registered: []string{
-				"/api/v2/{a}*",
+				"/api/v2/{a...}",
 				"/api/{a}/{b}/{c}",
-				"/api/{path}*",
+				"/api/{path...}",
 			},
 			req:       "/api/v2/v/k",
 			matched:   true,
-			wantMatch: "/api/v2/{a}*",
+			wantMatch: "/api/v2/{a...}",
 			vars: []MatchVar{
 				{Name: "a", Value: "v/k"},
 			},
@@ -471,12 +471,12 @@ func Test_matcher_Match(t *testing.T) {
 		},
 		{
 			registered: []string{
-				"/api/{name}/{path}*:action",
-				"/api/{name}/{path}*",
+				"/api/{name}/{path...}:action",
+				"/api/{name}/{path...}",
 			},
 			req:       "/api/dog/wang/1:action",
 			matched:   true,
-			wantMatch: "/api/{name}/{path}*:action",
+			wantMatch: "/api/{name}/{path...}:action",
 			vars: []MatchVar{
 				{Name: "name", Value: "dog"},
 				{Name: "path", Value: "wang/1"},
@@ -484,12 +484,12 @@ func Test_matcher_Match(t *testing.T) {
 		},
 		{
 			registered: []string{
-				"/api/{repository:(?:[a-zA-Z0-9]+(?:[._-][a-zA-Z0-9]+)*/?)+}*/manifests/{reference}",
-				"/api/{repository}*/blobs/{digest:[A-Za-z][A-Za-z0-9]*(?:[-_+.][A-Za-z][A-Za-z0-9]*)*[:][[:xdigit:]]{32,}}",
+				"/api/{repository...:(?:[a-zA-Z0-9]+(?:[._-][a-zA-Z0-9]+)*/?)+}/manifests/{reference}",
+				"/api/{repository...}/blobs/{digest:[A-Za-z][A-Za-z0-9]*(?:[-_+.][A-Za-z][A-Za-z0-9]*)*[:][[:xdigit:]]{32,}}",
 			},
 			req:       "/api/lib/a/b/c/manifests/v1",
 			matched:   true,
-			wantMatch: "/api/{repository:(?:[a-zA-Z0-9]+(?:[._-][a-zA-Z0-9]+)*/?)+}*/manifests/{reference}",
+			wantMatch: "/api/{repository...:(?:[a-zA-Z0-9]+(?:[._-][a-zA-Z0-9]+)*/?)+}/manifests/{reference}",
 			vars: []MatchVar{
 				{Name: "repository", Value: "lib/a/b/c"},
 				{Name: "reference", Value: "v1"},
@@ -505,10 +505,10 @@ func Test_matcher_Match(t *testing.T) {
 		{
 			registered: []string{
 				"/api/organizations/{org}/roles",
-				"/api/{scopes}*/roles",
-				"/api/{scopes}*/members/{member}/roles/{role}",
-				"/api/{scopes}*/members",
-				"/api/{scopes}*/members/{member}",
+				"/api/{scopes...}/roles",
+				"/api/{scopes...}/members/{member}/roles/{role}",
+				"/api/{scopes...}/members",
+				"/api/{scopes...}/members/{member}",
 			},
 			req:     "/api/regions/global/members/john/roles/admin",
 			matched: true,
@@ -520,9 +520,9 @@ func Test_matcher_Match(t *testing.T) {
 		},
 		{
 			registered: []string{
-				"/api/{scopes}*/members/abc",
-				"/api/{scopes}*/members/{member}/roles/{role}",
-				"/api/{scopes}*/members/{member}",
+				"/api/{scopes...}/members/abc",
+				"/api/{scopes...}/members/{member}/roles/{role}",
+				"/api/{scopes...}/members/{member}",
 			},
 			req:     "/api/regions/global/members/john/roles/admin",
 			matched: true,
@@ -596,7 +596,7 @@ func Test_matcher_Match(t *testing.T) {
 				"/api/users",
 				"/api/{id:[0-9]+}",
 				"/api/{id}",
-				"/api/{path}*",
+				"/api/{path...}",
 			},
 			req:       "/api/users",
 			matched:   true,
@@ -608,7 +608,7 @@ func Test_matcher_Match(t *testing.T) {
 				"/api/users",
 				"/api/{id:[0-9]+}",
 				"/api/{id}",
-				"/api/{path}*",
+				"/api/{path...}",
 			},
 			req:       "/api/123",
 			matched:   true,
@@ -623,7 +623,7 @@ func Test_matcher_Match(t *testing.T) {
 				"/api/users",
 				"/api/{id:[0-9]+}",
 				"/api/{id}",
-				"/api/{path}*",
+				"/api/{path...}",
 			},
 			req:       "/api/abc",
 			matched:   true,
@@ -638,11 +638,11 @@ func Test_matcher_Match(t *testing.T) {
 				"/api/users",
 				"/api/{id:[0-9]+}",
 				"/api/{id}",
-				"/api/{path}*",
+				"/api/{path...}",
 			},
 			req:       "/api/a/b/c",
 			matched:   true,
-			wantMatch: "/api/{path}*",
+			wantMatch: "/api/{path...}",
 			vars: []MatchVar{
 				{Name: "path", Value: "a/b/c"},
 			},
@@ -708,12 +708,12 @@ func Test_matcher_Match(t *testing.T) {
 		{
 			name: "greedy_with_suffix",
 			registered: []string{
-				"/files/{path}*",
-				"/files/{path}*/download",
+				"/files/{path...}",
+				"/files/{path...}/download",
 			},
 			req:       "/files/a/b/c/download",
 			matched:   true,
-			wantMatch: "/files/{path}*/download",
+			wantMatch: "/files/{path...}/download",
 			vars: []MatchVar{
 				{Name: "path", Value: "a/b/c"},
 			},

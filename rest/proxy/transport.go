@@ -146,19 +146,27 @@ func (t *Transport) rewriteURL(target *url.URL, sourceURL *url.URL, sourceReques
 		target.Host = t.Host
 	}
 
-	escapedPath := target.EscapedPath()
 	prepend := strings.TrimSuffix(t.PathPrepend, "/")
-	// Already external URLs must be recognized before removing the upstream
-	// prefix: the external prefix may itself start with the upstream prefix.
+	// Already external URLs must be recognized before removing the upstream prefix.
 	if prepend != "" && (target.Path == prepend || strings.HasPrefix(target.Path, prepend+"/")) {
 		return target.String()
 	}
-	remove := strings.TrimSuffix(t.PathRemove, "/")
+	RewritePath(target, t.PathRemove, prepend)
+
+	return target.String()
+}
+
+// RewritePath removes a decoded path prefix on a segment boundary and prepends
+// a decoded replacement. A nonmatching prefix leaves the original path as the
+// suffix. It preserves the suffix's original escapes and separators, joins one
+// slash at the replacement boundary, and represents an empty result as "/".
+// Query parameters and the other URL fields are unchanged.
+func RewritePath(target *url.URL, remove, prepend string) {
+	escapedPath := target.EscapedPath()
+	remove = strings.TrimSuffix(remove, "/")
 	if remove != "" && (target.Path == remove || strings.HasPrefix(target.Path, remove+"/")) {
 		target.Path = strings.TrimPrefix(target.Path, remove)
-		// Every decoded path byte occupies either one literal byte or one
-		// percent-encoded triplet in EscapedPath. Keep the suffix's original
-		// encoding when removing the matched decoded prefix.
+		// Each decoded byte occupies one literal byte or one escaped triplet.
 		index := 0
 		for range len(remove) {
 			if escapedPath[index] == '%' {
@@ -169,8 +177,9 @@ func (t *Transport) rewriteURL(target *url.URL, sourceURL *url.URL, sourceReques
 		}
 		escapedPath = escapedPath[index:]
 	}
-	// Prefix replacement must preserve the suffix verbatim, including encoded
-	// separators, dot segments, repeated separators, and trailing separators.
+	if strings.HasSuffix(prepend, "/") && strings.HasPrefix(escapedPath, "/") {
+		prepend = strings.TrimSuffix(prepend, "/")
+	}
 	target.Path = prepend + target.Path
 	escapedPrefix := (&url.URL{Path: prepend}).EscapedPath()
 	target.RawPath = escapedPrefix + escapedPath
@@ -178,8 +187,6 @@ func (t *Transport) rewriteURL(target *url.URL, sourceURL *url.URL, sourceReques
 		target.Path = "/"
 		target.RawPath = "/"
 	}
-
-	return target.String()
 }
 
 // rewriteHTML scans the HTML for tags with url-valued attributes, and updates

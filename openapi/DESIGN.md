@@ -4,6 +4,11 @@ The plugin owns OpenAPI document construction and route projection. Callers
 own service titles and select authentication mechanisms from their runtime
 configuration.
 
+Path templates are projections of matcher-owned patterns. Projection preserves
+capture names and real trailing slashes while omitting regular expressions,
+multi-segment markers, and end markers. It never changes a registered route's
+pattern. Anonymous subtrees do not introduce documentation parameters.
+
 Routes sharing an HTTP method and path describe one OpenAPI operation. Media
 variants contribute request-body content and response content keyed by media
 type; response status codes form a union. Operation metadata, request-body

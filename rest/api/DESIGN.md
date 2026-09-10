@@ -2,6 +2,15 @@
 
 ## Route selection
 
+Path matching is fully described by the path pattern. A trailing slash matches
+that path and its descendants; `{$}` requires the path to end there. Named
+captures use `{name}` for one segment and `{name...}` for multiple segments.
+Composite segments, regular-expression constraints, and middle multi-segment
+captures are extensions owned by the matcher. Routing never cleans or redirects
+the request URL. Group composition preserves the final pattern's delimiters.
+The declared pattern remains authoritative after registration; OpenAPI derives
+its path template without modifying that declaration.
+
 A route is selected by host, path, method, request Content-Type, and acceptable
 response media types. Media conditions belong to routing, not to a validation
 filter. A rejected candidate has no effects: it does not consume the body,

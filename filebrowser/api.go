@@ -185,16 +185,21 @@ func (b *FileBrowserAPI) GetFile(w http.ResponseWriter, r *http.Request) {
 			defer content.Content.Close()
 		}
 
-		w.Header().Set("Content-Type", content.ContentType)
-		w.Header().Set("Content-Length", strconv.FormatInt(content.ContentLength, 10))
+		w.Header().
+			Set("Content-Type", content.ContentType)
+		w.Header().
+			Set("Content-Length", strconv.FormatInt(content.ContentLength, 10))
 		if content.ContentRange != "" {
-			w.Header().Set("Content-Range", content.ContentRange)
+			w.Header().
+				Set("Content-Range", content.ContentRange)
 		}
 		if !content.LastModified.IsZero() {
-			w.Header().Set("Last-Modified", content.LastModified.Format(time.RFC1123))
+			w.Header().
+				Set("Last-Modified", content.LastModified.Format(time.RFC1123))
 		}
 		if content.Etag != "" {
-			w.Header().Set("Etag", content.Etag)
+			w.Header().
+				Set("Etag", content.Etag)
 		}
 		if content.Content != nil {
 			io.Copy(w, content.Content)
@@ -341,46 +346,54 @@ func (b *FileBrowserAPI) Group() api.Group {
 		NewGroup("").
 		Tag("FileBrowser").
 		Route(
-			api.HEAD("/files/{path}*").
+			api.HEAD("/files/{path...}").
 				Operation("options file/dir").
 				To(b.HeadFile),
 
-			api.GET("/files/{path}*").
+			api.GET("/files/{path...}").
 				Operation("state file/dir or download file").
 				To(b.GetFile).
 				Param(
-					api.QueryParam("stat", "stat the file").Optional(),
+					api.QueryParam("stat", "stat the file").
+						Optional(),
 				).
 				Response(TreeItem{}),
 
-			api.POST("/files/{path}*").
+			api.POST("/files/{path...}").
 				Operation("upload file").
 				To(b.UploadFile).
 				Param(
-					api.QueryParam("uploads", "open multipart upload").Optional(),
-					api.QueryParam("uploadId", "complete the upload session").Optional(),
-					api.BodyParam("body", "file content to upload").Optional(),
+					api.QueryParam("uploads", "open multipart upload").
+						Optional(),
+					api.QueryParam("uploadId", "complete the upload session").
+						Optional(),
+					api.BodyParam("body", "file content to upload").
+						Optional(),
 				),
 
-			api.PUT("/files/{path}*").
+			api.PUT("/files/{path...}").
 				Operation("chunck upload file").
 				Param(
-					api.QueryParam("uploadId", "upload session id").Optional(),
+					api.QueryParam("uploadId", "upload session id").
+						Optional(),
 				).
 				To(b.ChunckUploadFile),
 
-			api.PATCH("/files/{path}*").
+			api.PATCH("/files/{path...}").
 				Operation("filepond chunck upload file").
 				Param(
-					api.QueryParam("patch", "upload session id").Optional(),
+					api.QueryParam("patch", "upload session id").
+						Optional(),
 				).
 				To(b.ChunckUploadFile),
 
-			api.DELETE("/files/{path}*").
+			api.DELETE("/files/{path...}").
 				Operation("delete file or dir").
 				Param(
-					api.QueryParam("all", "delete all child files").Optional(),
-					api.QueryParam("uploadId", "delete upload session").Optional(),
+					api.QueryParam("all", "delete all child files").
+						Optional(),
+					api.QueryParam("uploadId", "delete upload session").
+						Optional(),
 				).
 				To(b.DeleteFile),
 		)

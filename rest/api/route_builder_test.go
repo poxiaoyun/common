@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -8,6 +9,45 @@ import (
 	"github.com/stretchr/testify/require"
 	"xiaoshiai.cn/common/rest/api"
 )
+
+func TestGroupPreservesPathMatchingSemantics(t *testing.T) {
+	group := api.NewGroup("/files").
+		Route(
+			api.GET("").
+				To(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "root") }),
+			api.GET("/{$}").
+				To(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "directory") }),
+			api.GET("/{name}").
+				Accept("application/json").
+				To(func(w http.ResponseWriter, r *http.Request) {
+					_, _ = io.WriteString(w, api.PathVars(r).
+						Get("name"))
+				}),
+			api.GET("/").
+				To(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "fallback") }),
+		)
+	handler := api.New().
+		Group(group).
+		Build()
+	for _, test := range []struct{ path, accept, want string }{
+		{"/files", "", "root"},
+		{"/files/", "", "directory"},
+		{"/files/a%2Fb", "application/json", "a/b"},
+		{"/files/%252F", "application/json", "%2F"},
+		{"/files/a%2Fb", "text/plain", "fallback"},
+		{"/files/a/b", "application/json", "fallback"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, test.path, nil)
+		request.Header.Set("Accept", test.accept)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, test.path)
+		require.Equal(t, test.want, response.Body.String(), test.path)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/files-other/item", nil))
+	require.Equal(t, http.StatusNotFound, response.Code)
+}
 
 func TestGroupMediaConditionsIntersectAllAncestors(t *testing.T) {
 	group := api.NewGroup("/api").

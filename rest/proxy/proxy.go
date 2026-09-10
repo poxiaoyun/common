@@ -25,7 +25,8 @@ type Proxy struct {
 	// it add a useless prefix /v1/namespaces/{namespace}/services/{service}:{port}/proxy/
 	// we need to remove it, set RemovePrefix to '/v1/namespaces/{namespace}/services/{service}:{port}/proxy'
 	RemovePrefix string
-	// RequestPath is the path to proxy to the backend
+	// RequestPath is the decoded path to proxy to the backend.
+	// When it is a suffix starting on a segment boundary, its original escapes are preserved.
 	// real request path will be clientconfig.Server.Path + RequestPath
 	RequestPath string
 	// ProxyPrefix is the prefix to add to the request path
@@ -42,11 +43,18 @@ func (p Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	requestpath := p.RequestPath
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.Out.URL.Path = requestpath
+			if prefix, ok := strings.CutSuffix(pr.In.URL.Path, requestpath); ok && (requestpath == "" || strings.HasPrefix(requestpath, "/") || strings.HasSuffix(prefix, "/")) {
+				RewritePath(pr.Out.URL, prefix, "")
+			} else {
+				pr.Out.URL.Path = requestpath
+				pr.Out.URL.RawPath = ""
+			}
+			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 			pr.SetURL(p.ClientConfig.Server)
 		},
-		Transport:    p.ClientConfig.RoundTripper,
-		ErrorHandler: meta.Or[ErrorResponder](p.ErrorResponser, DefaultErrorResponder{}).Error,
+		Transport: p.ClientConfig.RoundTripper,
+		ErrorHandler: meta.Or[ErrorResponder](p.ErrorResponser, DefaultErrorResponder{}).
+			Error,
 		// for websocket support
 		FlushInterval: -1,
 	}

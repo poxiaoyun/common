@@ -146,14 +146,10 @@ func completePathParam(route *Route, sections []matcher.Section) {
 		}
 	}
 	route.Params = append(vars, route.Params...)
-	route.Path = matcher.NoRegexpString(sections)
 }
 
 func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	matchpath := r.URL.Path
-	if r.URL.RawPath != "" {
-		matchpath = r.URL.RawPath
-	}
+	matchpath := r.URL.EscapedPath()
 	host, _, _ := strings.Cut(r.Host, ":")
 	tree := &m.paths
 	if hostTree, ok := m.hosts[host]; ok {

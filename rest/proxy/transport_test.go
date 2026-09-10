@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -86,5 +87,28 @@ func TestTransportHTMLPrefixReplacement(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("HTML missing %s: %s", want, body)
 		}
+	}
+}
+
+func TestRewritePath(t *testing.T) {
+	for _, tt := range []struct{ input, remove, prepend, want string }{
+		{"/api/items/a%2fb?q=a+b&q=%252F", "/api", "/v1/", "/v1/items/a%2fb?q=a+b&q=%252F"},
+		{"/%61pi/items/%252F", "/api", "/", "/items/%252F"},
+		{"/api//a/../b/", "/api", "/v1/", "/v1//a/../b/"},
+		{"/apix/items", "/api", "/v1", "/v1/apix/items"},
+		{"/api", "/api", "/", "/"},
+		{"/api", "/api", "/v1/", "/v1/"},
+		{"/api/", "/api", "", "/"},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			target, err := url.Parse(tt.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			proxy.RewritePath(target, tt.remove, tt.prepend)
+			if got := target.String(); got != tt.want {
+				t.Fatalf("rewritten URL = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

@@ -2,6 +2,16 @@
 
 `rest/api` provides the HTTP routing, authentication, authorization, audit, and request-context interfaces shared by services using `common`.
 
+Path syntax is owned by [`rest/matcher`](../matcher/README.md). Use `{name}`
+for a single segment, `{name...}` for multiple segments, a trailing `/` for an
+anonymous subtree, and `{$}` for an exact end. `/v2/` does not match `/v2`;
+register both when both addresses should be served. Routing never cleans or
+redirects the request URL. `PathVars` returns captures decoded exactly once.
+Group prefixes compose with route fragments while preserving the final slash
+and end marker; a fragment without a leading slash remains a composite segment.
+`Route.Path` retains the declared pattern after registration. OpenAPI projects
+its documentation template separately.
+
 `Route.ContentType` and `Group.ContentType` match the request Content-Type;
 `Route.Accept` and `Group.Accept` match acceptable response media types.
 Different media variants can share a path and method. A mismatch continues

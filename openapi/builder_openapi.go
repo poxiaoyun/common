@@ -14,6 +14,7 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"xiaoshiai.cn/common/rest/api"
+	"xiaoshiai.cn/common/rest/matcher"
 )
 
 const (
@@ -36,6 +37,11 @@ func AddOpenAPIOperation(document *Document, route api.Route, builder *Builder) 
 	if document.Paths == nil {
 		document.Paths = openapi3.NewPaths()
 	}
+	sections, err := matcher.CompilePattern(route.Path)
+	if err != nil {
+		return fmt.Errorf("compile OpenAPI path %s: %w", route.Path, err)
+	}
+	route.Path = matcher.PathTemplate(sections)
 	method := route.Method
 	if method == "" {
 		method = http.MethodGet

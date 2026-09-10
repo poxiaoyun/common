@@ -40,13 +40,19 @@ func (o OpenAPIUI) Resources(w http.ResponseWriter, r *http.Request) {
 func (o OpenAPIUI) Group(prefix string) api.Group {
 	return api.NewGroup(prefix).
 		Route(
-			api.GET("/openapi.json").To(o.OpenAPIHandler).NotDocumented(),
-			api.GET("/").
+			api.GET("/openapi.json").
+				To(o.OpenAPIHandler).
+				NotDocumented(),
+			api.GET("/{$}").
 				To(o.Index).
 				Accept("text/html").
 				NotDocumented(),
-			api.GET("").To(o.Redirect).NotDocumented(),
-			api.GET("/static/{path}*").To(o.Resources).NotDocumented(),
+			api.GET("").
+				To(o.Redirect).
+				NotDocumented(),
+			api.GET("/static/{path...}").
+				To(o.Resources).
+				NotDocumented(),
 		)
 }
 
@@ -57,7 +63,9 @@ func StaticOpenAPIHandler(fn func(r *http.Request) (any, error)) http.HandlerFun
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(openapi)
+		w.Header().
+			Set("Content-Type", "application/json")
+		json.NewEncoder(w).
+			Encode(openapi)
 	})
 }

@@ -74,7 +74,8 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 				if options.IncludeSubScopes {
 					countOptions = append(countOptions, store.WithSubScopes())
 				}
-				count, err := s.Store.Scope(ref.Scopes...).Count(ctx, obj, countOptions...)
+				count, err := s.Store.Scope(ref.Scopes...).
+					Count(ctx, obj, countOptions...)
 				if err != nil {
 					return nil, err
 				}
@@ -87,7 +88,8 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 				if api.Query(r, "sendInitialEvents", false) {
 					watchOptions = append(watchOptions, store.WithSendInitialEvents())
 				}
-				watcher, err := s.Store.Scope(ref.Scopes...).Watch(ctx, &list, watchOptions...)
+				watcher, err := s.Store.Scope(ref.Scopes...).
+					Watch(ctx, &list, watchOptions...)
 				if err != nil {
 					return nil, err
 				}
@@ -115,7 +117,8 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			// list
-			if err := s.Store.Scope(ref.Scopes...).List(ctx, &list, listOptions...); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).
+				List(ctx, &list, listOptions...); err != nil {
 				return nil, err
 			}
 			return list, nil
@@ -145,7 +148,8 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 			if fields := api.Query(r, "fields", ""); fields != "" {
 				options = append(options, store.WithFields(strings.Split(fields, ",")...))
 			}
-			if err := s.Store.Scope(ref.Scopes...).Get(ctx, ref.ID, obj, options...); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).
+				Get(ctx, ref.ID, obj, options...); err != nil {
 				return nil, err
 			}
 			return obj, nil
@@ -162,7 +166,8 @@ func (s *Server) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		obj.SetResource(ref.Resource)
 
-		if err := s.Store.Scope(ref.Scopes...).Create(ctx, obj, store.WithTTL(api.Query(r, "ttl", time.Duration(0)))); err != nil {
+		if err := s.Store.Scope(ref.Scopes...).
+			Create(ctx, obj, store.WithTTL(api.Query(r, "ttl", time.Duration(0)))); err != nil {
 			return nil, err
 		}
 		return obj, nil
@@ -195,7 +200,8 @@ func (s *Server) Patch(w http.ResponseWriter, r *http.Request) {
 			}
 			list := store.List[store.Unstructured]{}
 			list.Resource = ref.Resource
-			if err := s.Store.Scope(ref.Scopes...).PatchBatch(ctx, &list, batchPatch, opts...); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).
+				PatchBatch(ctx, &list, batchPatch, opts...); err != nil {
 				return nil, err
 			}
 			return list, nil
@@ -213,11 +219,14 @@ func (s *Server) Patch(w http.ResponseWriter, r *http.Request) {
 		obj.SetID(ref.ID)
 
 		if status := api.Query(r, "status", false); status {
-			if err := s.Store.Scope(ref.Scopes...).Status().Patch(ctx, obj, patch, options...); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).
+				Status().
+				Patch(ctx, obj, patch, options...); err != nil {
 				return nil, err
 			}
 		} else {
-			if err := s.Store.Scope(ref.Scopes...).Patch(ctx, obj, patch, options...); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).
+				Patch(ctx, obj, patch, options...); err != nil {
 				return nil, err
 			}
 		}
@@ -249,11 +258,14 @@ func (s *Server) Update(w http.ResponseWriter, r *http.Request) {
 		obj.SetResource(ref.Resource)
 
 		if status := api.Query(r, "status", false); status {
-			if err := s.Store.Scope(ref.Scopes...).Status().Update(ctx, obj, options...); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).
+				Status().
+				Update(ctx, obj, options...); err != nil {
 				return nil, err
 			}
 		} else {
-			if err := s.Store.Scope(ref.Scopes...).Update(ctx, obj, options...); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).
+				Update(ctx, obj, options...); err != nil {
 				return nil, err
 			}
 		}
@@ -271,10 +283,11 @@ func (s *Server) Delete(w http.ResponseWriter, r *http.Request) {
 			}
 			list := store.List[store.Unstructured]{}
 			list.Resource = ref.Resource
-			if err := s.Store.Scope(ref.Scopes...).DeleteBatch(ctx, &list,
-				store.WithLabelRequirements(labelsel...),
-				store.WithFieldRequirements(fildsel...),
-			); err != nil {
+			if err := s.Store.Scope(ref.Scopes...).
+				DeleteBatch(ctx, &list,
+					store.WithLabelRequirements(labelsel...),
+					store.WithFieldRequirements(fildsel...),
+				); err != nil {
 				return nil, err
 			}
 			return list, nil
@@ -357,13 +370,19 @@ func decodePath(rpath string) store.ResourcedObjectReference {
 }
 
 func (s *Server) Group() api.Group {
-	return api.NewGroup("/{path}*").
+	return api.NewGroup("/{path...}").
 		Route(
-			api.HEAD("").To(s.Ping),
-			api.GET("").To(s.List),
-			api.POST("").To(s.Create),
-			api.PUT("").To(s.Update),
-			api.DELETE("").To(s.Delete),
-			api.PATCH("").To(s.Patch),
+			api.HEAD("").
+				To(s.Ping),
+			api.GET("").
+				To(s.List),
+			api.POST("").
+				To(s.Create),
+			api.PUT("").
+				To(s.Update),
+			api.DELETE("").
+				To(s.Delete),
+			api.PATCH("").
+				To(s.Patch),
 		)
 }

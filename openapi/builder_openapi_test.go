@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -47,7 +48,8 @@ func TestAddOpenAPIOperationBuildsNativeOAS31(t *testing.T) {
 		Property("x-internal", true)
 
 	require.NoError(t, openapi.AddOpenAPIOperation(document, route, builder))
-	operation := document.Paths.Value("/widgets/{id}").Post
+	operation := document.Paths.Value("/widgets/{id}").
+		Post
 	require.NotNil(t, operation)
 	assert.Equal(t, "post_widgets_by_id", operation.OperationID)
 	assert.Equal(t, []string{"Widgets", "Write"}, operation.Tags)
@@ -84,6 +86,7 @@ func TestOperationIDDefaultsToCanonicalMethodAndMountedPath(t *testing.T) {
 		name  string
 		route api.Route
 		want  string
+		path  string
 	}{
 		{
 			name: "path parameter",
@@ -104,8 +107,9 @@ func TestOperationIDDefaultsToCanonicalMethodAndMountedPath(t *testing.T) {
 		},
 		{
 			name:  "wildcard parameter",
-			route: api.GET("/v1/services/{name}/proxy/{subresource}*"),
-			want:  "get_v1_services_by_name_proxy_by_subresource_wildcard",
+			route: api.GET("/v1/services/{name}/proxy/{subresource...}"),
+			want:  "get_v1_services_by_name_proxy_by_subresource",
+			path:  "/v1/services/{name}/proxy/{subresource}",
 		},
 		{
 			name:  "any route is documented as get",
@@ -123,8 +127,13 @@ func TestOperationIDDefaultsToCanonicalMethodAndMountedPath(t *testing.T) {
 			if method == "" {
 				method = http.MethodGet
 			}
-			assert.Equal(t, tt.want, document.Paths.Value(tt.route.Path).
-				GetOperation(method).OperationID)
+			path := tt.path
+			if path == "" {
+				path = tt.route.Path
+			}
+			assert.Equal(t, tt.want, document.Paths.Value(path).
+				GetOperation(method).
+				OperationID)
 		})
 	}
 }
@@ -136,7 +145,8 @@ func TestSummaryDoesNotOverrideGeneratedOperationID(t *testing.T) {
 		Summary("list widgets")
 
 	require.NoError(t, openapi.AddOpenAPIOperation(document, route, builder))
-	operation := document.Paths.Value("/widgets").Get
+	operation := document.Paths.Value("/widgets").
+		Get
 	require.NotNil(t, operation)
 	assert.Equal(t, "list widgets", operation.Summary)
 	assert.Empty(t, operation.Description)
@@ -155,7 +165,8 @@ func TestAddOpenAPIOperationBuildsFormRequestBody(t *testing.T) {
 		)
 
 	require.NoError(t, openapi.AddOpenAPIOperation(document, route, builder))
-	requestBody := document.Paths.Value("/uploads").Post.RequestBody.Value
+	requestBody := document.Paths.Value("/uploads").
+		Post.RequestBody.Value
 	require.NotNil(t, requestBody)
 	media := requestBody.Content[mediaTypeMultipart]
 	require.NotNil(t, media)
@@ -182,7 +193,8 @@ func TestAddOpenAPIOperationBuildsArrayParameters(t *testing.T) {
 		)
 
 	require.NoError(t, openapi.AddOpenAPIOperation(document, route, builder))
-	parameters := document.Paths.Value("/widgets/{segments}").Get.Parameters
+	parameters := document.Paths.Value("/widgets/{segments}").
+		Get.Parameters
 	require.Len(t, parameters, 3)
 
 	assert.Equal(t, openapi3.SerializationSimple, parameters[0].Value.Style)
@@ -227,7 +239,8 @@ func TestAddOpenAPIOperationUsesDefaultResponse(t *testing.T) {
 	builder := openapi.NewBuilder(openapi.InterfaceBuildOptionDefault, document.Components.Schemas)
 
 	require.NoError(t, openapi.AddOpenAPIOperation(document, api.GET("/health"), builder))
-	response := document.Paths.Value("/health").Get.Responses.Status(http.StatusOK)
+	response := document.Paths.Value("/health").
+		Get.Responses.Status(http.StatusOK)
 	require.NotNil(t, response)
 	require.NotNil(t, response.Value.Description)
 	assert.Equal(t, "OK", *response.Value.Description)
@@ -261,7 +274,8 @@ func TestAddOpenAPIOperationTreatsAnyRouteAsGet(t *testing.T) {
 	builder := openapi.NewBuilder(openapi.InterfaceBuildOptionDefault, document.Components.Schemas)
 
 	require.NoError(t, openapi.AddOpenAPIOperation(document, api.Any("/fallback"), builder))
-	operation := document.Paths.Value("/fallback").Get
+	operation := document.Paths.Value("/fallback").
+		Get
 	require.NotNil(t, operation)
 	assert.Equal(t, "get_fallback", operation.OperationID)
 }
@@ -285,14 +299,17 @@ func TestAddOpenAPIOperationMergesMediaVariants(t *testing.T) {
 	require.NoError(t, openapi.AddOpenAPIOperation(document, jsonRoute, builder))
 	require.NoError(t, openapi.AddOpenAPIOperation(document, xmlRoute, builder))
 
-	operation := document.Paths.Value("/widgets").Post
+	operation := document.Paths.Value("/widgets").
+		Post
 	assert.Equal(t, "post_widgets", operation.OperationID)
 	assert.Equal(t, "Create widget", operation.Summary)
 	require.Len(t, operation.RequestBody.Value.Content, 2)
 	assert.True(t, operation.RequestBody.Value.Content["application/json"].Schema.Value.Type.Is(openapi3.TypeObject))
 	assert.True(t, operation.RequestBody.Value.Content["application/xml"].Schema.Value.Type.Is(openapi3.TypeString))
-	require.Len(t, operation.Responses.Status(http.StatusCreated).Value.Content, 2)
-	require.Contains(t, operation.Responses.Status(http.StatusBadRequest).Value.Content, "application/xml")
+	require.Len(t, operation.Responses.Status(http.StatusCreated).
+		Value.Content, 2)
+	require.Contains(t, operation.Responses.Status(http.StatusBadRequest).
+		Value.Content, "application/xml")
 	require.NoError(t, document.Validate(context.Background(), openapi3.IsOpenAPI31OrLater()))
 }
 
@@ -377,13 +394,15 @@ func TestAddOpenAPIOperationRejectsConflictingMediaVariants(t *testing.T) {
 			document := newTestDocument()
 			builder := openapi.NewBuilder(openapi.InterfaceBuildOptionDefault, document.Components.Schemas)
 			require.NoError(t, openapi.AddOpenAPIOperation(document, base(), builder))
-			before, err := json.Marshal(document.Paths.Value("/widgets").Post)
+			before, err := json.Marshal(document.Paths.Value("/widgets").
+				Post)
 			require.NoError(t, err)
 
 			err = openapi.AddOpenAPIOperation(document, test.modify(base()), builder)
 			require.ErrorContains(t, err, "merge POST /widgets:")
 			require.ErrorContains(t, err, test.want)
-			after, err := json.Marshal(document.Paths.Value("/widgets").Post)
+			after, err := json.Marshal(document.Paths.Value("/widgets").
+				Post)
 			require.NoError(t, err)
 			assert.Equal(t, before, after, "a failed merge must preserve the previous operation")
 		})
@@ -397,11 +416,13 @@ func TestAddOpenAPIOperationUsesWireEqualityForSharedMetadata(t *testing.T) {
 		Param(api.BodyParam("body", "")).
 		Response("")
 	require.NoError(t, openapi.AddOpenAPIOperation(document, route, builder))
-	operation := document.Paths.Value("/widgets").Post
+	operation := document.Paths.Value("/widgets").
+		Post
 	operation.Parameters = openapi3.Parameters{}
 	operation.Extensions = map[string]any{}
 	operation.Responses.Extensions = map[string]any{}
-	operation.Responses.Status(http.StatusOK).Value.Headers = openapi3.Headers{}
+	operation.Responses.Status(http.StatusOK).
+		Value.Headers = openapi3.Headers{}
 
 	variant := route.
 		ContentType("application/json").
@@ -409,7 +430,8 @@ func TestAddOpenAPIOperationUsesWireEqualityForSharedMetadata(t *testing.T) {
 		Tag("Default")
 	variant.Responses = []api.ResponseInfo{{Code: http.StatusOK, Body: "", Description: "OK"}}
 	require.NoError(t, openapi.AddOpenAPIOperation(document, variant, builder))
-	require.Len(t, document.Paths.Value("/widgets").Post.RequestBody.Value.Content, 1)
+	require.Len(t, document.Paths.Value("/widgets").
+		Post.RequestBody.Value.Content, 1)
 	require.NoError(t, document.Validate(context.Background(), openapi3.IsOpenAPI31OrLater()))
 }
 
@@ -439,9 +461,11 @@ func TestMediaVariantRoutesBuildOpenAPIDocumentation(t *testing.T) {
 			Response(""))
 	}
 	require.NotPanics(t, func() { m.Build() })
-	operation := plugin.OpenAPI.Paths.Value("/widgets").Post
+	operation := plugin.OpenAPI.Paths.Value("/widgets").
+		Post
 	require.Len(t, operation.RequestBody.Value.Content, 2)
-	require.Len(t, operation.Responses.Status(http.StatusOK).Value.Content, 2)
+	require.Len(t, operation.Responses.Status(http.StatusOK).
+		Value.Content, 2)
 }
 
 func newTestDocument() *openapi.Document {
@@ -450,5 +474,30 @@ func newTestDocument() *openapi.Document {
 		Info:       &openapi3.Info{Title: "Test", Version: "1.0.0"},
 		Components: &openapi3.Components{Schemas: openapi3.Schemas{}},
 		Paths:      openapi3.NewPaths(),
+	}
+}
+
+func TestDocumentProjectionPreservesRouteSemantics(t *testing.T) {
+	route := api.GET("/files/{path...:[a-z/]+}/{$}").
+		To(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	router := api.NewMux()
+	require.NoError(t, router.Register(&route))
+	require.Equal(t, "/files/{path...:[a-z/]+}/{$}", route.Path)
+	document := newTestDocument()
+	builder := openapi.NewBuilder(openapi.InterfaceBuildOptionDefault, document.Components.Schemas)
+	require.NoError(t, openapi.AddOpenAPIOperation(document, route, builder))
+	require.NotNil(t, document.Paths.Value("/files/{path}/"))
+	require.NoError(t, document.Validate(t.Context(), openapi3.IsOpenAPI31OrLater()))
+	for _, tt := range []struct {
+		path   string
+		status int
+	}{
+		{"/files/a/b/", http.StatusNoContent},
+		{"/files/a/b", http.StatusNotFound},
+		{"/files/123/", http.StatusNotFound},
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, tt.path, nil))
+		require.Equal(t, tt.status, response.Code, tt.path)
 	}
 }
