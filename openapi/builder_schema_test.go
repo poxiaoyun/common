@@ -78,7 +78,12 @@ func TestBuilderBuildRecursiveSchema(t *testing.T) {
 		Children []*Node `json:"children,omitempty"`
 	}
 
-	document := newTestDocument()
+	document := &Document{
+		OpenAPI:    "3.1.1",
+		Info:       &openapi3.Info{Title: "Test", Version: "1.0.0"},
+		Components: &openapi3.Components{Schemas: openapi3.Schemas{}},
+		Paths:      openapi3.NewPaths(),
+	}
 	builder := NewBuilder(InterfaceBuildOptionDefault, document.Components.Schemas)
 	ref := builder.Build(Node{})
 	require.Equal(t, ComponentsSchemasRoot+"openapi.Node", ref.Ref)

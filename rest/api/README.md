@@ -2,6 +2,45 @@
 
 `rest/api` provides the HTTP routing, authentication, authorization, audit, and request-context interfaces shared by services using `common`.
 
+`Route.ContentType` and `Group.ContentType` match the request Content-Type;
+`Route.Accept` and `Group.Accept` match acceptable response media types.
+Different media variants can share a path and method. A mismatch continues
+looking for another route, including a less specific path. Selected handlers
+and route filters run once; their errors never trigger fallback.
+
+Set `Route.Priority` when overlapping paths need an explicit preference.
+Higher values precede lower values among matching routes; the default is zero.
+Equal priorities retain the existing path specificity, including static
+subtrees before competing dynamic paths. A higher-priority route whose method
+or media conditions do not match cannot block a lower-priority route.
+
+Within the same path and priority, explicit methods precede `Any`. More specific
+Content-Type conditions precede broader or omitted conditions. Response media
+conditions precede an unrestricted response; variants then follow the client's
+Accept quality, matching range specificity, declared response specificity, and
+registration order. Accept supports lists, repeated header fields, wildcards,
+parameters, and q values, including specific q=0 exclusions. An omitted Accept
+accepts any response type; an empty or malformed Accept cannot satisfy a
+response media condition. A missing, malformed, repeated, or wildcard
+Content-Type cannot satisfy a request media condition. Route conditions support
+`type/*` and `*/*`; declared parameters must match, and charset values are
+case-insensitive. Other parameter values retain their case.
+
+Media values within one declaration are alternatives. Parent and child group
+conditions intersect across every level; invalid conditions or an empty
+intersection fail registration. Expanded routes expose normalized effective
+`ContentTypes` and `Accepts` values for documentation. Register matching conditions
+before serving requests. The router retains the Route so plugins can install
+its filters during construction.
+
+When no route matches, the router returns 405 with Allow if some route matches
+all conditions except method; otherwise it returns 404. Automatic OPTIONS
+reports host/path methods independently of media headers, unless an explicit
+OPTIONS or `Any` route matches. Media mismatch does not generate 406 or 415.
+Media-sensitive responses include the corresponding Vary fields, including
+fallback and error responses. Handlers still own response encoding and its
+Content-Type; route declarations do not encode the response.
+
 `ServeTLS` loads its certificate and key before listening and returns any
 configuration error. It re-reads the pair for new TLS handshakes at most once
 per minute; canceling the serving context shuts down the listener, with no
@@ -32,7 +71,7 @@ authn-owned Subject, not a separate identity model.
 
 Callers compose authenticators and install the result through `NewAuthenticationFilter`. `FallbackAuthenticator` adds an explicit fallback around a completed request authenticator; use `NewFallbackAuthenticator(chain, NewAnonymousAuthenticator())` when requests without credentials should receive the anonymous subject. An invalid supplied credential is never downgraded to anonymous.
 
-`AuthenticationChallengeError` carries a public response status and `WWW-Authenticate` value through authenticator and authorizer composition. Provider adapters log diagnostic errors before translating them into this shared response error. The final HTTP error writer writes the challenge only after the request is rejected. `NewBearerTokenAuthenticationFilter` returns a bare `Bearer` challenge when no more specific challenge is present. Invalid OAuth access tokens add `error="invalid_token"`, while insufficient scope produces HTTP 403 with `error="insufficient_scope"`.
+`AuthenticationChallengeError` carries a public response status and `WWW-Authenticate` value through authenticator and authorizer composition. Provider adapters log diagnostic errors before translating them into this shared response error. The final HTTP error writer writes the challenge only after the request is rejected. `NewBearerTokenAuthenticationFilter` returns a bare `Bearer` challenge when no more specific challenge is present. Invalid OAuth access tokens add `error="invalid_token"`, while insufficient scope returns HTTP 403 with `error="insufficient_scope"`.
 
 `authz.Authorizer` receives the complete `Authentication` and an
 `authz.Operation` as separate arguments. OAuth scopes are access-token

@@ -1,5 +1,50 @@
 # REST API design
 
+## Route selection
+
+A route is selected by host, path, method, request Content-Type, and acceptable
+response media types. Media conditions belong to routing, not to a validation
+filter. A rejected candidate has no effects: it does not consume the body,
+install path variables, execute route filters, or write a response. Once a
+handler is selected, its response is final and never triggers another route.
+Global server filters retain their independent lifecycle around the router.
+
+Route Priority resolves overlapping paths when callers need an explicit
+preference. Higher values take precedence among fully matching routes; zero is
+the default. Equal priorities retain the existing left-to-right path
+specificity, including a static subtree before a competing dynamic path.
+Within the same path and priority, an explicit method precedes an any-method
+route. Request media specificity takes priority,
+followed by a declared response condition over an unrestricted response.
+Acceptable response quality, matching range specificity, and declared response
+specificity resolve competing variants, followed by registration order. A media mismatch
+continues selection at the same path and then at less specific paths. An
+explicit host retains its own routing namespace.
+
+Selection examines the path candidates without invoking their handlers. The
+chosen route owns a copy of its captured variables, so later candidate matching
+cannot overwrite them. A higher-priority candidate that fails a method or media
+condition does not prevent a lower-priority match.
+
+Content-Type describes one representation and must be present when the route
+constrains that header. Accept is a list of media ranges with parameters and quality values;
+its most specific applicable range determines each representation's quality,
+including exclusion by q=0. An omitted Accept imposes no client preference.
+Media parameters in a condition must match, while unspecified parameters do
+not restrict the request. Conditions in one declaration are alternatives;
+parent and child group conditions intersect. Invalid declarations and empty
+intersections fail route registration. The expanded Route exposes the effective
+conditions used by routing and documentation.
+
+After all candidates fail, a request receives 405 only when a candidate matches
+every condition except method; otherwise it receives 404. Allow contains the
+methods of those compatible candidates. Automatic OPTIONS describes all
+methods available at the host and path, independently of request media, after
+explicit OPTIONS and any-method routes have had an opportunity to match.
+Media selection itself never writes 406 or 415. Responses selected through
+media conditions vary on the corresponding request headers so caches cannot
+reuse a result across incompatible routing decisions.
+
 ## Server TLS lifecycle
 
 `ServeTLS` installs file-backed serving credentials before listening. The
@@ -101,7 +146,7 @@ There is no default mapping: URL resources are not globally unambiguous entity
 types, and request attributes do not contain resource Visibility, ownership,
 revision, or other policy facts.
 
-The adapter produces a final operation-gate Allow or Deny and maps unknown PDP
+The adapter accepts a final operation-gate Allow or Deny and maps unknown PDP
 decisions to Deny. An adapter Allow does not establish authorization for a
 resource that is loaded or mutated later by the handler. The resource domain
 still evaluates the concrete current resource before every protected read or
@@ -149,7 +194,7 @@ authentication filter renders as HTTP 401 with `invalid_token`.
 
 ## Authorization seam
 
-`authz.Authorizer` consumes the complete canonical `authn.Authentication` and
+`authz.Authorizer` receives the complete canonical `authn.Authentication` and
 `authz.Operation` as separate arguments. This preserves subject Type and ID,
 actor, groups, audiences, and scopes through the authorization decision.
 Business authorizers persist the globally unique Subject ID and may inspect
@@ -191,7 +236,7 @@ authorizers use identical prior-decision and response semantics.
 
 ## Trace seam
 
-Domain filters do not depend on OpenTelemetry or mutate spans. `trace.go` owns HTTP tracing and optional request enrichment. `NewEndUserTraceFilter` consumes the authentication context after `NewAuthenticationFilter`; `NewAuthorizationTraceFilter` consumes request attributes after `NewAttributeExtractionFilter`. Both are explicit composition choices because end-user identifiers and authorization resource names may be sensitive or high-cardinality. Default route tracing records the route template but not dynamic path-variable values.
+Domain filters do not depend on OpenTelemetry or mutate spans. `trace.go` owns HTTP tracing and optional request enrichment. `NewEndUserTraceFilter` reads the authentication context after `NewAuthenticationFilter`; `NewAuthorizationTraceFilter` reads request attributes after `NewAttributeExtractionFilter`. Both are explicit composition choices because end-user identifiers and authorization resource names may be sensitive or high-cardinality. Default route tracing records the route template but not dynamic path-variable values.
 
 ## Trusted propagation
 

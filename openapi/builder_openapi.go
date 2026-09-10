@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"mime"
 	"net/http"
 	"regexp"
 	"slices"
@@ -20,7 +22,10 @@ const (
 	mediaTypeMultipart = "multipart/form-data"
 )
 
-// AddOpenAPIOperation projects one route directly into an OpenAPI 3.1 document.
+// AddOpenAPIOperation projects a route into an OpenAPI 3.1 document. Routes with
+// the same method and path merge their media content when shared metadata and
+// overlapping content definitions agree. A conflict leaves the existing
+// operation unchanged.
 func AddOpenAPIOperation(document *Document, route api.Route, builder *Builder) error {
 	if route.NotDoc {
 		return nil
@@ -46,16 +51,130 @@ func AddOpenAPIOperation(document *Document, route api.Route, builder *Builder) 
 	if pathItem == nil {
 		pathItem = &openapi3.PathItem{}
 	}
-	if pathItem.GetOperation(method) != nil {
-		return fmt.Errorf("%s %s is already documented", method, route.Path)
-	}
-
 	operation, err := buildRouteOperation(route, builder)
 	if err != nil {
 		return fmt.Errorf("build %s %s: %w", method, route.Path, err)
 	}
+	if current := pathItem.GetOperation(method); current != nil {
+		operation, err = mergeRouteOperations(current, operation)
+		if err != nil {
+			return fmt.Errorf("merge %s %s: %w", method, route.Path, err)
+		}
+	}
 	pathItem.SetOperation(method, operation)
 	document.Paths.Set(route.Path, pathItem)
+	return nil
+}
+
+func mergeRouteOperations(current, next *openapi3.Operation) (*openapi3.Operation, error) {
+	currentMetadata, nextMetadata := *current, *next
+	currentMetadata.RequestBody, nextMetadata.RequestBody = nil, nil
+	currentMetadata.Responses, nextMetadata.Responses = nil, nil
+	if err := requireMatchingOpenAPI("operation metadata", &currentMetadata, &nextMetadata); err != nil {
+		return nil, err
+	}
+	requestBody, err := mergeRequestBodies(current.RequestBody, next.RequestBody)
+	if err != nil {
+		return nil, err
+	}
+	responses := openapi3.NewResponsesWithCapacity(current.Responses.Len() + next.Responses.Len())
+	responses.Extensions = maps.Clone(current.Responses.Extensions)
+	if len(current.Responses.Extensions) > 0 || len(next.Responses.Extensions) > 0 {
+		if err := requireMatchingOpenAPI("responses metadata", current.Responses.Extensions, next.Responses.Extensions); err != nil {
+			return nil, err
+		}
+	}
+	for status, response := range current.Responses.Map() {
+		responses.Set(status, response)
+	}
+	for status, response := range next.Responses.Map() {
+		if existing := responses.Value(status); existing != nil {
+			response, err = mergeResponses(existing, response)
+			if err != nil {
+				return nil, fmt.Errorf("response %s: %w", status, err)
+			}
+		}
+		responses.Set(status, response)
+	}
+	merged := *current
+	merged.RequestBody = requestBody
+	merged.Responses = responses
+	return &merged, nil
+}
+
+func mergeRequestBodies(current, next *openapi3.RequestBodyRef) (*openapi3.RequestBodyRef, error) {
+	if current == nil || next == nil || current.Ref != "" || next.Ref != "" {
+		if err := requireMatchingOpenAPI("request body", current, next); err != nil {
+			return nil, err
+		}
+		return current, nil
+	}
+	currentMetadata, nextMetadata := *current.Value, *next.Value
+	currentMetadata.Content, nextMetadata.Content = nil, nil
+	if err := requireMatchingOpenAPI("request body metadata", &currentMetadata, &nextMetadata); err != nil {
+		return nil, err
+	}
+	content, err := mergeContent(current.Value.Content, next.Value.Content)
+	if err != nil {
+		return nil, fmt.Errorf("request body: %w", err)
+	}
+	body := *current.Value
+	body.Content = content
+	ref := *current
+	ref.Value = &body
+	return &ref, nil
+}
+
+func mergeResponses(current, next *openapi3.ResponseRef) (*openapi3.ResponseRef, error) {
+	if current.Ref != "" || next.Ref != "" {
+		if err := requireMatchingOpenAPI("reference", current, next); err != nil {
+			return nil, err
+		}
+		return current, nil
+	}
+	currentMetadata, nextMetadata := *current.Value, *next.Value
+	currentMetadata.Content, nextMetadata.Content = nil, nil
+	if err := requireMatchingOpenAPI("metadata", &currentMetadata, &nextMetadata); err != nil {
+		return nil, err
+	}
+	content, err := mergeContent(current.Value.Content, next.Value.Content)
+	if err != nil {
+		return nil, err
+	}
+	response := *current.Value
+	response.Content = content
+	ref := *current
+	ref.Value = &response
+	return &ref, nil
+}
+
+func mergeContent(current, next openapi3.Content) (openapi3.Content, error) {
+	merged := make(openapi3.Content, len(current)+len(next))
+	maps.Copy(merged, current)
+	for mediaType, content := range next {
+		if existing, ok := merged[mediaType]; ok {
+			if err := requireMatchingOpenAPI(fmt.Sprintf("media type %q", mediaType), existing, content); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		merged[mediaType] = content
+	}
+	return merged, nil
+}
+
+func requireMatchingOpenAPI(name string, current, next any) error {
+	currentJSON, err := json.Marshal(current)
+	if err != nil {
+		return fmt.Errorf("encode existing %s: %w", name, err)
+	}
+	nextJSON, err := json.Marshal(next)
+	if err != nil {
+		return fmt.Errorf("encode incoming %s: %w", name, err)
+	}
+	if !bytes.Equal(currentJSON, nextJSON) {
+		return fmt.Errorf("conflicting %s", name)
+	}
 	return nil
 }
 
@@ -114,10 +233,14 @@ func buildRouteOperation(route api.Route, builder *Builder) (*openapi3.Operation
 	if len(bodyParams) == 1 {
 		param := bodyParams[0]
 		schema := buildParameterSchema(param, builder)
+		content, err := buildContent(route.ContentTypes, mediaTypeJSON, schema, requestExample)
+		if err != nil {
+			return nil, fmt.Errorf("request body: %w", err)
+		}
 		operation.RequestBody = &openapi3.RequestBodyRef{Value: &openapi3.RequestBody{
 			Description: param.Description,
 			Required:    !param.IsOptional,
-			Content:     buildContent(route.Consumes, mediaTypeJSON, schema, requestExample),
+			Content:     content,
 		}}
 	} else if len(formParams) > 0 {
 		schema := openapi3.NewObjectSchema()
@@ -128,12 +251,16 @@ func buildRouteOperation(route api.Route, builder *Builder) (*openapi3.Operation
 			}
 		}
 		fallback := mediaTypeForm
-		if slices.Contains(route.Consumes, mediaTypeMultipart) || hasFileParameter(formParams) {
+		if slices.Contains(route.ContentTypes, mediaTypeMultipart) || hasFileParameter(formParams) {
 			fallback = mediaTypeMultipart
+		}
+		content, err := buildContent(route.ContentTypes, fallback, schemaValue(schema), requestExample)
+		if err != nil {
+			return nil, fmt.Errorf("request body: %w", err)
 		}
 		operation.RequestBody = &openapi3.RequestBodyRef{Value: &openapi3.RequestBody{
 			Required: len(schema.Required) > 0,
-			Content:  buildContent(route.Consumes, fallback, schemaValue(schema), requestExample),
+			Content:  content,
 		}}
 	}
 
@@ -141,9 +268,14 @@ func buildRouteOperation(route api.Route, builder *Builder) (*openapi3.Operation
 		if responseInfo.Code < 100 || responseInfo.Code > 599 {
 			return nil, fmt.Errorf("response status code %d is outside the OpenAPI HTTP status range", responseInfo.Code)
 		}
-		response := openapi3.NewResponse().WithDescription(responseDescription(responseInfo.Code, responseInfo.Description))
+		response := openapi3.NewResponse().
+			WithDescription(responseDescription(responseInfo.Code, responseInfo.Description))
 		if responseInfo.Body != nil {
-			response.Content = buildContent(route.Produces, mediaTypeJSON, builder.Build(responseInfo.Body), responseExample)
+			content, err := buildContent(route.Accepts, mediaTypeJSON, builder.Build(responseInfo.Body), responseExample)
+			if err != nil {
+				return nil, fmt.Errorf("response %d: %w", responseInfo.Code, err)
+			}
+			response.Content = content
 		}
 		if len(responseInfo.Headers) > 0 {
 			response.Headers = openapi3.Headers{}
@@ -158,7 +290,8 @@ func buildRouteOperation(route api.Route, builder *Builder) (*openapi3.Operation
 	}
 	if operation.Responses.Len() == 0 {
 		operation.Responses.Set(strconv.Itoa(http.StatusOK), &openapi3.ResponseRef{
-			Value: openapi3.NewResponse().WithDescription(http.StatusText(http.StatusOK)),
+			Value: openapi3.NewResponse().
+				WithDescription(http.StatusText(http.StatusOK)),
 		})
 	}
 	return operation, nil
@@ -243,18 +376,22 @@ func schemaFromDataType(dataType, format string) *openapi3.SchemaRef {
 	}
 }
 
-func buildContent(mediaTypes []string, fallback string, schema *openapi3.SchemaRef, example any) openapi3.Content {
+func buildContent(mediaTypes []string, fallback string, schema *openapi3.SchemaRef, example any) (openapi3.Content, error) {
 	if len(mediaTypes) == 0 {
 		mediaTypes = []string{fallback}
 	}
 	content := openapi3.Content{}
 	for _, mediaType := range mediaTypes {
-		if mediaType == "" {
-			continue
+		name, params, err := mime.ParseMediaType(mediaType)
+		if err != nil {
+			return nil, fmt.Errorf("media type %q: %w", mediaType, err)
 		}
-		content[mediaType] = &openapi3.MediaType{Schema: schema, Example: example}
+		if charset, ok := params["charset"]; ok {
+			params["charset"] = strings.ToLower(charset)
+		}
+		content[mime.FormatMediaType(name, params)] = &openapi3.MediaType{Schema: schema, Example: example}
 	}
-	return content
+	return content, nil
 }
 
 func normalizeExample(example any) (any, error) {

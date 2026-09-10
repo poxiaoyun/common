@@ -15,6 +15,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"path"
 	"strings"
@@ -25,29 +26,27 @@ type Route struct {
 	Description    string
 	Path           string
 	Method         string
+	Priority       int      // higher values precede other matching routes; zero preserves path specificity
 	Hosts          []string // request must match this host
 	IsDeprecated   bool
 	Handler        http.Handler
 	Filters        Filters
 	Tags           []string
-	Consumes       []string
-	Produces       []string
+	ContentTypes   []string // request Content-Type alternatives; empty means unrestricted
+	Accepts        []string // response media types matched against Accept; empty means unrestricted
 	Params         []Param
 	Responses      []ResponseInfo
 	Properties     map[string]any
 	RequestSample  any
 	ResponseSample any
 	NotDoc         bool // if true, this route will not be documented in OpenAPI
+	buildError     error
 }
 
 func (route Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fn := route.Handler
-	if len(route.Produces) != 0 || len(route.Consumes) != 0 {
-		fn = MediaTypeCheckFunc(route.Produces, route.Consumes, route.Handler)
-	}
 	// init filter context
 	r = r.WithContext(SetContextValue(r.Context(), "filter-context-init", struct{}{}))
-	route.Filters.Process(w, r, fn)
+	route.Filters.Process(w, r, route.Handler)
 }
 
 type ResponseInfo struct {
@@ -137,15 +136,15 @@ func (n Route) Param(params ...Param) Route {
 	return n
 }
 
-// Accept match request Accept header
-func (n Route) Produce(mime ...string) Route {
-	n.Produces = append(n.Produces, mime...)
+// Accept selects this route when Accept permits one of the declared response media types.
+func (n Route) Accept(mediaTypes ...string) Route {
+	n.Accepts = append(n.Accepts, mediaTypes...)
 	return n
 }
 
-// ContentType match request Content-Type header
-func (n Route) Consume(mime ...string) Route {
-	n.Consumes = append(n.Consumes, mime...)
+// ContentType selects this route when Content-Type matches one of the declared media ranges.
+func (n Route) ContentType(mediaTypes ...string) Route {
+	n.ContentTypes = append(n.ContentTypes, mediaTypes...)
 	return n
 }
 
@@ -273,16 +272,16 @@ func (p Param) Multiple() Param {
 }
 
 type Group struct {
-	Path        string
-	IsDeprcated bool
-	Filters     Filters
-	Hosts       []string // request must match this host
-	Tags        []string
-	Params      []Param // common params apply to all routes in the group
-	Routes      []Route
-	SubGroups   []Group // sub groups
-	Consumes    []string
-	Produces    []string
+	Path         string
+	IsDeprcated  bool
+	Filters      Filters
+	Hosts        []string // request must match this host
+	Tags         []string
+	Params       []Param // common params apply to all routes in the group
+	Routes       []Route
+	SubGroups    []Group // sub groups
+	ContentTypes []string
+	Accepts      []string
 }
 
 func NewGroup(path string) Group {
@@ -299,15 +298,17 @@ func (g Group) Host(host ...string) Group {
 	return g
 }
 
-// ContentType match request Content-Type header
-func (g Group) ContentType(mime ...string) Group {
-	g.Consumes = append(g.Consumes, mime...)
+// ContentType constrains child routes to these request media ranges.
+// A child's media conditions intersect its ancestors' conditions.
+func (g Group) ContentType(mediaTypes ...string) Group {
+	g.ContentTypes = append(g.ContentTypes, mediaTypes...)
 	return g
 }
 
-// Accept match request Accept header
-func (g Group) Accept(mime ...string) Group {
-	g.Produces = append(g.Produces, mime...)
+// Accept constrains child routes to these acceptable response media types.
+// A child's media conditions intersect its ancestors' conditions.
+func (g Group) Accept(mediaTypes ...string) Group {
+	g.Accepts = append(g.Accepts, mediaTypes...)
 	return g
 }
 
@@ -337,15 +338,22 @@ func (g Group) Filter(filters ...Filter) Group {
 }
 
 func (t Group) Build() []Route {
-	return buildRoutes(Group{}, t)
+	return buildRoutes(Group{}, t, nil)
 }
 
-func buildRoutes(merged Group, group Group) []Route {
+func buildRoutes(merged Group, group Group, buildError error) []Route {
 	merged.Path = path.Join(merged.Path, group.Path)
 	merged.Params = append(merged.Params, group.Params...)
 	merged.Tags = append(merged.Tags, group.Tags...)
-	merged.Consumes = append(merged.Consumes, group.Consumes...)
-	merged.Produces = append(merged.Produces, group.Produces...)
+	var err error
+	merged.ContentTypes, err = intersectMediaConditions(merged.ContentTypes, group.ContentTypes)
+	if err != nil && buildError == nil {
+		buildError = fmt.Errorf("group %s Content-Type: %w", merged.Path, err)
+	}
+	merged.Accepts, err = intersectMediaConditions(merged.Accepts, group.Accepts)
+	if err != nil && buildError == nil {
+		buildError = fmt.Errorf("group %s Accept: %w", merged.Path, err)
+	}
 	merged.Filters = append(merged.Filters, group.Filters...)
 	merged.IsDeprcated = merged.IsDeprcated || group.IsDeprcated
 	merged.Hosts = append(merged.Hosts, group.Hosts...)
@@ -358,15 +366,24 @@ func buildRoutes(merged Group, group Group) []Route {
 		if !strings.HasPrefix(route.Path, "/") {
 			route.Path = "/" + route.Path
 		}
-		route.Consumes = append(group.Consumes, route.Consumes...)
-		route.Produces = append(group.Produces, route.Produces...)
+		if buildError != nil {
+			route.buildError = buildError
+		}
+		route.ContentTypes, err = intersectMediaConditions(merged.ContentTypes, route.ContentTypes)
+		if err != nil && route.buildError == nil {
+			route.buildError = fmt.Errorf("Content-Type: %w", err)
+		}
+		route.Accepts, err = intersectMediaConditions(merged.Accepts, route.Accepts)
+		if err != nil && route.buildError == nil {
+			route.buildError = fmt.Errorf("Accept: %w", err)
+		}
 		route.Filters = append(merged.Filters, route.Filters...)
 		route.Hosts = append(merged.Hosts, route.Hosts...)
 		route.IsDeprecated = route.IsDeprecated || group.IsDeprcated
 		ret = append(ret, route)
 	}
 	for _, group := range group.SubGroups {
-		ret = append(ret, buildRoutes(merged, group)...)
+		ret = append(ret, buildRoutes(merged, group, buildError)...)
 	}
 	return ret
 }

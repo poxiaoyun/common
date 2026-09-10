@@ -3,9 +3,8 @@ package matcher
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
-
-	"golang.org/x/exp/slices"
 )
 
 func ParseToken(path string) []string {
@@ -130,6 +129,9 @@ func (s Section) String() string {
 	return b.String()
 }
 
+// Match considers paths in segment specificity order. Candidate callbacks
+// receive complete captures and may reject a path to continue. Copy captures
+// that must be retained after rejecting a candidate.
 func (n *Node[T]) Match(path string, oncandidate func(val T, vars []MatchVar) bool) (*Node[T], []MatchVar) {
 	return n.match(ParseToken(path), nil, oncandidate)
 }
@@ -137,10 +139,11 @@ func (n *Node[T]) Match(path string, oncandidate func(val T, vars []MatchVar) bo
 func (n *Node[T]) match(tokens []string, vars []MatchVar, oncandidate func(val T, vars []MatchVar) bool) (*Node[T], []MatchVar) {
 	for _, child := range n.Children {
 		if ok, lefttokens, thisvars := child.Section.match(tokens); ok {
-			if len(lefttokens) == 0 && (oncandidate == nil || oncandidate(child.Value, vars)) {
-				return child, append(vars, thisvars...)
+			matchedVars := append(vars, thisvars...)
+			if len(lefttokens) == 0 && (oncandidate == nil || oncandidate(child.Value, matchedVars)) {
+				return child, matchedVars
 			}
-			node, childvars := child.match(lefttokens, append(vars, thisvars...), oncandidate)
+			node, childvars := child.match(lefttokens, matchedVars, oncandidate)
 			if node != nil {
 				return node, childvars
 			}
@@ -163,20 +166,29 @@ func (section Section) match(tokens []string) (bool, []string, []MatchVar) {
 		return false, tokens, nil
 	}
 	token, lefttokens, vars := tokens[0], tokens[1:], []MatchVar{}
-	for _, elem := range section {
+	for position, elem := range section {
 		if elem.Greedy {
 			token, lefttokens = strings.Join(append([]string{token}, lefttokens...), ""), []string{}
 		}
 		if elem.VarName == "" {
-			// lastIndex or Index?
-			index := strings.Index(token, elem.Pattern)
+			var index int
+			if position == len(section)-1 && !elem.Greedy && pre.VarName != "" {
+				// A final literal is a suffix of the entire segment, even
+				// when the captured value contains the same literal.
+				if !strings.HasSuffix(token, elem.Pattern) {
+					return false, nil, nil
+				}
+				index = len(token) - len(elem.Pattern)
+			} else {
+				index = strings.Index(token, elem.Pattern)
+			}
 			if index == -1 {
 				return false, nil, nil
 			}
 			// finish pre var match
 			if pre.VarName != "" {
 				varmatch := token[:index]
-				if (varmatch == "" && pre.VarName != "") || (pre.Validate != nil && !pre.Validate.MatchString(varmatch)) {
+				if (varmatch == "" && !pre.Greedy) || (pre.Validate != nil && !pre.Validate.MatchString(varmatch)) {
 					return false, nil, nil
 				}
 				vars = append(vars, MatchVar{Name: pre.VarName, Value: varmatch})
@@ -191,6 +203,9 @@ func (section Section) match(tokens []string) (bool, []string, []MatchVar) {
 	}
 	// unclosed variable
 	if pre.VarName != "" {
+		if token == "" && !pre.Greedy {
+			return false, nil, nil
+		}
 		// regexp check
 		if pre.Validate != nil && !pre.Validate.MatchString(token) {
 			return false, nil, nil

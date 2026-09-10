@@ -3,11 +3,11 @@ package api
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 
-	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 	"xiaoshiai.cn/common/rest/matcher"
 )
 
@@ -15,100 +15,31 @@ func MethodNotAllowed(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
 }
 
-func UnsupportedMediaType(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "415 unsupported media type", http.StatusUnsupportedMediaType)
+type routeCandidate struct {
+	route        *Route
+	contentTypes []mediaRange
+	accepts      []mediaRange
 }
 
-// The HyperText Transfer Protocol (HTTP) 406 Not Acceptable client error response code indicates
-// that the server cannot produce a response matching the list of acceptable values
-// defined in the request's proactive content negotiation headers,
-// and that the server is unwilling to supply a default representation.
-func NotAcceptable(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "406 not acceptable", http.StatusNotAcceptable)
-}
+type routeCandidates map[string][]routeCandidate
 
-func MediaTypeCheckFunc(accepts, produces []string, handler http.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if len(accepts) > 0 && !MatchMIME(r.Header.Get("Content-Type"), accepts) {
-			UnsupportedMediaType(w, r)
-			return
-		}
-		if len(produces) > 0 && !MatchMIME(r.Header.Get("Accept"), produces) {
-			NotAcceptable(w, r)
-			return
-		}
-		handler.ServeHTTP(w, r)
-	}
-}
-
-func MatchMIME(accept string, supported []string) bool {
-	base, _, _ := strings.Cut(accept, ";")
-	accept = strings.TrimSpace(strings.ToLower(base))
-	if accept == "" || accept == "*/*" || len(supported) == 0 {
-		return true
-	}
-	for _, s := range supported {
-		base, _, _ := strings.Cut(s, ";")
-		s = strings.TrimSpace(strings.ToLower(base))
-		if s == "*/*" || accept == s {
-			return true
-		}
-	}
-	return false
-}
-
-type MethodsHandler map[string]http.Handler
-
-func (h MethodsHandler) NotAllowed(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Allow", strings.Join(maps.Keys(h), ","))
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-	} else {
-		MethodNotAllowed(w, r)
-	}
-}
-
-func (h MethodsHandler) selectHandler(r *http.Request) http.Handler {
-	if len(h) == 0 {
-		return nil
-	}
-	for _, candidate := range []string{r.Method, ""} {
-		if handler, ok := h[candidate]; ok {
-			return handler
-		}
-	}
-	return nil
-}
-
+// Mux selects routes before invoking their filters and handlers. Register routes
+// before serving requests; route matching conditions must not change afterward.
 type Mux struct {
 	NotFound         http.Handler
 	MethodNotAllowed http.Handler
-	HostsTree        map[string]*matcher.Node[MethodsHandler]
-	GlobalTree       *matcher.Node[MethodsHandler]
+	hosts            map[string]*matcher.Node[routeCandidates]
+	paths            matcher.Node[routeCandidates]
 }
 
 var _ Router = &Mux{}
 
 func NewMux() *Mux {
-	return &Mux{
-		HostsTree:  make(map[string]*matcher.Node[MethodsHandler]),
-		GlobalTree: &matcher.Node[MethodsHandler]{},
-	}
+	return &Mux{}
 }
 
 func (m *Mux) Handle(method, pattern string, handler http.Handler) error {
-	_, node, err := m.GlobalTree.Register(pattern)
-	if err != nil {
-		return err
-	}
-	if node.Value == nil {
-		node.Value = MethodsHandler{}
-	}
-	if _, ok := node.Value[method]; ok {
-		return fmt.Errorf("already registered: %s %s", method, pattern)
-	}
-	node.Value[method] = handler
-	return nil
+	return m.Register(&Route{Method: method, Path: pattern, Handler: handler})
 }
 
 func (m *Mux) SetNotFound(handler http.Handler) {
@@ -120,43 +51,74 @@ func (m *Mux) SetMethodNotAllowed(handler http.Handler) {
 }
 
 func (m *Mux) Register(route *Route) error {
-	method, pattern := route.Method, route.Path
-	if len(route.Hosts) > 0 {
-		for _, host := range route.Hosts {
-			tree, ok := m.HostsTree[host]
-			if !ok {
-				tree = &matcher.Node[MethodsHandler]{}
-				m.HostsTree[host] = tree
-			}
-			if err := m.register(route, tree); err != nil {
-				return fmt.Errorf("register route %s %s for host %s: %w", method, pattern, host, err)
-			}
-		}
-		return nil
-	} else {
-		if err := m.register(route, m.GlobalTree); err != nil {
-			return fmt.Errorf("register route %s %s: %w", method, pattern, err)
-		}
-		return nil
+	if route.buildError != nil {
+		return fmt.Errorf("register route %s %s: %w", route.Method, route.Path, route.buildError)
 	}
-}
-
-func (m *Mux) register(route *Route, tree *matcher.Node[MethodsHandler]) error {
-	method, pattern := route.Method, route.Path
-	sections, node, err := tree.Register(pattern)
+	contentTypes, normalizedContentTypes, err := compileMediaRanges(route.ContentTypes)
 	if err != nil {
-		return err
+		return fmt.Errorf("register route %s %s Content-Type: %w", route.Method, route.Path, err)
 	}
-	if node.Value == nil {
-		node.Value = MethodsHandler{}
+	accepts, normalizedAccepts, err := compileMediaRanges(route.Accepts)
+	if err != nil {
+		return fmt.Errorf("register route %s %s Accept: %w", route.Method, route.Path, err)
 	}
-	if _, ok := node.Value[method]; ok {
-		return fmt.Errorf("already registered: %s %s", method, pattern)
+	route.ContentTypes, route.Accepts = normalizedContentTypes, normalizedAccepts
+	candidate := routeCandidate{route: route, contentTypes: contentTypes, accepts: accepts}
+	pattern := route.Path
+	sections, err := matcher.CompilePattern(pattern)
+	if err != nil {
+		return fmt.Errorf("register route %s %s: %w", route.Method, pattern, err)
 	}
-	node.Value[method] = route
-	// complete pathparam from sections if not exists
+	if len(route.Hosts) == 0 {
+		if err := m.register(pattern, candidate, &m.paths); err != nil {
+			return err
+		}
+	}
+	for _, host := range route.Hosts {
+		if m.hosts == nil {
+			m.hosts = map[string]*matcher.Node[routeCandidates]{}
+		}
+		tree := m.hosts[host]
+		if tree == nil {
+			tree = &matcher.Node[routeCandidates]{}
+			m.hosts[host] = tree
+		}
+		if err := m.register(pattern, candidate, tree); err != nil {
+			return fmt.Errorf("host %s: %w", host, err)
+		}
+	}
 	completePathParam(route, sections)
 	return nil
+}
+
+func (m *Mux) register(pattern string, candidate routeCandidate, tree *matcher.Node[routeCandidates]) error {
+	_, node, err := tree.Register(pattern)
+	if err != nil {
+		return fmt.Errorf("register route %s %s: %w", candidate.route.Method, pattern, err)
+	}
+	if node.Value == nil {
+		node.Value = routeCandidates{}
+	}
+	method := candidate.route.Method
+	for _, existing := range node.Value[method] {
+		if sameMediaConditions(existing.route.ContentTypes, candidate.route.ContentTypes) && sameMediaConditions(existing.route.Accepts, candidate.route.Accepts) {
+			return fmt.Errorf("already registered: %s %s with Content-Type %v and Accept %v", method, pattern, candidate.route.ContentTypes, candidate.route.Accepts)
+		}
+	}
+	node.Value[method] = append(node.Value[method], candidate)
+	return nil
+}
+
+func sameMediaConditions(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, value := range a {
+		if !slices.Contains(b, value) {
+			return false
+		}
+	}
+	return true
 }
 
 func completePathParam(route *Route, sections []matcher.Section) {
@@ -187,68 +149,117 @@ func completePathParam(route *Route, sections []matcher.Section) {
 	route.Path = matcher.NoRegexpString(sections)
 }
 
-func DefaultMatchCandidateFunc(val MethodsHandler, vars []matcher.MatchVar) bool {
-	for _, v := range vars {
-		// if no matched value,skip
-		//
-		// example: /v1/tenants//organizations matched /v1/tenants/{tenant}/organizations
-		// but tenant is empty which is not allowed
-		if v.Value == "" {
-			return false
-		}
-	}
-	// only match if the node has a handler
-	return val != nil
-}
-
 func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	matchpath := r.URL.Path
 	if r.URL.RawPath != "" {
 		matchpath = r.URL.RawPath
 	}
-	host := r.Host
-	if idx := strings.IndexRune(host, ':'); idx != -1 {
-		host = host[:idx] // remove port if present
+	host, _, _ := strings.Cut(r.Host, ":")
+	tree := &m.paths
+	if hostTree, ok := m.hosts[host]; ok {
+		tree = hostTree
 	}
-	// select the tree based on host
-	var tree *matcher.Node[MethodsHandler]
-	if hosttree, ok := m.HostsTree[host]; ok {
-		// match with host tree first
-		tree = hosttree
-	} else {
-		// if no host tree, use the global tree
-		tree = m.GlobalTree
+	var media requestMedia
+	var mediaParsed bool
+	allowed := map[string]struct{}{}
+	resourceMethods := map[string]struct{}{}
+	var selected *Route
+	var selectedVars []matcher.MatchVar
+	var varyAccept, varyContentType bool
+	tree.Match(matchpath, func(candidates routeCandidates, vars []matcher.MatchVar) bool {
+		if len(candidates) == 0 {
+			return false
+		}
+		for method, variants := range candidates {
+			if method != "" {
+				resourceMethods[method] = struct{}{}
+			}
+			for _, candidate := range variants {
+				varyAccept = varyAccept || len(candidate.accepts) > 0
+				varyContentType = varyContentType || len(candidate.contentTypes) > 0
+				if !mediaParsed && (varyAccept || varyContentType) {
+					media = parseRequestMedia(r.Header)
+					mediaParsed = true
+				}
+				if _, ok := media.match(candidate.contentTypes, candidate.accepts); ok && method != "" {
+					allowed[method] = struct{}{}
+				}
+			}
+		}
+		var pathSelected *Route
+		var best mediaMatch
+		for _, method := range []string{r.Method, ""} {
+			for _, candidate := range candidates[method] {
+				match, ok := media.match(candidate.contentTypes, candidate.accepts)
+				if !ok {
+					continue
+				}
+				if pathSelected == nil || candidate.route.Priority > pathSelected.Priority ||
+					(candidate.route.Priority == pathSelected.Priority && method == pathSelected.Method && match.compare(best) > 0) {
+					pathSelected, best = candidate.route, match
+				}
+			}
+		}
+		if pathSelected != nil && (selected == nil || pathSelected.Priority > selected.Priority) {
+			selected, selectedVars = pathSelected, slices.Clone(vars)
+		}
+		return false
+	})
+	header := w.Header()
+	if varyAccept {
+		addVary(header, "Accept")
 	}
-	node, vars := tree.Match(matchpath, DefaultMatchCandidateFunc)
-	if node == nil || node.Value == nil {
-		if m.NotFound == nil {
-			http.NotFound(w, r)
+	if varyContentType {
+		addVary(header, "Content-Type")
+	}
+	if selected != nil {
+		reqvars := make([]PathVar, len(selectedVars))
+		for index, variable := range selectedVars {
+			reqvars[index] = PathVar{Key: variable.Name, Value: variable.Value}
+		}
+		r = r.WithContext(context.WithValue(r.Context(), httpVarsContextKey{}, reqvars))
+		selected.ServeHTTP(w, r)
+		return
+	}
+	if r.Method == http.MethodOptions && len(resourceMethods) > 0 {
+		resourceMethods[http.MethodOptions] = struct{}{}
+		header.Set("Allow", strings.Join(slices.Sorted(maps.Keys(resourceMethods)), ", "))
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if len(allowed) > 0 {
+		header.Set("Allow", strings.Join(slices.Sorted(maps.Keys(allowed)), ", "))
+		if m.MethodNotAllowed != nil {
+			m.MethodNotAllowed.ServeHTTP(w, r)
 		} else {
-			m.NotFound.ServeHTTP(w, r)
+			MethodNotAllowed(w, r)
 		}
 		return
 	}
-	reqvars := make([]PathVar, len(vars))
-	for i, v := range vars {
-		reqvars[i] = PathVar{Key: v.Name, Value: v.Value}
+	if m.NotFound != nil {
+		m.NotFound.ServeHTTP(w, r)
+	} else {
+		http.NotFound(w, r)
 	}
-	r = r.WithContext(context.WithValue(r.Context(), httpVarsContextKey{}, reqvars))
+}
 
-	if handler := node.Value.selectHandler(r); handler != nil {
-		handler.ServeHTTP(w, r)
-		return
+func addVary(header http.Header, field string) {
+	for _, value := range header.Values("Vary") {
+		for existing := range strings.SplitSeq(value, ",") {
+			existing = strings.TrimSpace(existing)
+			if existing == "*" || strings.EqualFold(existing, field) {
+				return
+			}
+		}
 	}
-	if m.MethodNotAllowed != nil {
-		m.MethodNotAllowed.ServeHTTP(w, r)
-		return
-	}
-	node.Value.NotAllowed(w, r)
+	header.Add("Vary", field)
 }
 
 type httpVarsContextKey struct{}
 
 func PathVars(r *http.Request) PathVarList {
-	if vars, ok := r.Context().Value(httpVarsContextKey{}).([]PathVar); ok {
+	ctx := r.Context()
+	if vars, ok := ctx.Value(httpVarsContextKey{}).([]PathVar); ok {
 		return vars
 	}
 	return nil

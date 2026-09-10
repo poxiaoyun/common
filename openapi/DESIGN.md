@@ -4,6 +4,15 @@ The plugin owns OpenAPI document construction and route projection. Callers
 own service titles and select authentication mechanisms from their runtime
 configuration.
 
+Routes sharing an HTTP method and path describe one OpenAPI operation. Media
+variants contribute request-body content and response content keyed by media
+type; response status codes form a union. Operation metadata, request-body
+requirements, and metadata of responses with the same status must agree.
+Conflicting definitions of the same media type are construction errors rather
+than replacements. Comparison uses the serialized OpenAPI contract, so omitted
+empty collections and resolved reference caches do not create false conflicts.
+An unsuccessful merge leaves the previously documented operation unchanged.
+
 The plugin initializes its route prefix to `/openapi`. Services that need a
 different mount point override the plugin path during construction.
 

@@ -54,11 +54,14 @@ var atomsToAttrs = map[atom.Atom]sets.Set[string]{
 	// TODO: css URLs hidden in style elements.
 }
 
-// Transport is a transport for text/html content that replaces URLs in html
-// content with the prefix of the proxy server
+// Transport rewrites same-host absolute URLs in Location headers and HTML
+// attributes to use the proxy's origin and path prefix. Prefix replacement
+// preserves the path suffix's encoding and separators.
 type Transport struct {
-	Scheme      string
-	Host        string
+	Scheme string
+	Host   string
+	// PathRemove is removed on a path-segment boundary before PathPrepend is
+	// added. Paths already under PathPrepend are left unchanged.
 	PathRemove  string
 	PathPrepend string
 
@@ -117,7 +120,7 @@ func (rt *Transport) WrappedRoundTripper() http.RoundTripper {
 // rewriteURL rewrites a single URL to go through the proxy, if the URL refers
 // to the same host as sourceURL, which is the page on which the target URL
 // occurred, or if the URL matches the sourceRequestHost.
-func (t *Transport) rewriteURL(url *url.URL, sourceURL *url.URL, sourceRequestHost string) string {
+func (t *Transport) rewriteURL(target *url.URL, sourceURL *url.URL, sourceRequestHost string) string {
 	// Example:
 	//      When API server processes a proxy request to a service (e.g. /api/v1/namespace/foo/service/bar/proxy/),
 	//      the sourceURL.Host (i.e. req.URL.Host) is the endpoint IP address of the service. The
@@ -126,38 +129,57 @@ func (t *Transport) rewriteURL(url *url.URL, sourceURL *url.URL, sourceRequestHo
 	//      request through "kubectl proxy" locally (i.e. localhost:8001/api/v1/namespace/foo/service/bar/proxy/),
 	//      sourceRequestHost is "localhost:8001".
 	//
-	//      If the service's response URL contains non-empty host, and url.Host is equal to either sourceURL.Host
+	//      If the service's response URL contains non-empty host, and target.Host is equal to either sourceURL.Host
 	//      or sourceRequestHost, we should not consider the returned URL to be a completely different host.
 	//      It's the API server's responsibility to rewrite a same-host-and-absolute-path URL and append the
 	//      necessary URL prefix (i.e. /api/v1/namespace/foo/service/bar/proxy/).
-	isDifferentHost := url.Host != "" && url.Host != sourceURL.Host && url.Host != sourceRequestHost
-	isRelative := !strings.HasPrefix(url.Path, "/")
+	isDifferentHost := target.Host != "" && target.Host != sourceURL.Host && target.Host != sourceRequestHost
+	isRelative := !strings.HasPrefix(target.Path, "/")
 	if isDifferentHost || isRelative {
-		return url.String()
+		return target.String()
 	}
 
 	// Do not rewrite scheme and host if the Transport has empty scheme and host
 	// when targetURL already contains the sourceRequestHost
-	if !(url.Host == sourceRequestHost && t.Scheme == "" && t.Host == "") {
-		url.Scheme = t.Scheme
-		url.Host = t.Host
+	if !(target.Host == sourceRequestHost && t.Scheme == "" && t.Host == "") {
+		target.Scheme = t.Scheme
+		target.Host = t.Host
 	}
 
-	origPath := url.Path
-	// Do not rewrite URL if the sourceURL already contains the necessary prefix.
-	if t.PathRemove != "" {
-		url.Path = strings.TrimPrefix(url.Path, t.PathRemove)
+	escapedPath := target.EscapedPath()
+	prepend := strings.TrimSuffix(t.PathPrepend, "/")
+	// Already external URLs must be recognized before removing the upstream
+	// prefix: the external prefix may itself start with the upstream prefix.
+	if prepend != "" && (target.Path == prepend || strings.HasPrefix(target.Path, prepend+"/")) {
+		return target.String()
 	}
-	if strings.HasPrefix(url.Path, t.PathPrepend) {
-		return url.String()
+	remove := strings.TrimSuffix(t.PathRemove, "/")
+	if remove != "" && (target.Path == remove || strings.HasPrefix(target.Path, remove+"/")) {
+		target.Path = strings.TrimPrefix(target.Path, remove)
+		// Every decoded path byte occupies either one literal byte or one
+		// percent-encoded triplet in EscapedPath. Keep the suffix's original
+		// encoding when removing the matched decoded prefix.
+		index := 0
+		for range len(remove) {
+			if escapedPath[index] == '%' {
+				index += 3
+			} else {
+				index++
+			}
+		}
+		escapedPath = escapedPath[index:]
 	}
-	url.Path = path.Join(t.PathPrepend, url.Path)
-	if strings.HasSuffix(origPath, "/") {
-		// Add back the trailing slash, which was stripped by path.Join().
-		url.Path += "/"
+	// Prefix replacement must preserve the suffix verbatim, including encoded
+	// separators, dot segments, repeated separators, and trailing separators.
+	target.Path = prepend + target.Path
+	escapedPrefix := (&url.URL{Path: prepend}).EscapedPath()
+	target.RawPath = escapedPrefix + escapedPath
+	if target.Path == "" {
+		target.Path = "/"
+		target.RawPath = "/"
 	}
 
-	return url.String()
+	return target.String()
 }
 
 // rewriteHTML scans the HTML for tags with url-valued attributes, and updates

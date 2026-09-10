@@ -10,6 +10,12 @@ different prefix.
 Plugin configuration callbacks receive `*openapi.Document`; callers do not
 need to import the underlying OpenAPI implementation package.
 
+Routes with the same method and path can declare different `ContentTypes` and
+`Accepts` media types. They appear as one operation with combined request and
+response content. Keep their shared operation metadata and request-body
+requirements consistent. Conflicting metadata or different schemas, examples,
+or encodings for the same media type cause document construction to fail.
+
 Create the default plugin with `NewAPIDocPlugin()`. Services that need to set
 document metadata or authentication schemes chain
 `ConfigureDocument(func(*Document))` before installing it.

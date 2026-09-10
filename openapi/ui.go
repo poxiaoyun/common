@@ -43,7 +43,7 @@ func (o OpenAPIUI) Group(prefix string) api.Group {
 			api.GET("/openapi.json").To(o.OpenAPIHandler).NotDocumented(),
 			api.GET("/").
 				To(o.Index).
-				Produce("text/html").
+				Accept("text/html").
 				NotDocumented(),
 			api.GET("").To(o.Redirect).NotDocumented(),
 			api.GET("/static/{path}*").To(o.Resources).NotDocumented(),
