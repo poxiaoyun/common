@@ -171,8 +171,9 @@ operation-gate client configured with the exact review endpoint URL, not an API
 root; use `AuthorizationClient` for the other capabilities.
 
 `NewDefaultAuditOptions` collects HTTP audit events for POST, PUT, PATCH, and
-DELETE. `NewSimpleAuditFilter` skips other methods before capturing request or
-response data and before calling any sink. Set `RecordStatusMethods` explicitly
+DELETE. `SimpleAuditor.OnRequest` skips other methods before capturing request
+or response data, including when used through `NewAuditFilter` or a custom
+auditor. Excluded requests never reach a sink. Set `RecordStatusMethods` explicitly
 when a service needs to audit reads or additional methods; an empty list audits
 all methods. Body-method options control payload capture, not event selection.
 `WhiteList` excludes matching paths before capture and delivery.
