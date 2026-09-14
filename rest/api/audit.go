@@ -58,7 +58,7 @@ func NewAuditFilter(auditor Auditor, sink AuditSink) Filter {
 const MB = 1 << 20
 
 type AuditOptions struct {
-	RecordStatusMethods       []string // methods to record status code, default is empty, means record all methods
+	RecordStatusMethods       []string // HTTP methods to audit; an empty list audits all methods
 	RecordBodyContentTypes    []string // content types to record request/response body
 	RecordRequestBodyMethods  []string // methods to record request body
 	RecordResponseBodyMethods []string // methods to record response body
@@ -68,7 +68,7 @@ type AuditOptions struct {
 
 func NewDefaultAuditOptions() *AuditOptions {
 	return &AuditOptions{
-		RecordStatusMethods:       []string{},
+		RecordStatusMethods:       []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
 		RecordBodyContentTypes:    []string{"application/json", "application/yaml", "application/xml", "application/x-www-form-urlencoded"},
 		RecordRequestBodyMethods:  []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
 		RecordResponseBodyMethods: []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
@@ -169,20 +169,6 @@ func (a *SimpleAuditor) Process(w http.ResponseWriter, r *http.Request, next htt
 		uid = uuid.NewString()
 		r.Header.Set(RequestIDHeader, uid)
 	}
-	if !matchMethod(r.Method, a.Options.RecordStatusMethods) {
-		next.ServeHTTP(w, r)
-		return
-	}
-	for _, path := range a.Options.WhiteList {
-		compiled, err := pattern.CompileWildcard(path, pattern.WildcardOptions{Separator: '/'})
-		if err != nil {
-			continue
-		}
-		if compiled.Match(r.URL.Path) {
-			next.ServeHTTP(w, r)
-			return
-		}
-	}
 	ww, auditlog := a.OnRequest(w, r)
 	if auditlog == nil {
 		next.ServeHTTP(ww, r)
@@ -208,6 +194,18 @@ func matchMethod(method string, methods []string) bool {
 }
 
 func (a *SimpleAuditor) OnRequest(w http.ResponseWriter, r *http.Request) (http.ResponseWriter, *AuditLog) {
+	if !matchMethod(r.Method, a.Options.RecordStatusMethods) {
+		return w, nil
+	}
+	for _, path := range a.Options.WhiteList {
+		compiled, err := pattern.CompileWildcard(path, pattern.WildcardOptions{Separator: '/'})
+		if err != nil {
+			continue
+		}
+		if compiled.Match(r.URL.Path) {
+			return w, nil
+		}
+	}
 	auditlog := &AuditLog{
 		RequestID: r.Header.Get(RequestIDHeader),
 		Request: AuditRequest{
