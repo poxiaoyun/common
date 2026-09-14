@@ -146,6 +146,13 @@ each endpoint's own timeout, proxy, and TLS settings. Token authentication
 reviews may request audiences; the response must contain at least one validated
 requested audience. Basic and SSH reviews are audience-unaware.
 
+`NewDefaultAuditOptions` collects HTTP audit events for POST, PUT, PATCH, and
+DELETE. `NewSimpleAuditFilter` skips other methods before capturing request or
+response data and before calling any sink. Set `RecordStatusMethods` explicitly
+when a service needs to audit reads or additional methods; an empty list audits
+all methods. Body-method options control payload capture, not event selection.
+`WhiteList` excludes matching paths before capture and delivery.
+
 `FanoutAuditSink` delivers an immutable event to every configured audit sink in
 parallel and aggregates their errors after all sinks have been attempted.
 Services that use best-effort asynchronous audit delivery should wrap each

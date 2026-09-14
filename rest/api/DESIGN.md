@@ -163,6 +163,11 @@ effect. Request-filter decision reuse never replaces that domain enforcement.
 
 ## Audit seam
 
+HTTP request audit collection defaults to POST, PUT, PATCH, and DELETE.
+Services may override the method selection or exclude paths. Collection policy
+is applied before payload capture, response wrapping, and sink delivery, so
+excluded requests consume neither audit queue capacity nor webhook calls.
+
 `AuditSink` is the audit delivery seam. `FanoutAuditSink` invokes every sink in
 parallel for each immutable event and aggregates errors only after all
 destinations have been attempted; it is fan-out rather than an ordered decision
