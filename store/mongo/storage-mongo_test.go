@@ -2,16 +2,21 @@ package mongo
 
 import (
 	"context"
+	"net"
 	"reflect"
+	"slices"
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
+	"k8s.io/apimachinery/pkg/api/resource"
 	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
+	"xiaoshiai.cn/common/meta"
 	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
 	"xiaoshiai.cn/common/store/storetest"
@@ -37,6 +42,237 @@ func TestMongoStorageCapabilities(t *testing.T) {
 	capabilities := (&MongoStorage{}).Capabilities()
 	if !capabilities.Watch {
 		t.Fatal("Capabilities().Watch = false, want true")
+	}
+}
+
+func TestMongoStorageDottedScopeRoundTrip(t *testing.T) {
+	uri := testmongodb.RequireURI(t)
+	database := RequireIntegrationDatabase(t, uri)
+	root := NewIntegrationStorage(t, database, &TestObject{})
+	scopes := []store.Scope{{Resource: "iam.organization", Name: "one"}, {Resource: "moha.repository", Name: "private"}}
+	storage := root.Scope(scopes...)
+	created := &TestObject{ObjectMeta: store.ObjectMeta{ID: "policy"}}
+	if err := storage.Create(t.Context(), created); err != nil {
+		t.Fatal(err)
+	}
+	// A BSON document's field order is not part of a Scope component's
+	// identity. Unstructured objects can serialize the two keys in this order.
+	if _, err := database.Collection("testobjects").
+		UpdateOne(t.Context(), bson.D{{Key: "id", Value: created.ID}}, bson.D{{Key: "$set", Value: bson.D{{Key: "scopes", Value: bson.A{
+			bson.D{{Key: "name", Value: "one"}, {Key: "resource", Value: "iam.organization"}},
+			bson.D{{Key: "name", Value: "private"}, {Key: "resource", Value: "moha.repository"}},
+		}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	got := &TestObject{}
+	if err := storage.Get(t.Context(), created.ID, got); err != nil {
+		t.Fatalf("Get immediately after Create in identical dotted scope: %v", err)
+	}
+	if !reflect.DeepEqual(got.Scopes, scopes) {
+		t.Fatalf("Scopes = %#v, want %#v", got.Scopes, scopes)
+	}
+}
+
+func TestMongoStorageScopeDerivationIsIndependent(t *testing.T) {
+	uri := testmongodb.RequireURI(t)
+	database := RequireIntegrationDatabase(t, uri)
+	root := NewIntegrationStorage(t, database, &TestObject{})
+	path := []store.Scope{
+		{Resource: "organizations", Name: "one"},
+		{Resource: "projects", Name: "one"},
+		{Resource: "repositories", Name: "one"},
+	}
+	parent := root.Scope(path[0])
+	parent = parent.Scope(path[1])
+	parent = parent.Scope(path[2])
+	left := parent.Scope(store.Scope{Resource: "branches", Name: "left"})
+	right := parent.Scope(store.Scope{Resource: "branches", Name: "right"})
+	object := &TestObject{ObjectMeta: store.ObjectMeta{ID: "left"}}
+	if err := left.Create(t.Context(), object); err != nil {
+		t.Fatal(err)
+	}
+	expected := append(slices.Clone(path), store.Scope{Resource: "branches", Name: "left"})
+	if !slices.Equal(object.Scopes, expected) {
+		t.Fatalf("deriving right changed left scope: %#v", object.Scopes)
+	}
+	object.Scopes[0].Name = "mutated"
+	got := &TestObject{}
+	if err := left.Get(t.Context(), "left", got); err != nil || !slices.Equal(got.Scopes, expected) {
+		t.Fatalf("mutating returned metadata changed Store scope: %#v, %v", got, err)
+	}
+	if err := right.Get(t.Context(), "left", &TestObject{}); !commonerrors.IsNotFound(err) {
+		t.Fatalf("sibling derived scope leaked left object: %v", err)
+	}
+}
+
+type scopedCodecObject struct {
+	store.ObjectMeta `json:",inline"`
+	Quantity         resource.Quantity `json:"quantity"`
+	ObservedAt       meta.Time         `json:"observedAt"`
+	Address          net.IP            `json:"address,omitempty"`
+	Revision         int64             `json:"revision,omitempty"`
+	Status           TestObjectStatus  `json:"status"`
+}
+
+func TestMongoStorageScopedObjectCodecs(t *testing.T) {
+	uri := testmongodb.RequireURI(t)
+	database := RequireIntegrationDatabase(t, uri)
+	root := NewIntegrationStorage(t, database, &scopedCodecObject{})
+	scopes := []store.Scope{{Resource: "iam.organization", Name: "one"}}
+	storage := root.Scope(scopes...)
+	object := &scopedCodecObject{
+		ObjectMeta: store.ObjectMeta{ID: "typed", Labels: map[string]string{"example.com/key": "value"}},
+		Quantity:   resource.MustParse("2Gi"),
+		ObservedAt: meta.Time{Time: time.Date(2026, time.September, 14, 0, 0, 0, 0, time.UTC)},
+		Address:    net.ParseIP("192.0.2.10"),
+		Revision:   9007199254740993,
+	}
+	if err := storage.Create(t.Context(), object); err != nil {
+		t.Fatal(err)
+	}
+	got := &scopedCodecObject{}
+	if err := storage.Get(t.Context(), object.ID, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != object.ID || got.UID == "" || got.Generation != 1 || got.ResourceVersion < 1 || !slices.Equal(got.Scopes, scopes) || got.Labels["example.com/key"] != "value" {
+		t.Fatalf("embedded metadata was not preserved: %#v", got.ObjectMeta)
+	}
+	if got.Quantity.Cmp(object.Quantity) != 0 || !got.ObservedAt.Time.Equal(object.ObservedAt.Time) || !got.Address.Equal(object.Address) || got.Revision != object.Revision {
+		t.Fatalf("BSON codecs changed business values: %#v", got)
+	}
+	got.Status.Val = "ready"
+	got.Quantity = resource.MustParse("1Gi")
+	if err := storage.Status().
+		Update(t.Context(), got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Val != "ready" || got.Quantity.Cmp(object.Quantity) != 0 || got.Revision != object.Revision || !slices.Equal(got.Scopes, scopes) {
+		t.Fatalf("status update changed typed business fields or scopes: %#v", got)
+	}
+}
+
+func TestMongoStorageScopeHierarchy(t *testing.T) {
+	uri := testmongodb.RequireURI(t)
+	database := RequireIntegrationDatabase(t, uri)
+	root := NewIntegrationStorage(t, database, &TestObject{})
+	organization := store.Scope{Resource: "iam.organization", Name: "one"}
+	repository := store.Scope{Resource: "moha.repository", Name: "private"}
+	leaf := store.Scope{Resource: "moha.repository", Name: "nested"}
+	type scopedFixture struct {
+		id     string
+		scopes []store.Scope
+	}
+	objects := []scopedFixture{
+		{id: "root"},
+		{id: "organization", scopes: []store.Scope{organization}},
+		{id: "repository", scopes: []store.Scope{organization, repository}},
+		{id: "nested", scopes: []store.Scope{organization, repository, leaf}},
+		{id: "sibling", scopes: []store.Scope{{Resource: organization.Resource, Name: "other"}, repository}},
+		{id: "reordered", scopes: []store.Scope{repository, organization}},
+	}
+	for _, target := range objects {
+		storage := root.Scope(target.scopes...)
+		object := &TestObject{ObjectMeta: store.ObjectMeta{ID: target.id, Description: "original"}}
+		if err := storage.Create(t.Context(), object); err != nil {
+			t.Fatalf("Create %s: %v", target.id, err)
+		}
+	}
+	for _, target := range objects {
+		t.Run(target.id, func(t *testing.T) {
+			storage := root.Scope(target.scopes...)
+			for _, candidate := range objects {
+				got := &TestObject{}
+				err := storage.Get(t.Context(), candidate.id, got)
+				if candidate.id != target.id {
+					if !commonerrors.IsNotFound(err) {
+						t.Fatalf("Get crossed from %s to %s: %#v, %v", target.id, candidate.id, got, err)
+					}
+					continue
+				}
+				if err != nil || !slices.Equal(got.Scopes, candidate.scopes) {
+					t.Fatalf("Get %s lost scope: %#v, %v", candidate.id, got.Scopes, err)
+				}
+			}
+			for _, descendants := range []bool{false, true} {
+				listOptions := []store.ListOption{store.WithSort("id+"), store.WithFields("id")}
+				var countOptions []store.CountOption
+				if descendants {
+					listOptions = append(listOptions, store.WithSubScopes())
+					countOptions = append(countOptions, store.WithSubScopes())
+				}
+				list := &store.List[TestObject]{}
+				if err := storage.List(t.Context(), list, listOptions...); err != nil {
+					t.Fatal(err)
+				}
+				var expected []string
+				for _, candidate := range objects {
+					matches := slices.Equal(candidate.scopes, target.scopes)
+					if descendants {
+						matches = len(candidate.scopes) >= len(target.scopes) && slices.Equal(candidate.scopes[:len(target.scopes)], target.scopes)
+					}
+					if matches {
+						expected = append(expected, candidate.id)
+					}
+				}
+				slices.Sort(expected)
+				var got []string
+				for _, item := range list.Items {
+					got = append(got, item.ID)
+					index := slices.IndexFunc(objects, func(candidate scopedFixture) bool {
+						return candidate.id == item.ID
+					})
+					if index < 0 || !slices.Equal(item.Scopes, objects[index].scopes) {
+						t.Fatalf("projected List lost object scope: %#v", item)
+					}
+				}
+				if !slices.Equal(got, expected) || list.Total == nil || *list.Total != len(expected) {
+					t.Fatalf("List descendants=%v got %v total=%v, want %v", descendants, got, list.Total, expected)
+				}
+				count, err := storage.Count(t.Context(), &TestObject{}, countOptions...)
+				if err != nil || count != len(expected) {
+					t.Fatalf("Count descendants=%v = %d, %v; want %d", descendants, count, err, len(expected))
+				}
+			}
+		})
+	}
+	parent := root.Scope(organization)
+	list := &store.List[TestObject]{}
+	if err := parent.List(t.Context(), list, store.WithSubScopes(), store.WithSort("id+"), store.WithPage(2, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 || list.Items[0].ID != "organization" || list.Total == nil || *list.Total != 3 {
+		t.Fatalf("scope filtering must precede pagination and count: %#v", list)
+	}
+	if err := parent.PatchBatch(t.Context(), &store.List[TestObject]{}, store.RawPatchBatch(store.PatchTypeMergePatch, []byte(`{"description":"patched","scopes":[]}`))); err != nil {
+		t.Fatal(err)
+	}
+	got := &TestObject{}
+	if err := parent.Get(t.Context(), "organization", got); err != nil || got.Description != "patched" || !slices.Equal(got.Scopes, []store.Scope{organization}) {
+		t.Fatalf("batch patch moved object scope: %#v, %v", got, err)
+	}
+	child := parent.Scope(repository)
+	got = &TestObject{}
+	if err := child.Get(t.Context(), "repository", got); err != nil || got.Description != "original" {
+		t.Fatalf("parent batch patch reached child: %#v, %v", got, err)
+	}
+	if err := parent.DeleteBatch(t.Context(), &store.List[TestObject]{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Get(t.Context(), "repository", &TestObject{}); err != nil {
+		t.Fatalf("parent batch delete reached child: %v", err)
+	}
+	got.Description = "updated"
+	if err := child.Update(t.Context(), got); err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Patch(t.Context(), got, store.RawPatch(store.PatchTypeMergePatch, []byte(`{"description":"single patch"}`))); err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Delete(t.Context(), got); err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Get(t.Context(), "repository", &TestObject{}); !commonerrors.IsNotFound(err) {
+		t.Fatalf("Delete did not remove exact object: %v", err)
 	}
 }
 
@@ -146,6 +382,16 @@ func TestMongoStorageIntegration(t *testing.T) {
 			want:        []string{"infrastructure", "unlabeled"},
 		},
 		{
+			name:        "empty in matches nothing",
+			requirement: selector.NewRequirement("example.com/team", selector.In),
+			want:        []string{},
+		},
+		{
+			name:        "empty not in matches nothing",
+			requirement: selector.NewRequirement("example.com/team", selector.NotIn),
+			want:        []string{},
+		},
+		{
 			name:        "exists",
 			requirement: selector.NewRequirement("example.com/team", selector.Exists),
 			want:        []string{"infrastructure", "platform"},
@@ -200,7 +446,8 @@ func TestStoreConformance(t *testing.T) {
 				},
 				collections:    map[string]*mongo.Collection{},
 				collectionLock: sync.RWMutex{},
-				logger:         log.FromContext(t.Context()).WithName("mongo-storage"),
+				logger: log.FromContext(t.Context()).
+					WithName("mongo-storage"),
 			}
 			if err := core.initCollections(t.Context()); err != nil {
 				return nil, err
@@ -274,7 +521,8 @@ func NewIntegrationStorage(t testing.TB, database *mongo.Database, objects ...st
 		},
 		collections:    map[string]*mongo.Collection{},
 		collectionLock: sync.RWMutex{},
-		logger:         log.FromContext(t.Context()).WithName("mongo-storage"),
+		logger: log.FromContext(t.Context()).
+			WithName("mongo-storage"),
 	}
 	if err := core.initCollections(t.Context()); err != nil {
 		t.Fatalf("initialize MongoDB collections: %v", err)

@@ -14,6 +14,8 @@ Create 允许调用方不提供 ID。空 ID 生成 UUID，显式非空 ID 保留
 
 Update 的 `ResourceVersion=0` 表示无条件更新，非零值在 `OptimisticLock` 开启时必须匹配当前版本，否则返回 Conflict。每次成功持久化都推进 ResourceVersion。ObjectMeta 和顶层 status 的变化不推进 Generation，其他业务字段发生变化时 Generation 加一。
 
+生命周期合并和 Generation 比较必须保留 JSON 数值的完整精度；不能将整数先转换为 float64 再写回。业务字段比较按 JSON 结构和数值语义进行，等价的数值表示不推进 Generation，字符串与数值不互相转换。普通更新保留的 status 与服务端元数据也遵守相同的无损要求。
+
 普通 Update 和 Patch 保留当前 status。`Status().Update` 和 `Status().Patch` 只修改顶层 status，不能修改元数据、业务字段或 Generation。Patch 必须基于存储中的当前对象原子应用，传入对象上的 ResourceVersion 不是 Patch 的隐式前置条件。
 
 Merge Patch 未携带 ResourceVersion 或携带零值时是无条件 Patch；携带非零 ResourceVersion 时必须匹配当前对象，否则返回 Conflict。仓库的 ObjectMeta 使用扁平 JSON，因此条件字段是顶层 `resourceVersion`。JSON Patch 可以通过 `test /resourceVersion` 表达条件，test 失败返回 HTTP 422 且后续操作不执行。条件验证完成后，ResourceVersion 仍由 Store 管理并在成功写入时推进。
@@ -55,7 +57,9 @@ REST Delete 不使用 request body，所有选项都通过 query 参数传递，
 
 Store 只管理传播 finalizer，不遍历 OwnerReferences，也不递归删除依赖对象；依赖传播由 garbage collector 负责。
 
-Scope 是有序层级。默认 Get、List、Count 和写操作只匹配完整的当前 Scope，不得命中兄弟或祖先 Scope。`IncludeSubScopes` 只包含当前 Scope 的后代，并且只有声明 `SubScopes` 的实现才可使用。
+Scope 是有序层级。默认 Get、List、Count 和写操作只匹配完整的当前 Scope，不得命中兄弟、祖先或后代 Scope。`IncludeSubScopes` 在当前 Scope 之外包含其后代，并且只有声明 `SubScopes` 的实现才可使用。Scope 的资源类型是字面值，可以含点号；同一类型可以在路径不同位置重复，顺序和每一级名称都参与匹配。Scope 派生不能修改已有 Store 的路径。
+
+MongoDB 以对象已有的 `scopes` 数组作为 Scope 身份，查询不使用资源类型拼接数据库字段路径。List 和 Watch 必须保留每个对象完整的持久化 Scope，包括子 Scope 查询和字段投影。根 Scope 的空数组、null 和省略形式具有相同含义。顶层单数化 Scope 字段保留为调用方及声明索引使用的投影；重复资源类型的投影取最深一级，不能用该有损投影推断完整层级。
 
 ## 查询与能力
 

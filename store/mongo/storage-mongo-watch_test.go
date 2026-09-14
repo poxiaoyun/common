@@ -3,11 +3,10 @@ package mongo
 import (
 	"context"
 	"fmt"
-	"reflect"
+	"slices"
 	"testing"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
 	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/selector"
 	"xiaoshiai.cn/common/store"
@@ -186,9 +185,9 @@ func TestMongoStorageWatchStopClosesEvents(t *testing.T) {
 	watcher.Stop()
 
 	select {
-	case _, ok := <-watcher.Events():
+	case event, ok := <-watcher.Events():
 		if ok {
-			t.Fatal("watch event channel remained open after Stop")
+			t.Fatalf("watch emitted an event after Stop: %#v", event)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("watch event channel did not close after Stop")
@@ -221,21 +220,90 @@ func assertMongoWatchEvent(t *testing.T, watcher store.Watcher, eventType store.
 	return event
 }
 
-func TestToWatchFilterMatchesCurrentOrPreviousImmutableFields(t *testing.T) {
-	want := bson.D{
-		{Key: "operationType", Value: bson.M{"$in": bson.A{"insert", "update", "replace", "delete"}}},
-		{Key: "$or", Value: bson.A{
-			bson.D{{Key: "fullDocument.tenant", Value: "acme"}},
-			bson.D{{Key: "fullDocumentBeforeChange.tenant", Value: "acme"}},
-		}},
-		{Key: "$or", Value: bson.A{
-			bson.D{{Key: "fullDocument.id", Value: "message"}},
-			bson.D{{Key: "fullDocumentBeforeChange.id", Value: "message"}},
-		}},
-	}
-
-	got := ToWatchFilter(bson.D{{Key: "tenant", Value: "acme"}, {Key: "id", Value: "message"}})
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("watch filter = %#v, want %#v", got, want)
+func TestMongoStorageWatchScopeIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		root        bool
+		descendants bool
+	}{
+		{name: "root exact", root: true},
+		{name: "nested exact"},
+		{name: "nested descendants", descendants: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			uri := testmongodb.RequireURI(t)
+			database := RequireIntegrationDatabase(t, uri)
+			root := NewIntegrationStorage(t, database, &Message{})
+			scopes := []store.Scope{{Resource: "iam.organization", Name: "one"}, {Resource: "moha.repository", Name: "private"}}
+			if test.root {
+				scopes = nil
+			}
+			parent := root.Scope(scopes...)
+			childScopes := append(slices.Clone(scopes), store.Scope{Resource: "moha.repository", Name: "nested"})
+			child := root.Scope(childScopes...)
+			if err := parent.Create(t.Context(), &Message{ObjectMeta: store.ObjectMeta{ID: "parent"}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := child.Create(t.Context(), &Message{ObjectMeta: store.ObjectMeta{ID: "child"}}); err != nil {
+				t.Fatal(err)
+			}
+			options := []store.WatchOption{store.WithSendInitialEvents()}
+			if test.descendants {
+				options = append(options, store.WithSubScopes())
+			}
+			watcher, err := parent.Watch(t.Context(), &store.List[Message]{}, options...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer watcher.Stop()
+			seen := map[string][]store.Scope{}
+			for {
+				event := nextMongoWatchEvent(t, watcher)
+				if event.Type == store.WatchEventBookmark {
+					break
+				}
+				seen[event.Object.GetID()] = event.Object.GetScopes()
+			}
+			expectedCount := 1
+			if test.descendants {
+				expectedCount++
+				if !slices.Equal(seen["child"], childScopes) {
+					t.Fatalf("child Watch scope = %#v, want %#v", seen["child"], childScopes)
+				}
+			}
+			if len(seen) != expectedCount || !slices.Equal(seen["parent"], scopes) {
+				t.Fatalf("initial scoped Watch = %#v", seen)
+			}
+			// Stream order makes an incorrectly included sibling event observable
+			// before the matching event; no timeout or quiet-window guess is needed.
+			sibling := root.Scope(store.Scope{Resource: "iam.organization", Name: "other"})
+			if err := sibling.Create(t.Context(), &Message{ObjectMeta: store.ObjectMeta{ID: "sibling"}}); err != nil {
+				t.Fatal(err)
+			}
+			target, targetScopes := parent, scopes
+			if test.descendants {
+				target, targetScopes = child, childScopes
+			}
+			live := &Message{ObjectMeta: store.ObjectMeta{ID: "live"}}
+			if err := target.Create(t.Context(), live); err != nil {
+				t.Fatal(err)
+			}
+			event := assertMongoWatchEvent(t, watcher, store.WatchEventCreate, "live")
+			if !slices.Equal(event.Object.GetScopes(), targetScopes) {
+				t.Fatalf("live Watch scope = %#v, want %#v", event.Object.GetScopes(), targetScopes)
+			}
+			live.Description = "updated"
+			if err := target.Update(t.Context(), live); err != nil {
+				t.Fatal(err)
+			}
+			assertMongoWatchEvent(t, watcher, store.WatchEventUpdate, "live")
+			if err := target.Delete(t.Context(), live); err != nil {
+				t.Fatal(err)
+			}
+			event = assertMongoWatchEvent(t, watcher, store.WatchEventDelete, "live")
+			if !slices.Equal(event.Object.GetScopes(), targetScopes) || event.Object.GetDescription() != "updated" {
+				t.Fatalf("delete Watch lost previous scope or object: %#v", event.Object)
+			}
+		})
 	}
 }

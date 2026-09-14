@@ -667,7 +667,7 @@ func (c *core) update(ctx context.Context, scopes []store.Scope, obj store.Objec
 				if err != nil {
 					return nil, nil, err
 				}
-				if !reflect.DeepEqual(store.ObjectBusinessFields(currentMap), store.ObjectBusinessFields(changedMap)) {
+				if !store.ObjectBusinessFieldsEqual(currentMap, changedMap) {
 					generation++
 				}
 				_ = unstructured.SetNestedField(newuns.Object, generation, "generation")

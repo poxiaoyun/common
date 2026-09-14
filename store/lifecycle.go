@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"reflect"
 	"slices"
 	"time"
@@ -91,7 +93,7 @@ func PrepareObjectForUpdate(current, desired Object, status bool) (bool, error) 
 			}
 		}
 		generation := current.GetGeneration()
-		if !reflect.DeepEqual(ObjectBusinessFields(currentMap), ObjectBusinessFields(desiredMap)) {
+		if !ObjectBusinessFieldsEqual(currentMap, desiredMap) {
 			generation++
 		}
 		result["generation"] = generation
@@ -144,26 +146,80 @@ func CopyObject(source, target Object) error {
 
 // ResetObject clears target before decoding a complete replacement into it.
 func ResetObject(target Object) {
-	value := reflect.ValueOf(target).Elem()
+	value := reflect.ValueOf(target).
+		Elem()
 	value.Set(reflect.Zero(value.Type()))
 }
 
 // ServerTimestampNow returns the JSON precision shared by Store backends.
 func ServerTimestampNow() meta.Time {
-	return meta.Time{Time: time.Now().UTC().Truncate(time.Second)}
+	now := time.Now().
+		UTC().
+		Truncate(time.Second)
+	return meta.Time{Time: now}
 }
 
-// ObjectToMap returns the JSON object representation of obj.
+// ObjectToMap returns the JSON object representation of obj. JSON numbers use
+// json.Number so subsequent merging and decoding cannot round integer values.
 func ObjectToMap(obj Object) (map[string]any, error) {
 	data, err := json.Marshal(obj)
 	if err != nil {
 		return nil, err
 	}
 	result := map[string]any{}
-	if err := json.Unmarshal(data, &result); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// ObjectBusinessFieldsEqual compares the business fields of two ObjectToMap
+// results using exact JSON numeric equality, without coercing other JSON types.
+// Equivalent numeric spellings do not advance Generation.
+func ObjectBusinessFieldsEqual(current, desired map[string]any) bool {
+	return objectJSONValuesEqual(ObjectBusinessFields(current), ObjectBusinessFields(desired))
+}
+
+func objectJSONValuesEqual(left, right any) bool {
+	switch left := left.(type) {
+	case json.Number:
+		right, ok := right.(json.Number)
+		if !ok {
+			return false
+		}
+		leftValue, _ := new(big.Rat).
+			SetString(string(left))
+		rightValue, _ := new(big.Rat).
+			SetString(string(right))
+		return leftValue.Cmp(rightValue) == 0
+	case map[string]any:
+		right, ok := right.(map[string]any)
+		if !ok || len(left) != len(right) {
+			return false
+		}
+		for key, leftValue := range left {
+			rightValue, exists := right[key]
+			if !exists || !objectJSONValuesEqual(leftValue, rightValue) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		right, ok := right.([]any)
+		if !ok || len(left) != len(right) {
+			return false
+		}
+		for index := range left {
+			if !objectJSONValuesEqual(left[index], right[index]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(left, right)
+	}
 }
 
 // ObjectBusinessFields returns fields that participate in Generation changes.

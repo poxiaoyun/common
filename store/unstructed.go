@@ -8,6 +8,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"k8s.io/apimachinery/pkg/runtime"
+	kubejson "sigs.k8s.io/json"
 	"xiaoshiai.cn/common/meta"
 )
 
@@ -250,7 +251,7 @@ func (u *Unstructured) SetOwnerReferences(references []OwnerReference) {
 		RemoveNestedField(u.Object, "ownerReferences")
 		return
 	}
-	newReferences := make([]interface{}, 0, len(references))
+	newReferences := make([]any, 0, len(references))
 	for _, reference := range references {
 		out, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&reference)
 		if err != nil {
@@ -270,7 +271,7 @@ func (u *Unstructured) setNestedField(value any, fields ...string) {
 
 func (u *Unstructured) setNestedMap(value map[string]string, fields ...string) {
 	if u.Object == nil {
-		u.Object = make(map[string]interface{})
+		u.Object = make(map[string]any)
 	}
 	SetNestedStringMap(u.Object, value, fields...)
 }
@@ -283,20 +284,20 @@ func (u *Unstructured) SetNestedString(value string, fields ...string) {
 	u.setNestedField(value, fields...)
 }
 
-func SetNestedStringMap(obj map[string]interface{}, value map[string]string, fields ...string) error {
-	m := make(map[string]interface{}, len(value)) // convert map[string]string into map[string]interface{}
+func SetNestedStringMap(obj map[string]any, value map[string]string, fields ...string) error {
+	m := make(map[string]any, len(value)) // convert map[string]string into map[string]any
 	for k, v := range value {
 		m[k] = v
 	}
 	return SetNestedField(obj, m, fields...)
 }
 
-func GetNestedStringMap(obj map[string]interface{}, fields ...string) map[string]string {
+func GetNestedStringMap(obj map[string]any, fields ...string) map[string]string {
 	val, found := GetNestedField(obj, fields...)
 	if !found {
 		return nil
 	}
-	m, ok := val.(map[string]interface{})
+	m, ok := val.(map[string]any)
 	if !ok {
 		return nil
 	}
@@ -403,10 +404,10 @@ func GetNestedField(obj map[string]any, fields ...string) (any, bool) {
 	return val, true
 }
 
-func RemoveNestedField(obj map[string]interface{}, fields ...string) {
+func RemoveNestedField(obj map[string]any, fields ...string) {
 	m := obj
 	for _, field := range fields[:len(fields)-1] {
-		if x, ok := m[field].(map[string]interface{}); ok {
+		if x, ok := m[field].(map[string]any); ok {
 			m = x
 		} else {
 			return
@@ -454,9 +455,11 @@ func FromUnstructured(u *Unstructured, obj Object) error {
 	return runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, obj)
 }
 
+// UnmarshalJSON preserves integer facts as int64 and fractions as float64,
+// retaining the numeric types accepted by Kubernetes unstructured conversion.
 func (u *Unstructured) UnmarshalJSON(data []byte) error {
 	d := map[string]any{}
-	if err := json.Unmarshal(data, &d); err != nil {
+	if err := kubejson.UnmarshalCaseSensitivePreserveInts(data, &d); err != nil {
 		return err
 	}
 	u.Object = d

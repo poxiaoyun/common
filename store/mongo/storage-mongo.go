@@ -1,6 +1,7 @@
 package mongo
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	stderrors "errors"
@@ -53,11 +54,11 @@ var _ store.PingableStore = &MongoStorage{}
 var GlobalBsonRegistry = bson.NewRegistry()
 
 func init() {
-	quantityType := reflect.TypeOf(resource.Quantity{})
+	quantityType := reflect.TypeFor[resource.Quantity]()
 	GlobalBsonRegistry.RegisterTypeEncoder(quantityType, BsonQuantityCodec{})
 	GlobalBsonRegistry.RegisterTypeDecoder(quantityType, BsonQuantityCodec{})
 
-	timeType := reflect.TypeOf(meta.Time{})
+	timeType := reflect.TypeFor[meta.Time]()
 	GlobalBsonRegistry.RegisterTypeEncoder(timeType, BsonTimeCodec{})
 	GlobalBsonRegistry.RegisterTypeDecoder(timeType, BsonTimeCodec{})
 }
@@ -151,7 +152,8 @@ func NewMongoStorage(ctx context.Context, schema *store.Schema, options *MongoDB
 		bsonOptions:    mongoBsonOptions,
 		collections:    map[string]*mongo.Collection{},
 		collectionLock: sync.RWMutex{},
-		logger:         log.FromContext(ctx).WithName("mongo-storage"),
+		logger: log.FromContext(ctx).
+			WithName("mongo-storage"),
 	}
 	if err := core.initCollections(ctx); err != nil {
 		return nil, err
@@ -169,7 +171,8 @@ func NewMongoDB(ctx context.Context,
 		SetConnectTimeout(time.Second * 10).
 		SetHosts([]string{opts.Address}).
 		SetBSONOptions(bsonOptions).
-		SetRegistry(bsonRegistry).SetReplicaSet(opts.ReplicaSet)
+		SetRegistry(bsonRegistry).
+		SetReplicaSet(opts.ReplicaSet)
 
 	if opts.Username != "" && opts.Password != "" {
 		connectopt.SetAuth(mongooptions.Credential{Username: opts.Username, Password: opts.Password})
@@ -188,14 +191,13 @@ func NewMongoDB(ctx context.Context,
 }
 
 type MongoStorageCore struct {
-	schema             *store.Schema
-	db                 *mongo.Database
-	bsonRegistry       *bsoncodec.Registry
-	bsonOptions        *mongooptions.BSONOptions
-	collections        map[string]*mongo.Collection
-	collectionLock     sync.RWMutex
-	setUpdateTimestamp bool
-	logger             log.Logger
+	schema         *store.Schema
+	db             *mongo.Database
+	bsonRegistry   *bsoncodec.Registry
+	bsonOptions    *mongooptions.BSONOptions
+	collections    map[string]*mongo.Collection
+	collectionLock sync.RWMutex
+	logger         log.Logger
 }
 
 func (m *MongoStorageCore) initCollections(ctx context.Context) error {
@@ -208,14 +210,18 @@ func (m *MongoStorageCore) initCollections(ctx context.Context) error {
 		m.collections[resource] = col
 		indexes := make([]mongo.IndexModel, 0, len(definition.Indexes))
 		for _, index := range definition.Indexes {
-			indexOptions := mongooptions.Index().SetName(index.Name).SetUnique(index.Unique)
+			indexOptions := mongooptions.Index().
+				SetName(index.Name).
+				SetUnique(index.Unique)
 			if index.Nullable {
 				indexOptions.SetPartialFilterExpression(PartialFilterExpression(index.Fields))
 			}
 			indexes = append(indexes, mongo.IndexModel{Keys: listToBsonD(index.Fields), Options: indexOptions})
 		}
-		m.logger.V(5).Info("init indexes", "collection", col.Name(), "indexes", indexes)
-		if _, err := col.Indexes().CreateMany(ctx, indexes); err != nil {
+		m.logger.V(5).
+			Info("init indexes", "collection", col.Name(), "indexes", indexes)
+		if _, err := col.Indexes().
+			CreateMany(ctx, indexes); err != nil {
 			return err
 		}
 		// https://www.mongodb.com/docs/manual/reference/command/collMod
@@ -223,8 +229,10 @@ func (m *MongoStorageCore) initCollections(ctx context.Context) error {
 			{Key: "collMod", Value: col.Name()},
 			{Key: "changeStreamPreAndPostImages", Value: bson.M{"enabled": true}},
 		}
-		m.logger.V(5).Info("init collection", "collection", col.Name(), "cmd", cmd)
-		if err := m.db.RunCommand(ctx, cmd).Err(); err != nil {
+		m.logger.V(5).
+			Info("init collection", "collection", col.Name(), "cmd", cmd)
+		if err := m.db.RunCommand(ctx, cmd).
+			Err(); err != nil {
 			return err
 		}
 	}
@@ -252,6 +260,7 @@ func (m *MongoStorage) Capabilities() store.Capabilities {
 		Search:           true,
 		Sort:             true,
 		Page:             true,
+		SubScopes:        true,
 		Projection:       true,
 		OptimisticLock:   true,
 		Watch:            true,
@@ -262,7 +271,8 @@ func (m *MongoStorage) Capabilities() store.Capabilities {
 }
 
 func (m *MongoStorage) Ping(ctx context.Context) error {
-	return m.core.db.Client().Ping(ctx, nil)
+	return m.core.db.Client().
+		Ping(ctx, nil)
 }
 
 // Schema implements store.Store.
@@ -279,7 +289,7 @@ func (m *MongoStorage) Scope(scopes ...store.Scope) store.Store {
 	if len(scopes) == 0 {
 		return m
 	}
-	return &MongoStorage{core: m.core, scopes: append(m.scopes, scopes...)}
+	return &MongoStorage{core: m.core, scopes: append(slices.Clone(m.scopes), scopes...)}
 }
 
 // Count implements Storage.
@@ -289,9 +299,10 @@ func (m *MongoStorage) Count(ctx context.Context, obj store.Object, opts ...stor
 		return 0, err
 	}
 	var count int
-	err := m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+	err := m.on(ctx, obj, options.IncludeSubScopes, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
-		m.core.logger.V(5).Info("count", "collection", col.Name(), "filter", filter)
+		m.core.logger.V(5).
+			Info("count", "collection", col.Name(), "filter", filter)
 		doccount, err := col.CountDocuments(ctx, filter)
 		if err != nil {
 			return WarpMongoError(err, col, obj)
@@ -305,16 +316,16 @@ func (m *MongoStorage) Count(ctx context.Context, obj store.Object, opts ...stor
 // Create implements Storage.
 func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...store.CreateOption) error {
 	_ = store.ApplyCreateOptions(opts)
-	return m.on(ctx, into, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
-		store.PrepareObjectForCreate(into, col.Name(), m.scopes)
+	return m.on(ctx, into, false, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+		store.PrepareObjectForCreate(into, col.Name(), slices.Clone(m.scopes))
 		into.SetResourceVersion(1)
-		data, err := m.mergeConditionOnChange(into, nil)
+		data, err := m.objectDocument(into)
 		if err != nil {
 			return err
 		}
-		data = m.beforeSave(data)
 		// before creation
-		m.core.logger.V(5).Info("create", "collection", col.Name(), "data", data)
+		m.core.logger.V(5).
+			Info("create", "collection", col.Name(), "data", data)
 		result, err := col.InsertOne(ctx, data)
 		if err != nil {
 			return WarpMongoError(err, col, into)
@@ -328,41 +339,53 @@ func (m *MongoStorage) Create(ctx context.Context, into store.Object, opts ...st
 	})
 }
 
-func (m *MongoStorage) beforeSave(data bson.D) bson.D {
-	// remove "resource" field
-	data = slices.DeleteFunc(data, func(d bson.E) bool {
-		return d.Key == "resource"
-	})
-	// set scopes fields
-	return SetScopesFields(data, m.scopes)
-}
-
-func (m *MongoStorage) mergeConditionOnChange(into any, exludes []string) (bson.D, error) {
+func (m *MongoStorage) objectDocument(into any) (bson.D, error) {
 	if uns, ok := into.(*store.Unstructured); ok {
 		into = uns.Object
 	}
-	data, err := FlattenData(into, 1, exludes, nil)
+	var encoded bytes.Buffer
+	writer, err := bsonrw.NewBSONValueWriter(&encoded)
 	if err != nil {
-		return nil, errors.NewBadRequest("invalid object")
+		return nil, errors.NewInternalError(err)
 	}
-	// add condition to new object
+	encoder, err := bson.NewEncoder(writer)
+	if err != nil {
+		return nil, errors.NewInternalError(err)
+	}
+	encoder.SetRegistry(m.core.bsonRegistry)
+	encoder.UseJSONStructTags()
+	encoder.OmitZeroStruct()
+	if err := encoder.Encode(into); err != nil {
+		return nil, errors.NewBadRequest(fmt.Sprintf("invalid object: %v", err))
+	}
+	var data bson.D
+	decoder, err := bson.NewDecoder(bsonrw.NewBSONDocumentReader(encoded.Bytes()))
+	if err != nil {
+		return nil, errors.NewInternalError(err)
+	}
+	decoder.SetRegistry(m.core.bsonRegistry)
+	if err := decoder.Decode(&data); err != nil {
+		return nil, errors.NewInternalError(err)
+	}
+	data = slices.DeleteFunc(data, func(field bson.E) bool { return field.Key == "resource" })
+	// Scope fields remain a lossy projection for declared indexes and callers;
+	// the ordered scopes array is the only identity used by Store queries.
 loop:
-	for _, cond := range m.scopes {
-		// set field
-		condkey, condvalue := strings.TrimSuffix(cond.Resource, "s"), cond.Name
+	for _, projection := range SetScopesFields(nil, m.scopes) {
 		for i, d := range data {
-			if d.Key == condkey {
+			if d.Key == projection.Key {
 				// if field is not empty and not equal to condition value, return error
-				if !reflect.ValueOf(d.Value).IsZero() && !reflect.DeepEqual(d.Value, condvalue) {
-					return nil, errors.NewBadRequest(fmt.Sprintf("conflict condition and object field: %s", condkey))
+				if d.Value != nil && !reflect.ValueOf(d.Value).
+					IsZero() && !reflect.DeepEqual(d.Value, projection.Value) {
+					return nil, errors.NewBadRequest(fmt.Sprintf("conflict condition and object field: %s", projection.Key))
 				}
 				// set field to condition value
-				data[i].Value = condvalue
+				data[i].Value = projection.Value
 				continue loop
 			}
 		}
 		// set new field
-		data = append(data, bson.E{Key: condkey, Value: condvalue})
+		data = append(data, projection)
 	}
 	return data, nil
 }
@@ -377,7 +400,7 @@ func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...sto
 	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
 		return err
 	}
-	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+	return m.on(ctx, obj, false, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: id})
 		for {
 			current := store.NewObject(obj)
@@ -386,7 +409,7 @@ func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...sto
 				return WarpMongoError(err, col, obj)
 			}
 			current.SetResource(col.Name())
-			current.SetScopes(m.scopes)
+			current.SetScopes(slices.Clone(m.scopes))
 			if err := store.ValidateDeletePreconditions(current, options.Preconditions); err != nil {
 				return err
 			}
@@ -409,11 +432,11 @@ func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...sto
 				return store.CopyObject(current, obj)
 			}
 			current.SetResourceVersion(current.GetResourceVersion() + 1)
-			data, err := m.mergeConditionOnChange(current, nil)
+			data, err := m.objectDocument(current)
 			if err != nil {
 				return err
 			}
-			result, err := col.ReplaceOne(ctx, versionFilter, m.beforeSave(data))
+			result, err := col.ReplaceOne(ctx, versionFilter, data)
 			if err != nil {
 				return WarpMongoError(err, col, obj)
 			}
@@ -431,9 +454,10 @@ func (m *MongoStorage) DeleteBatch(ctx context.Context, obj store.ObjectList, op
 	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
 		return err
 	}
-	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+	return m.on(ctx, obj, false, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
-		m.core.logger.V(5).Info("delete all", "collection", col.Name(), "filter", filter)
+		m.core.logger.V(5).
+			Info("delete all", "collection", col.Name(), "filter", filter)
 		if _, err := col.DeleteMany(ctx, filter); err != nil {
 			return WarpMongoError(err, col, nil)
 		}
@@ -450,7 +474,7 @@ func (m *MongoStorage) Get(ctx context.Context, id string, obj store.Object, opt
 	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
 		return err
 	}
-	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+	return m.on(ctx, obj, false, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: id})
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
 		findopt := mongooptions.FindOne()
@@ -461,12 +485,14 @@ func (m *MongoStorage) Get(ctx context.Context, id string, obj store.Object, opt
 			}
 			findopt = findopt.SetProjection(project)
 		}
-		m.core.logger.V(5).Info("get", "collection", col.Name(), "filter", filter)
-		if err := col.FindOne(ctx, filter, findopt).Decode(obj); err != nil {
+		m.core.logger.V(5).
+			Info("get", "collection", col.Name(), "filter", filter)
+		if err := col.FindOne(ctx, filter, findopt).
+			Decode(obj); err != nil {
 			return WarpMongoError(err, col, obj)
 		}
 		obj.SetResource(col.Name())
-		obj.SetScopes(m.scopes)
+		obj.SetScopes(slices.Clone(m.scopes))
 		return nil
 	})
 }
@@ -496,14 +522,15 @@ func (m *MongoStorage) PatchBatch(ctx context.Context, obj store.ObjectList, pat
 	if err := validateSelectorRequirements(options.LabelRequirements, options.FieldRequirements); err != nil {
 		return err
 	}
-	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+	return m.on(ctx, obj, false, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = ConditionsMatch(filter, options.LabelRequirements, options.FieldRequirements, "")
-		update, err := convertBatchPatch(patch, []string{"creator", "creationTimestamp", "resourceVersion", "status", "generation"}, nil)
+		update, err := convertBatchPatch(patch, []string{"creator", "creationTimestamp", "resourceVersion", "status", "generation", "scopes"}, nil)
 		if err != nil {
 			return err
 		}
 		update = append(update, bson.E{Key: "$inc", Value: bson.D{{Key: "resourceVersion", Value: 1}}})
-		m.core.logger.V(5).Info("batch patch", "collection", col.Name(), "filter", filter, "update", update)
+		m.core.logger.V(5).
+			Info("batch patch", "collection", col.Name(), "filter", filter, "update", update)
 		if _, err := col.UpdateMany(ctx, filter, update); err != nil {
 			return ConvetMongoListError(err, col)
 		}
@@ -523,9 +550,10 @@ func (m *MongoStorage) List(ctx context.Context, list store.ObjectList, opts ...
 
 	// if projection is empty, set projection from list object
 	// currently, we don't use this feature
-	return m.on(ctx, list, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+	return m.on(ctx, list, options.IncludeSubScopes, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		pipeline := listPipeline(filter, nil, options, options.Fields, nil)
-		m.core.logger.V(5).Info("list", "collection", col.Name(), "pipeline", pipeline)
+		m.core.logger.V(5).
+			Info("list", "collection", col.Name(), "pipeline", pipeline)
 		cur, err := col.Aggregate(ctx, pipeline)
 		if err != nil {
 			return ConvetMongoListError(err, col)
@@ -551,7 +579,6 @@ func (m *MongoStorage) List(ctx context.Context, list store.ObjectList, opts ...
 		// set resource for each item
 		store.ForEachItem(list, func(item store.Object) error {
 			item.SetResource(col.Name())
-			item.SetScopes(m.scopes)
 			return nil
 		})
 		return nil
@@ -588,7 +615,7 @@ func listPipeline(match bson.D, pre []any, opts store.ListOptions, fields []stri
 	}
 	// project
 	if len(fields) > 0 {
-		project := bson.M{}
+		project := bson.M{"scopes": 1}
 		for _, field := range fields {
 			project[field] = 1
 		}
@@ -647,12 +674,31 @@ func sortstage(sort string) bson.M {
 	}
 }
 
-func scopesmatch(match bson.D, scopes []store.Scope) bson.D {
-	for _, scope := range scopes {
-		resourcekey := store.ScopeResourceToFieldName(scope.Resource)
-		match = append(match, bson.E{Key: resourcekey, Value: scope.Name})
+func scopesmatch(scopes []store.Scope, includeSubScopes bool) bson.D {
+	if !includeSubScopes && len(scopes) == 0 {
+		return bson.D{{Key: "scopes", Value: bson.D{{Key: "$in", Value: bson.A{nil, bson.A{}}}}}}
+	}
+	match := make(bson.D, 0, 3*len(scopes)+1)
+	if !includeSubScopes {
+		match = append(match, bson.E{Key: "scopes", Value: bson.D{{Key: "$size", Value: len(scopes)}}})
+	}
+	for index, scope := range scopes {
+		prefix := "scopes." + strconv.Itoa(index)
+		match = append(match,
+			bson.E{Key: prefix, Value: bson.D{{Key: "$exists", Value: true}}},
+			bson.E{Key: prefix + ".resource", Value: scopeFieldMatch(scope.Resource)},
+			bson.E{Key: prefix + ".name", Value: scopeFieldMatch(scope.Name)},
+		)
 	}
 	return match
+}
+
+func scopeFieldMatch(value string) any {
+	if value == "" {
+		// Scope's JSON omitempty makes a missing field the empty string.
+		return bson.D{{Key: "$in", Value: bson.A{nil, ""}}}
+	}
+	return value
 }
 
 // ConditionsMatch appends label and field requirements for the selected document prefix.
@@ -675,6 +721,9 @@ func mongoFieldRequirements(requirements store.Requirements, prefix string) bson
 }
 
 func mongoFieldRequirement(requirement selector.Requirement, prefix string) bson.D {
+	if (requirement.Operator == selector.In || requirement.Operator == selector.NotIn) && len(requirement.Values) == 0 {
+		return bson.D{{Key: "$expr", Value: false}}
+	}
 	key := prefix + requirement.Key
 	switch requirement.Operator {
 	case selector.None:
@@ -734,6 +783,9 @@ func mongoLabelRequirements(requirements store.Requirements, input string) any {
 }
 
 func mongoLabelRequirement(requirement selector.Requirement, input string) any {
+	if (requirement.Operator == selector.In || requirement.Operator == selector.NotIn) && len(requirement.Values) == 0 {
+		return false
+	}
 	switch requirement.Operator {
 	case selector.None:
 		return false
@@ -836,15 +888,6 @@ func escapeRegex(input string) string {
 	return escapeRegexReplacer.Replace(input)
 }
 
-func convertPatch(patch store.Patch, orginal store.Object, excludes []string, includes []string) (bson.D, error) {
-	data, err := patch.Data(orginal)
-	if err != nil {
-		return nil, err
-	}
-	patchtype := patch.Type()
-	return patchToMongoUpdate(patchtype, data, excludes, includes)
-}
-
 func convertBatchPatch(patch store.PatchBatch, excludes []string, includes []string) (bson.D, error) {
 	data := patch.Data()
 	patchtype := patch.Type()
@@ -879,13 +922,13 @@ func patchToMongoUpdate(patchtype store.PatchType, data []byte, excludes []strin
 }
 
 func WarpMongoError(err error, col *mongo.Collection, obj store.Object) error {
-	if obj == nil {
-		obj = &store.ObjectMeta{}
+	if err != nil {
+		if obj == nil {
+			obj = &store.ObjectMeta{}
+		}
+		return ConvetMongoError(err, col, obj.GetID())
 	}
-	if err == nil {
-		return nil
-	}
-	return ConvetMongoError(err, col, obj.GetID())
+	return nil
 }
 
 func ConvetMongoListError(err error, col *mongo.Collection) error {
@@ -952,7 +995,7 @@ func (m *MongoStorage) replace(
 	if err := validateSelectorRequirements(labelRequirements, fieldRequirements); err != nil {
 		return err
 	}
-	return m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+	return m.on(ctx, obj, false, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		filter = append(filter, bson.E{Key: "id", Value: obj.GetID()})
 		filter = ConditionsMatch(filter, labelRequirements, fieldRequirements, "")
 		current := store.NewObject(obj)
@@ -961,7 +1004,7 @@ func (m *MongoStorage) replace(
 			return WarpMongoError(err, col, obj)
 		}
 		current.SetResource(col.Name())
-		current.SetScopes(m.scopes)
+		current.SetScopes(slices.Clone(m.scopes))
 		if requestedVersion != 0 && requestedVersion != current.GetResourceVersion() {
 			return errors.NewConflict(col.Name(), obj.GetID(), fmt.Errorf("resourceVersion %d does not match", requestedVersion))
 		}
@@ -985,11 +1028,10 @@ func (m *MongoStorage) replace(
 			return store.CopyObject(desired, obj)
 		}
 		desired.SetResourceVersion(current.GetResourceVersion() + 1)
-		data, err := m.mergeConditionOnChange(desired, nil)
+		data, err := m.objectDocument(desired)
 		if err != nil {
 			return err
 		}
-		data = m.beforeSave(data)
 		result, err := col.ReplaceOne(ctx, versionFilter, data)
 		if err != nil {
 			return WarpMongoError(err, col, obj)
@@ -1021,7 +1063,7 @@ func requirementOperatorExists(requirements store.Requirements, operators ...sel
 	return false
 }
 
-func (m *MongoStorage) on(ctx context.Context, into any, fn func(ctx context.Context, col *mongo.Collection, filter bson.D) error) error {
+func (m *MongoStorage) on(ctx context.Context, into any, includeSubScopes bool, fn func(ctx context.Context, col *mongo.Collection, filter bson.D) error) error {
 	if into == nil {
 		return errors.NewBadRequest("object is nil")
 	}
@@ -1041,7 +1083,7 @@ func (m *MongoStorage) on(ctx context.Context, into any, fn func(ctx context.Con
 			m.core.collections[colname] = collection
 		}
 	}
-	filter := scopesmatch(bson.D{}, m.scopes)
+	filter := scopesmatch(m.scopes, includeSubScopes)
 	return fn(ctx, collection, filter)
 }
 
@@ -1094,17 +1136,15 @@ func JsonPatchToBsonUpdate(patches []map[string]any, excludes []string, includes
 			if index := strings.LastIndex(path, "/"); index > 0 {
 				lastElement = path[index+1:]
 			}
-			if _, err := strconv.ParseInt(lastElement, 10, 64); err == nil {
-				// is array operation
-				update = append(update, bson.E{Key: "$push", Value: bson.D{{Key: bsonpath, Value: bson.D{{Key: "$each", Value: bson.A{value}}}}}})
+			if _, err := strconv.ParseInt(lastElement, 10, 64); err != nil {
+				if lastElement == "-" {
+					update = append(update, bson.E{Key: "$push", Value: bson.D{{Key: bsonpath, Value: value}}})
+				} else {
+					update = append(update, bson.E{Key: "$set", Value: bson.D{{Key: bsonpath, Value: value}}})
+				}
 				continue
 			}
-			if lastElement == "-" {
-				// append array
-				update = append(update, bson.E{Key: "$push", Value: bson.D{{Key: bsonpath, Value: value}}})
-				continue
-			}
-			update = append(update, bson.E{Key: "$set", Value: bson.D{{Key: bsonpath, Value: value}}})
+			update = append(update, bson.E{Key: "$push", Value: bson.D{{Key: bsonpath, Value: bson.D{{Key: "$each", Value: bson.A{value}}}}}})
 		case "remove":
 			update = append(update, bson.E{Key: "$unset", Value: bson.D{{Key: bsonpath, Value: ""}}})
 		case "replace":

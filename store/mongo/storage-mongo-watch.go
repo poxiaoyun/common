@@ -2,8 +2,8 @@ package mongo
 
 import (
 	"context"
-	stderrors "errors"
 	"reflect"
+	"slices"
 	"sync"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -20,9 +20,12 @@ import (
 func NewObject[T any](t reflect.Type) T {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
-		return reflect.New(t).Interface().(T)
+		return reflect.New(t).
+			Interface().(T)
 	}
-	return reflect.New(t).Elem().Interface().(T)
+	return reflect.New(t).
+		Elem().
+		Interface().(T)
 }
 
 // Watch implements Storage.
@@ -43,7 +46,7 @@ func (m *MongoStorage) Watch(ctx context.Context, obj store.ObjectList, opts ...
 		return nil, err
 	}
 	var watcher store.Watcher
-	err = m.on(ctx, obj, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
+	err = m.on(ctx, obj, options.IncludeSubScopes, func(ctx context.Context, col *mongo.Collection, filter bson.D) error {
 		if options.ID != "" {
 			filter = append(filter, bson.E{Key: "id", Value: options.ID})
 		}
@@ -74,12 +77,14 @@ func ToWatchFilter(filter bson.D) bson.D {
 	ret := bson.D{
 		bson.E{Key: "operationType", Value: bson.M{"$in": bson.A{"insert", "update", "replace", "delete"}}},
 	}
-	// https://www.mongodb.com/docs/manual/reference/change-events/
+	current := bson.D{{Key: "fullDocument", Value: bson.D{{Key: "$exists", Value: true}}}}
+	previous := bson.D{{Key: "fullDocumentBeforeChange", Value: bson.D{{Key: "$exists", Value: true}}}}
 	for _, f := range filter {
-		ret = append(ret, bson.E{Key: "$or", Value: bson.A{
-			bson.D{{Key: "fullDocument." + f.Key, Value: f.Value}},
-			bson.D{{Key: "fullDocumentBeforeChange." + f.Key, Value: f.Value}},
-		}})
+		current = append(current, bson.E{Key: "fullDocument." + f.Key, Value: f.Value})
+		previous = append(previous, bson.E{Key: "fullDocumentBeforeChange." + f.Key, Value: f.Value})
+	}
+	if len(filter) > 0 {
+		ret = append(ret, bson.E{Key: "$or", Value: bson.A{current, previous}})
 	}
 	return ret
 }
@@ -122,15 +127,17 @@ func NewMongoWatcher(ctx context.Context,
 			cancel()
 			return nil, errors.NewInternalError(err)
 		}
-		log.FromContext(watchCtx).Info("send initial events", "filter", findFilter)
+		log.FromContext(watchCtx).
+			Info("send initial events", "filter", findFilter)
 		// Collection.Clone does not preserve BSONOptions in the current driver.
-		snapshot := col.Database().Collection(
-			col.Name(),
-			mongooptions.Collection().
-				SetReadConcern(readconcern.Snapshot()).
-				SetBSONOptions(bsonOptions).
-				SetRegistry(bsonRegistry),
-		)
+		snapshot := col.Database().
+			Collection(
+				col.Name(),
+				mongooptions.Collection().
+					SetReadConcern(readconcern.Snapshot()).
+					SetBSONOptions(bsonOptions).
+					SetRegistry(bsonRegistry),
+			)
 		cur, err = snapshot.Find(watchCtx, findFilter)
 		if err != nil {
 			_ = stream.Close(watchCtx)
@@ -139,31 +146,35 @@ func NewMongoWatcher(ctx context.Context,
 		}
 	}
 	w := &MongoWatcher{
-		col:           col,
-		bsonRegistry:  bsonRegistry,
-		bsonOptions:   bsonOptions,
-		newObjectFunc: newobj,
-		scopes:        scopes,
-		labelSelector: opts.LabelRequirements,
-		fieldSelector: opts.FieldRequirements,
-		results:       make(chan store.WatchEvent, 64),
-		cancel:        cancel,
+		col:              col,
+		bsonRegistry:     bsonRegistry,
+		bsonOptions:      bsonOptions,
+		newObjectFunc:    newobj,
+		scopes:           scopes,
+		includeSubScopes: opts.IncludeSubScopes,
+		id:               opts.ID,
+		labelSelector:    opts.LabelRequirements,
+		fieldSelector:    opts.FieldRequirements,
+		results:          make(chan store.WatchEvent, 64),
+		cancel:           cancel,
 	}
 	go w.run(watchCtx, cur, stream)
 	return w, nil
 }
 
 type MongoWatcher struct {
-	col           *mongo.Collection
-	bsonRegistry  *bsoncodec.Registry
-	bsonOptions   *mongooptions.BSONOptions
-	newObjectFunc func() store.Object
-	scopes        []store.Scope
-	labelSelector store.Requirements
-	fieldSelector store.Requirements
-	results       chan store.WatchEvent
-	cancel        context.CancelFunc
-	stop          sync.Once
+	col              *mongo.Collection
+	bsonRegistry     *bsoncodec.Registry
+	bsonOptions      *mongooptions.BSONOptions
+	newObjectFunc    func() store.Object
+	scopes           []store.Scope
+	includeSubScopes bool
+	id               string
+	labelSelector    store.Requirements
+	fieldSelector    store.Requirements
+	results          chan store.WatchEvent
+	cancel           context.CancelFunc
+	stop             sync.Once
 }
 
 // Event implements Watcher.
@@ -179,7 +190,6 @@ func (w *MongoWatcher) runlist(ctx context.Context, cur *mongo.Cursor) error {
 			return errors.NewInternalError(err)
 		}
 		item.SetResource(w.col.Name())
-		item.SetScopes(w.scopes)
 		if !w.send(ctx, store.WatchEvent{Type: store.WatchEventCreate, Object: item}) {
 			return ctx.Err()
 		}
@@ -193,7 +203,10 @@ func (w *MongoWatcher) runlist(ctx context.Context, cur *mongo.Cursor) error {
 func (w *MongoWatcher) run(ctx context.Context, cur *mongo.Cursor, stream *mongo.ChangeStream) {
 	defer close(w.results)
 	defer w.Stop()
-	if err := w.consume(ctx, cur, stream); err != nil && !stderrors.Is(err, context.Canceled) {
+	if err := w.consume(ctx, cur, stream); err != nil {
+		if ctx.Err() == context.Canceled {
+			return
+		}
 		w.send(ctx, store.WatchEvent{Error: err})
 	}
 }
@@ -275,7 +288,6 @@ func (w *MongoWatcher) watchEvent(raw rawMongoEvent) (store.WatchEvent, error) {
 			return store.WatchEvent{}, err
 		}
 		old.SetResource(w.col.Name())
-		old.SetScopes(w.scopes)
 	}
 	if len(raw.FullDocument) > 0 {
 		new = w.newObjectFunc()
@@ -283,7 +295,6 @@ func (w *MongoWatcher) watchEvent(raw rawMongoEvent) (store.WatchEvent, error) {
 			return store.WatchEvent{}, err
 		}
 		new.SetResource(w.col.Name())
-		new.SetScopes(w.scopes)
 	}
 	oldMatches, err := w.matches(old)
 	if err != nil {
@@ -307,6 +318,17 @@ func (w *MongoWatcher) watchEvent(raw rawMongoEvent) (store.WatchEvent, error) {
 
 func (w *MongoWatcher) matches(obj store.Object) (bool, error) {
 	if obj == nil || !store.MatchLabelReqirements(obj, w.labelSelector) {
+		return false, nil
+	}
+	if w.id != "" && obj.GetID() != w.id {
+		return false, nil
+	}
+	scopes := obj.GetScopes()
+	if w.includeSubScopes {
+		if len(scopes) < len(w.scopes) || !slices.Equal(scopes[:len(w.scopes)], w.scopes) {
+			return false, nil
+		}
+	} else if !slices.Equal(scopes, w.scopes) {
 		return false, nil
 	}
 	uns, err := store.ToUnstructured(obj)
