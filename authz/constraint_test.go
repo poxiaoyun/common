@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"xiaoshiai.cn/common/authz"
-	"xiaoshiai.cn/common/selector"
 )
 
 func TestResourceConstraintValidateAcceptsCompleteTree(t *testing.T) {
@@ -32,10 +31,9 @@ func TestResourceConstraintValidateAcceptsCompleteTree(t *testing.T) {
 				Constraints: []authz.ResourceConstraint{
 					{
 						Operator: authz.ConstraintProperties,
-						Properties: selector.Requirement{
-							Operator: selector.Equals,
-							Key:      "visibility",
-							Values:   []any{"public"},
+						Properties: authz.ResourcePropertyConstraint{
+							Expression: authz.Equal(authz.ResourceProperty("moha", "visibility"), authz.Literal("public")),
+							Result:     true,
 						},
 					},
 					{
@@ -80,6 +78,42 @@ func TestResourceConstraintValidateAcceptsConstantsAndEmptyCompositions(t *testi
 		if err := constraints[index].Validate(); err != nil {
 			t.Fatalf("constraint %d: %v", index, err)
 		}
+	}
+}
+
+func TestPropertyPredicateSelectsKnownResult(t *testing.T) {
+	condition := authz.Equal(authz.ResourceProperty("catalog", "visibility"), authz.Literal("public"))
+	tests := []struct {
+		name       string
+		properties authz.Properties
+		wantTrue   bool
+		wantFalse  bool
+	}{
+		{"public", authz.Properties{"visibility": "public"}, true, false},
+		{"private", authz.Properties{"visibility": "private"}, false, true},
+		{"missing", nil, false, false},
+		{"null", authz.Properties{"visibility": nil}, false, false},
+		{"wrong type", authz.Properties{"visibility": true}, false, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resource := authz.Resource{Type: "catalog.item", ID: "item", Properties: test.properties}
+			positive := authz.ResourcePropertyConstraint{Expression: condition, Result: true}
+			negative := authz.ResourcePropertyConstraint{Expression: condition, Result: false}
+			if err := positive.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			if positive.Match(resource) != test.wantTrue || negative.Match(resource) != test.wantFalse {
+				t.Fatalf("predicate results do not match expected true/false sets")
+			}
+			present := authz.ResourcePropertyConstraint{
+				Expression: authz.Exists(authz.ResourceProperty("catalog", "visibility")),
+				Result:     true,
+			}
+			if present.Match(resource) != (test.name != "missing") {
+				t.Fatal("existence confused present null with absence")
+			}
+		})
 	}
 }
 
@@ -160,12 +194,11 @@ func TestResourceConstraintValidateRejectsInvalidShapes(t *testing.T) {
 			name: "invalid properties",
 			constraint: authz.ResourceConstraint{
 				Operator: authz.ConstraintProperties,
-				Properties: selector.Requirement{
-					Operator: selector.Equals,
-					Key:      "visibility",
+				Properties: authz.ResourcePropertyConstraint{
+					Expression: authz.PolicyExpression{Operator: authz.PolicyEqual},
 				},
 			},
-			want: "one value",
+			want: "two values",
 		},
 		{
 			name: "request relationship property",

@@ -146,6 +146,30 @@ each endpoint's own timeout, proxy, and TLS settings. Token authentication
 reviews may request audiences; the response must contain at least one validated
 requested audience. Basic and SSH reviews are audience-unaware.
 
+`AuthorizationClient{Client: client}` uses a client whose base URL is the API
+root (for example `https://iam/v1`) and implements all four `authz` capabilities:
+
+| Method | POST endpoint | Successful result |
+| --- | --- | --- |
+| `Authorize` | `/authorization-reviews` | Allow, Deny, or NoOpinion |
+| `Check` | `/authorization-checks` | Final Allow or Deny |
+| `BatchCheck` | `/authorization-batch-checks` | One final decision per input, in order |
+| `PlanResourceConstraint` | `/authorization-constraint-plans` | Validated complete constraint |
+
+Requests carry `spec.authentication` and the complete `spec.operation` (or
+`spec.operations` for a batch). Check, batch, and plan requests may include
+`spec.atLeast`; responses carry `status` with the canonical `authz` result.
+Resource facts use the [typed authz JSON representation](../../authz/README.md#typed-json-facts).
+The calling service's HTTP credential is separate from the evaluated Subject;
+only trusted callers may assert authentication and authoritative resource facts.
+No request accepts caller-selected Policy rules.
+
+Structured non-success HTTP statuses remain `common/errors.Status` errors.
+Missing results, malformed constraints, invalid final decisions, and incomplete
+batches return errors with no usable result. `WebhookAuthorizer` remains an
+operation-gate client configured with the exact review endpoint URL, not an API
+root; use `AuthorizationClient` for the other capabilities.
+
 `FanoutAuditSink` delivers an immutable event to every configured audit sink in
 parallel and aggregates their errors after all sinks have been attempted.
 Services that use best-effort asynchronous audit delivery should wrap each

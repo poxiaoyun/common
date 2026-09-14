@@ -253,10 +253,9 @@ authz.ResourceConstraint{
     Constraints: []authz.ResourceConstraint{
         {
             Operator: authz.ConstraintProperties,
-            Properties: selector.Requirement{
-                Operator: selector.Equals,
-                Key:      "visibility",
-                Values:   []any{"public"},
+            Properties: authz.ResourcePropertyConstraint{
+                Expression: authz.Equal(authz.ResourceProperty("moha", "visibility"), authz.Literal("public")),
+                Result: true,
             },
         },
         {
@@ -264,15 +263,15 @@ authz.ResourceConstraint{
             Constraints: []authz.ResourceConstraint{
                 {
                     Operator: authz.ConstraintProperties,
-                    Properties: selector.Requirement{
-                        Operator: selector.Equals,
-                        Key:      "visibility",
-                        Values:   []any{"internal"},
+                    Properties: authz.ResourcePropertyConstraint{
+                        Expression: authz.Equal(authz.ResourceProperty("moha", "visibility"), authz.Literal("internal")),
+                        Result: true,
                     },
                 },
                 {
                     Operator: authz.ConstraintRelated,
                     Related: authz.ResourceRelationshipConstraint{
+                        Result: true,
                         Relationship: authz.RelationshipReference{
                             Service: "iam",
                             Name:    "organization.member",
@@ -296,8 +295,35 @@ already valid, so business-query translators do not repeat structural
 validation. A translator that cannot implement a valid node exactly returns an
 error; it never drops the node or replaces it with `ConstraintAll`.
 
+Property and relationship leaves select an exact `Result`. False is not the
+complement of true: missing or wrongly typed operands match neither. Query
+adapters must preserve this distinction, including for negated conditions and
+Deny rules. Property leaves reuse scalar Policy operators with candidate facts
+and typed literals only. `ResourcePropertyConstraint.Match` provides the same
+strict predicate semantics for in-memory candidates; ordinary datastore
+selectors with implicit conversions are not equivalent.
+
 Constraint planning is optional. If the planner cannot faithfully express an
 access policy, it returns an error rather than an incomplete constraint. A
 resource domain may then use a different complete implementation such as
 candidate cursor scanning with `BatchChecker` or an authorization-aware
 index; it must not retry the business query without an authorization condition.
+
+## Typed JSON facts
+
+`Properties` and `PolicyValue` own a shared tagged-literal encoding. Each fact
+has `type` and `value`; supported types are `bool`, `string`, `int64`,
+`timestamp`, `ip`, `cidr`, and `resourceReference`. Integers use decimal strings
+to retain all 64 bits through JSON consumers; timestamps use RFC 3339 with
+fractional seconds, and IPs/CIDRs use their textual representations. For example:
+
+```json
+{"visibility":{"type":"string","value":"public"},"revision":{"type":"int64","value":"9007199254740993"},"owner":{"type":"resourceReference","value":{"type":"organizations","id":"acme"}},"optional":null}
+```
+
+A missing property key remains absent; an explicit null remains present with a
+nil value. Null is not a valid Policy literal. Unknown tags, lossy numeric
+representations, incomplete resource references, and unsupported Go fact types
+are errors, never coerced values. Policy literal operands use the same tagged
+value under `literal`; property and built-in operands keep their own source
+references. Ordinary request `Context` retains its string-valued contract.

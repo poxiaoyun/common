@@ -146,8 +146,12 @@ cannot provide one during a check.
 constraint planning. It represents authorization concepts that a plain
 datastore selector cannot: candidate scope containment, complete resource path
 patterns, resource-property requirements, and subject-to-resource
-relationships. `selector.Requirement` remains the reusable two-valued language
-inside a resource-property leaf.
+relationships. Property leaves use the same typed scalar expressions as Policy.
+Each leaf selects candidates for which its expression evaluates to the specified
+boolean result. Unknown matches neither result. A negative relationship requires
+a present, typed object and a reliable false answer, not merely absence of a
+true answer. This permits exact Allow true sets and conservative Deny false
+sets without datastore value coercion.
 
 ## Authorized resource queries
 
@@ -169,15 +173,17 @@ The `ResourceConstraint` operator owns exactly one field shape:
 | `ConstraintNot` | one child in `Constraints` | negate the complete child constraint |
 | `ConstraintWithin` | `Scope` | the candidate full path is at or below the scope |
 | `ConstraintPathMatches` | `ResourcePath` | the candidate full path matches a structured path pattern |
-| `ConstraintProperties` | `Properties` | the candidate registered properties satisfy a selector requirement |
-| `ConstraintRelated` | `Related` | the current subject has a named relationship to a candidate resource-reference property |
+| `ConstraintProperties` | `Properties` | the typed scalar expression has the specified boolean result |
+| `ConstraintRelated` | `Related` | the named relationship has the specified boolean result for a typed candidate object |
 
 The zero `ResourceConstraint` is `ConstraintNone` and matches no resource, so
 an omitted operator fails closed. An empty `ConstraintAnd` is true and an empty
-`ConstraintOr` is false. Inactive fields must be zero. The embedded
-`selector.Requirement` retains its own closed operators, validation, and
-missing-property semantics; resource domains map each requirement key to their
-registered policy-property and storage-field vocabulary.
+`ConstraintOr` is false. Inactive fields must be zero. Property predicates
+contain only scalar Policy operators, candidate resource properties or identity,
+and typed literals. They contain no installed policy, principal selection,
+request facts, or provider execution steps. Resource domains map property
+references to their storage-field vocabulary and preserve operand types and
+unknown semantics.
 
 `ResourcePathPattern` is structured rather than carrying a provider-specific
 permission string. Each path element contains a complete or wildcard Type and
@@ -235,3 +241,17 @@ the caller.
 
 Reasons are diagnostic and have no machine-readable semantics. Callers do not
 branch on them or expose them without an independent public-error policy.
+
+## Typed serialization
+
+Policy literals and selected resource facts use one canonical tagged JSON
+literal codec. Type identity survives transport without numeric, boolean,
+timestamp, IP, or resource-reference coercion. Int64 decimal strings preserve
+precision through consumers whose JSON number model is IEEE754. The codec
+rejects unsupported types and malformed typed values at the wire boundary;
+downstream evaluators receive the same typed values as local callers.
+
+Explicit null resource facts remain present and distinct from absent keys;
+neither establishes a known scalar comparison result. Policy literals cannot
+be null. Transport adapters reuse these shared values rather than defining
+alternative literal unions whose round trips change policy semantics.

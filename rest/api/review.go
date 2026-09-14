@@ -33,19 +33,54 @@ type AuthenticationReview struct {
 
 // AuthorizationReviewSpec describes the identity and operation to authorize.
 type AuthorizationReviewSpec struct {
-	Authentication Authentication `json:"authentication"`
-	Attributes     Attributes     `json:"attributes"`
-}
-
-// AuthorizationReviewStatus is the result of an authorization review.
-type AuthorizationReviewStatus struct {
-	Decision authz.Decision `json:"decision"`
-	Reason   string         `json:"reason,omitempty"`
-	Error    string         `json:"error,omitempty"`
+	Authentication Authentication  `json:"authentication"`
+	Operation      authz.Operation `json:"operation"`
 }
 
 // AuthorizationReview requests an authorization decision without persisting a resource.
 type AuthorizationReview struct {
-	Spec   *AuthorizationReviewSpec   `json:"spec,omitempty"`
-	Status *AuthorizationReviewStatus `json:"status,omitempty"`
+	Spec   *AuthorizationReviewSpec `json:"spec,omitempty"`
+	Status *authz.EvaluationResult  `json:"status,omitempty"`
+}
+
+// AuthorizationCheckSpec contains one concrete resource operation and an
+// optional provider-owned authorization freshness lower bound.
+type AuthorizationCheckSpec struct {
+	Authentication Authentication  `json:"authentication"`
+	Operation      authz.Operation `json:"operation"`
+	AtLeast        string          `json:"atLeast,omitempty"`
+}
+
+// AuthorizationCheck requests a final concrete-resource decision.
+type AuthorizationCheck struct {
+	Spec   *AuthorizationCheckSpec `json:"spec,omitempty"`
+	Status *authz.EvaluationResult `json:"status,omitempty"`
+}
+
+// AuthorizationBatchCheckSpec contains an ordered set of concrete operations
+// for one Authentication at one authorization state.
+type AuthorizationBatchCheckSpec struct {
+	Authentication Authentication    `json:"authentication"`
+	Operations     []authz.Operation `json:"operations"`
+	AtLeast        string            `json:"atLeast,omitempty"`
+}
+
+// AuthorizationBatchCheck returns one final decision per input in input order.
+type AuthorizationBatchCheck struct {
+	Spec   *AuthorizationBatchCheckSpec `json:"spec,omitempty"`
+	Status *authz.BatchCheckResult      `json:"status,omitempty"`
+}
+
+// AuthorizationConstraintPlanSpec identifies a collection and the operation
+// whose complete authorized set must be planned; it contains no business query.
+type AuthorizationConstraintPlanSpec struct {
+	Authentication Authentication  `json:"authentication"`
+	Operation      authz.Operation `json:"operation"`
+	AtLeast        string          `json:"atLeast,omitempty"`
+}
+
+// AuthorizationConstraintPlan requests a complete candidate-resource constraint.
+type AuthorizationConstraintPlan struct {
+	Spec   *AuthorizationConstraintPlanSpec `json:"spec,omitempty"`
+	Status *authz.ResourceConstraintPlan    `json:"status,omitempty"`
 }

@@ -165,17 +165,17 @@ func (option AtLeastOption) ApplyToBatchCheck(options *BatchCheckOptions) {
 // CheckDecision is one item in a batch result. Reason is diagnostic and
 // must not be parsed for policy semantics.
 type CheckDecision struct {
-	Decision Decision
-	Reason   string
+	Decision Decision `json:"decision"`
+	Reason   string   `json:"reason,omitempty"`
 }
 
 // BatchCheckResult contains decisions in the same order and with the same
 // length as the operations.
 type BatchCheckResult struct {
-	Decisions []CheckDecision
+	Decisions []CheckDecision `json:"decisions"`
 	// Snapshot identifies the provider-owned authorization state shared by all
 	// decisions in the batch.
-	Snapshot string
+	Snapshot string `json:"snapshot,omitempty"`
 }
 
 // BatchChecker decides a finite set of concrete access propositions for one
@@ -191,10 +191,10 @@ type BatchChecker interface {
 // used to produce it.
 type ResourceConstraintPlan struct {
 	// Constraint is complete for the authenticated operation.
-	Constraint ResourceConstraint
+	Constraint ResourceConstraint `json:"constraint"`
 	// Snapshot identifies the provider-owned authorization state at which the
 	// complete Constraint was produced.
-	Snapshot string
+	Snapshot string `json:"snapshot,omitempty"`
 }
 
 // PlanResourceConstraintOptions contains optional execution controls for one

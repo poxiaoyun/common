@@ -133,6 +133,21 @@ validates them through the authentication context, and the response reports
 the validated intersection. A requested audience with no returned match is an
 authentication failure.
 
+Authorization transports preserve the complete canonical Authentication and
+Operation, including typed resource facts and request Context. The authenticated
+HTTP caller is the assertion source, not the evaluated Subject; the receiving
+service owns authorizing that caller to submit these trusted assertions. Check
+requests never contain an installed Policy or policy selector.
+
+Operation review, final resource Check, ordered BatchCheck, and collection
+constraint planning have separate endpoints and result contracts. Successful
+responses contain a non-null result. A final check permits only Allow or Deny;
+a batch has exactly one such decision per input in the original order. A plan
+must decode to a structurally valid complete constraint. The transport adapter
+rejects malformed results rather than allowing them to enter the domain.
+Evaluation failures use structured non-success HTTP statuses; decision reasons
+never select an error type. Optional AtLeast values travel without interpretation.
+
 ## Resource authorization adapter
 
 `authz.Authorizer` is the operation gate. `rest/api` extracts HTTP

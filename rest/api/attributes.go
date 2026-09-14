@@ -52,23 +52,6 @@ func authorizationOperation(attributes Attributes) authz.Operation {
 	return operation
 }
 
-func attributesFromOperation(operation authz.Operation) Attributes {
-	resources := make([]AttributeResource, 0, len(operation.Resource.Scope)+1)
-	for _, resource := range operation.Resource.Scope {
-		resources = append(resources, AttributeResource{Resource: resource.Type, Name: resource.ID})
-	}
-	if operation.Resource.Type != "" {
-		resources = append(resources, AttributeResource{Resource: operation.Resource.Type, Name: operation.Resource.ID})
-	}
-	return Attributes{
-		Service:   operation.Service,
-		Method:    operation.Context[authorizationContextHTTPMethod],
-		Action:    operation.Action,
-		Resources: resources,
-		Path:      operation.Context[authorizationContextHTTPPath],
-	}
-}
-
 // AttributeExtractor derives authorization attributes from a request.
 type AttributeExtractor func(r *http.Request) (*Attributes, error)
 

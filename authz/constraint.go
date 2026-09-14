@@ -3,8 +3,6 @@ package authz
 import (
 	"fmt"
 	"strings"
-
-	"xiaoshiai.cn/common/selector"
 )
 
 // ResourceConstraintOperator identifies one candidate-resource constraint
@@ -41,35 +39,98 @@ const (
 // only for the terminal element of a non-descendant pattern and selects that
 // resource collection.
 type ResourceReferencePattern struct {
-	Type string
-	ID   string
+	Type string `json:"type"`
+	ID   string `json:"id"`
 }
 
 // ResourcePathPattern matches one complete candidate resource path. When
 // Descendants is true, Path is a prefix and every supplied element must include
 // an ID. An empty descendant Path matches every resource path below root.
 type ResourcePathPattern struct {
-	Path        []ResourceReferencePattern
-	Descendants bool
+	Path        []ResourceReferencePattern `json:"path,omitempty"`
+	Descendants bool                       `json:"descendants,omitempty"`
 }
 
 // ResourceRelationshipConstraint tests a relationship from the evaluated
 // Subject to a candidate ResourceReference property.
 type ResourceRelationshipConstraint struct {
-	Relationship   RelationshipReference
-	ObjectProperty PolicyAttributeReference
+	Relationship   RelationshipReference    `json:"relationship"`
+	ObjectProperty PolicyAttributeReference `json:"objectProperty"`
+	// Result selects related (true) or reliably unrelated (false) objects.
+	// Missing or wrongly typed objects match neither result; resolver errors
+	// abort the query instead of establishing either result.
+	Result bool `json:"result"`
 }
 
 // ResourceConstraint is one closed recursive candidate-resource selection
 // node. Operator determines which of the remaining fields is active. Its zero
 // value is ConstraintNone and matches no candidate resource.
 type ResourceConstraint struct {
-	Operator     ResourceConstraintOperator
-	Constraints  []ResourceConstraint
-	Scope        Scope
-	ResourcePath ResourcePathPattern
-	Properties   selector.Requirement
-	Related      ResourceRelationshipConstraint
+	Operator     ResourceConstraintOperator     `json:"operator"`
+	Constraints  []ResourceConstraint           `json:"constraints,omitempty"`
+	Scope        Scope                          `json:"scope,omitempty"`
+	ResourcePath ResourcePathPattern            `json:"resourcePath,omitzero"`
+	Properties   ResourcePropertyConstraint     `json:"properties,omitzero"`
+	Related      ResourceRelationshipConstraint `json:"related,omitzero"`
+}
+
+// ResourcePropertyConstraint selects the exact boolean result of one scalar
+// Policy expression over candidate properties, resource identity, and literals.
+// Unknown matches neither Result. Expressions contain no boolean children,
+// relationships, subject facts, or request facts.
+type ResourcePropertyConstraint struct {
+	Expression PolicyExpression `json:"expression"`
+	Result     bool             `json:"result"`
+}
+
+// Validate establishes the scalar operator and candidate-only operand contract.
+func (predicate ResourcePropertyConstraint) Validate() error {
+	if err := validatePolicyExpression(predicate.Expression, "properties"); err != nil {
+		return err
+	}
+	switch predicate.Expression.Operator {
+	case PolicyAny, PolicyAll, PolicyNot, PolicyRelated:
+		return fmt.Errorf("property constraint requires a scalar expression")
+	}
+	for _, value := range predicate.Expression.Values {
+		switch value.Source {
+		case PolicyValueProperty:
+			if value.Property.Namespace != PolicyAttributeResource {
+				return fmt.Errorf("property constraint requires resource properties")
+			}
+		case PolicyValueBuiltin:
+			if value.Builtin != PolicyResourceID && value.Builtin != PolicyResourceType {
+				return fmt.Errorf("property constraint requires candidate resource facts")
+			}
+		}
+	}
+	return nil
+}
+
+// Match applies an already validated predicate to one candidate. Missing or
+// wrongly typed comparison operands match neither boolean result.
+func (predicate ResourcePropertyConstraint) Match(resource Resource) bool {
+	values := make([]any, len(predicate.Expression.Values))
+	for index, value := range predicate.Expression.Values {
+		switch value.Source {
+		case PolicyValueLiteral:
+			values[index] = value.Literal
+		case PolicyValueBuiltin:
+			if value.Builtin == PolicyResourceID {
+				values[index] = resource.ID
+			} else {
+				values[index] = resource.Type
+			}
+		case PolicyValueProperty:
+			values[index] = resource.Properties[value.Property.Name]
+		}
+	}
+	if predicate.Expression.Operator == PolicyExists {
+		_, exists := resource.Properties[predicate.Expression.Values[0].Property.Name]
+		return exists == predicate.Result
+	}
+	result, known := ComparePolicyValues(predicate.Expression.Operator, values...)
+	return known && result == predicate.Result
 }
 
 // Validate verifies the operator-specific field shape and every nested
@@ -217,5 +278,8 @@ func (constraint ResourceConstraint) resourcePathEmpty() bool {
 }
 
 func (constraint ResourceConstraint) propertiesEmpty() bool {
-	return constraint.Properties.Operator == selector.None && constraint.Properties.Key == "" && len(constraint.Properties.Values) == 0 && len(constraint.Properties.Requirements) == 0
+	predicate := constraint.Properties
+	return !predicate.Result && predicate.Expression.Operator == "" &&
+		len(predicate.Expression.Expressions) == 0 && len(predicate.Expression.Values) == 0 &&
+		predicate.Expression.Relationship == (RelationshipReference{})
 }

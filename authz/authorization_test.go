@@ -23,7 +23,7 @@ func TestOperationJSONUsesCanonicalFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"service":"apps","action":"get","resource":{"type":"apps.application","id":"console","scope":[{"type":"iam.organization","id":"acme"}],"properties":{"visibility":"public"}},"context":{"http.method":"GET"}}`
+	want := `{"service":"apps","action":"get","resource":{"type":"apps.application","id":"console","scope":[{"type":"iam.organization","id":"acme"}],"properties":{"visibility":{"type":"string","value":"public"}}},"context":{"http.method":"GET"}}`
 	if string(encoded) != want {
 		t.Fatalf("JSON = %s, want %s", encoded, want)
 	}

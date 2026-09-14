@@ -16,8 +16,8 @@ const (
 
 // Policy is one versioned authorization expression.
 type Policy struct {
-	Version PolicyVersion
-	Root    PolicyExpression
+	Version PolicyVersion    `json:"version"`
+	Root    PolicyExpression `json:"root"`
 }
 
 // NewPolicy constructs a Policy using the current expression vocabulary.
@@ -78,10 +78,10 @@ const (
 // child boolean nodes; Values contains value operands. Related uses the current
 // evaluated Subject and stores its target in Values.
 type PolicyExpression struct {
-	Operator     PolicyOperator
-	Expressions  []PolicyExpression
-	Values       []PolicyValue
-	Relationship RelationshipReference
+	Operator     PolicyOperator        `json:"operator"`
+	Expressions  []PolicyExpression    `json:"expressions,omitempty"`
+	Values       []PolicyValue         `json:"values,omitempty"`
+	Relationship RelationshipReference `json:"relationship,omitzero"`
 }
 
 // PolicyValueSource identifies how a Policy value is obtained.
@@ -128,15 +128,15 @@ const (
 
 // PolicyAttributeReference identifies one service-owned typed policy fact.
 type PolicyAttributeReference struct {
-	Service   string
-	Namespace PolicyAttributeNamespace
-	Name      string
+	Service   string                   `json:"service"`
+	Namespace PolicyAttributeNamespace `json:"namespace"`
+	Name      string                   `json:"name"`
 }
 
 // RelationshipReference identifies one service-owned relationship predicate.
 type RelationshipReference struct {
-	Service string
-	Name    string
+	Service string `json:"service"`
+	Name    string `json:"name"`
 }
 
 // PolicyValue is one literal, built-in fact, or service-owned property value.
