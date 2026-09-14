@@ -58,7 +58,7 @@ func NewAuditFilter(auditor Auditor, sink AuditSink) Filter {
 const MB = 1 << 20
 
 type AuditOptions struct {
-	RecordStatusMethods       []string // methods to record status code, default is empty, means record all methods
+	RecordStatusMethods       []string // HTTP methods to audit; an empty list audits all methods
 	RecordBodyContentTypes    []string // content types to record request/response body
 	RecordRequestBodyMethods  []string // methods to record request body
 	RecordResponseBodyMethods []string // methods to record response body
@@ -68,7 +68,7 @@ type AuditOptions struct {
 
 func NewDefaultAuditOptions() *AuditOptions {
 	return &AuditOptions{
-		RecordStatusMethods:       []string{},
+		RecordStatusMethods:       []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
 		RecordBodyContentTypes:    []string{"application/json", "application/yaml", "application/xml", "application/x-www-form-urlencoded"},
 		RecordRequestBodyMethods:  []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
 		RecordResponseBodyMethods: []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
