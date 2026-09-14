@@ -90,6 +90,31 @@ func TestDefaultAuditFiltersBeforeWebhook(t *testing.T) {
 
 type auditRecorder struct{ events []*api.AuditLog }
 
+func TestCustomAuditFilterHonorsCollectionPolicy(t *testing.T) {
+	for _, test := range []struct {
+		name, method string
+		excluded     []string
+		want         int
+	}{
+		{"read", http.MethodHead, nil, 0},
+		{"write", http.MethodPost, nil, 1},
+		{"excluded_path", http.MethodPost, []string{"/items"}, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			options := api.NewDefaultAuditOptions()
+			options.WhiteList = test.excluded
+			sink := &auditRecorder{}
+			filter := api.NewAuditFilter(&api.SimpleAuditor{Options: options}, sink)
+			response := httptest.NewRecorder()
+			filter.Process(response, httptest.NewRequest(test.method, "/items", nil),
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+			if response.Code != http.StatusNoContent || len(sink.events) != test.want {
+				t.Fatalf("status = %d, audit events = %d, want %d", response.Code, len(sink.events), test.want)
+			}
+		})
+	}
+}
+
 func (s *auditRecorder) Save(event *api.AuditLog) error {
 	s.events = append(s.events, event)
 	return nil
