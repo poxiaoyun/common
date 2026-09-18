@@ -20,27 +20,23 @@ authentication, or deployment configuration.
 The root package owns the stable domain and wire types and identity rules.
 Reading, policy enforcement, digesting, sorting, pagination, persistence, and
 HTTP response projection remain adapter implementation details.
-The Store implementation delegates filtering, sorting, and pagination to
-`common/store` and preserves the Store's page metadata.
 
 ## Implementations
 
 Implementations sit behind `asset.Service` in behavior-specific subpackages:
 
-- `asset/store` persists metadata and content in a `common/store.Store`;
-- `asset/s3` persists each asset as an S3 object;
 - `asset/inmemory` supports tests and local processes;
 - `asset/http.Client` accesses a remote asset service.
 
-`asset/http.Server` depends only on `asset.Service`. An IAM process can mount
-that server over either the Store or S3 implementation without changing the
-HTTP contract. A caller can replace the local implementation with the HTTP
-client without changing its asset usage.
+`asset/http.Server` depends only on `asset.Service`, so a host can mount it over
+any local implementation without changing the HTTP contract. A caller can
+replace the local implementation with the HTTP client without changing its
+asset usage.
 
 Implementation selection belongs at the composition boundary. A host directly
-constructs `asset/store`, `asset/s3`, or `asset/http` with that adapter's own
-dependencies and Options. The module does not add a universal factory whose
-configuration would merely duplicate those adapter interfaces.
+constructs a local adapter or `asset/http` with that adapter's own dependencies
+and Options. The module does not add a universal factory whose configuration
+would merely duplicate those adapter interfaces.
 
 Upload-policy, connection, and location settings are server-side concerns.
 Each local adapter owns its own Options; the caller-facing root package does
@@ -82,15 +78,7 @@ range request semantics. An Asset does not expose a URL because a caller cannot
 infer whether the implementation retained the input Link or materialized its
 own copy.
 Redirects and presigned URLs are Resolve results, not persistent identifiers.
-Range is a Resolve request, not a storage choice. Store and in-memory
-implementations may return selected Content, S3 may pass the Range to object
-storage, and an implementation may still return a Link. A redirect preserves
-the original Range request without requiring the Asset service to materialize
-the linked content.
-
-## Persistence compatibility
-
-`asset/store` uses Store resource `assets` scoped by `kind` and `owner`.
-`asset/s3` stores objects below `<prefix>/<kind>/<owner>/<asset>` and retains the
-existing `asset-*` metadata keys. These names are persistence contracts, so a
-host can move an existing deployment to this module without migrating data.
+Range is a Resolve request, not a storage choice. A local implementation may
+return selected Content, a remote one may pass the Range to its storage, and an
+implementation may still return a Link. A redirect preserves the original Range
+request without requiring the Asset service to materialize the linked content.

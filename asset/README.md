@@ -89,19 +89,16 @@ Content。预签名 URL 可能过期，调用方应保存 Asset 地址，而不�
 
 | 场景 | 选择 |
 | --- | --- |
-| 内容与现有 `common/store.Store` 一起保存 | `asset/store`；构造 Store 前调用 `AddToSchema` |
-| 内容保存在兼容 S3 的对象存储 | `asset/s3` |
 | 通过另一个进程提供的 Asset 服务访问内容 | `asset/http` |
 | 单元测试或允许退出后丢失的临时数据 | `asset/inmemory` |
 
-S3 的 `Proxy=false` 允许 `Resolve` 返回预签名 URL，适合客户端可以直接
-访问 S3 的部署；`Proxy=true` 让内容始终经过应用，适合 S3 只能由服务端
-访问的部署。
+宿主自己的持久化实现（例如与现有 `common/store.Store` 一起保存，或存入
+S3 兼容对象存储）不放在本模块内，由宿主自行实现 `asset.Service`。
 
 HTTP Server 可以包装任意本地适配器：
 
 ```go
-assets := assetstore.New(storage, assetstore.Options{})
+assets := assetinmemory.New(assetinmemory.Options{})
 server := assethttp.NewServer(assets)
 ```
 
