@@ -3,6 +3,7 @@ package etcdcache
 import (
 	stdjson "encoding/json"
 	"fmt"
+	"math/big"
 	"slices"
 	"strconv"
 	"strings"
@@ -97,21 +98,52 @@ func SortUnstructuredList(list []StorageObject, bys []meta.SortField) {
 			case "time":
 				by.Field = "creationTimestamp"
 			}
-			av, _ := getFieldIndex(&a, strings.Split(by.Field, ".")...)
-			bv, _ := getFieldIndex(&b, strings.Split(by.Field, ".")...)
+			av, _ := NestedFieldNoCopy(a.Object, strings.Split(by.Field, ".")...)
+			bv, _ := NestedFieldNoCopy(b.Object, strings.Split(by.Field, ".")...)
 			switch by.Direction {
 			case meta.SortDirectionAsc:
-				if ret := store.CompareField(av, bv); ret != 0 {
+				if ret := compareSortValues(av, bv); ret != 0 {
 					return ret
 				}
 			case meta.SortDirectionDesc:
-				if ret := store.CompareField(bv, av); ret != 0 {
+				if ret := compareSortValues(bv, av); ret != 0 {
 					return ret
 				}
 			}
 		}
 		return 0
 	})
+}
+
+// JSON numbers must retain their type when sorted; index strings are only for
+// selector lookup. Missing and null fields sort before populated fields.
+func compareSortValues(a, b any) int {
+	if a == nil {
+		if b == nil {
+			return 0
+		}
+		return -1
+	}
+	if b == nil {
+		return 1
+	}
+	switch av := a.(type) {
+	case int64:
+		switch bv := b.(type) {
+		case int64:
+			return store.CompareField(av, bv)
+		case float64:
+			return big.NewRat(av, 1).Cmp(new(big.Rat).SetFloat64(bv))
+		}
+	case float64:
+		switch bv := b.(type) {
+		case float64:
+			return store.CompareField(av, bv)
+		case int64:
+			return new(big.Rat).SetFloat64(av).Cmp(big.NewRat(bv, 1))
+		}
+	}
+	return strings.Compare(store.AnyToString(a), store.AnyToString(b))
 }
 
 func searchObject(uns *StorageObject, fields []string, val string) bool {
