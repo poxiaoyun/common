@@ -51,6 +51,16 @@ func (p Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 			pr.SetURL(p.ClientConfig.Server)
+			// ReverseProxy clears these before Rewrite. Preserve the external
+			// origin across authenticated service-to-service proxy hops.
+			for _, name := range []string{"X-Forwarded-Host", "X-Forwarded-Proto"} {
+				if value := pr.In.Header.Get(name); value != "" {
+					pr.Out.Header.Set(name, value)
+					if name == "X-Forwarded-Host" {
+						pr.Out.Host = value
+					}
+				}
+			}
 		},
 		Transport: p.ClientConfig.RoundTripper,
 		ErrorHandler: meta.Or[ErrorResponder](p.ErrorResponser, DefaultErrorResponder{}).
@@ -59,7 +69,9 @@ func (p Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		FlushInterval: -1,
 	}
 	var prefix string
-	if proxyRequestURI, _ := url.ParseRequestURI(req.Header.Get("X-Forwarded-Uri")); proxyRequestURI != nil {
+	if externalPrefix := req.Header.Get("X-Forwarded-Prefix"); strings.HasPrefix(externalPrefix, "/") && !strings.HasPrefix(externalPrefix, "//") {
+		prefix = externalPrefix
+	} else if proxyRequestURI, _ := url.ParseRequestURI(req.Header.Get("X-Forwarded-Uri")); proxyRequestURI != nil {
 		// is this request from a proxy?
 		// if request is from a proxy, the X-Forwarded-Uri header will be set
 		// example: X-Forwarded-Uri: /api/v1/namespaces/default/pods/foo/vnc/somepath

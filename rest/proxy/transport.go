@@ -94,7 +94,9 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if strings.HasSuffix(req.URL.Path, "/") {
 		forwardedURI = forwardedURI + "/"
 	}
-	req.Header.Set("X-Forwarded-Uri", forwardedURI)
+	if req.Header.Get("X-Forwarded-Uri") == "" {
+		req.Header.Set("X-Forwarded-Uri", forwardedURI)
+	}
 	if len(t.Host) > 0 {
 		req.Header.Set("X-Forwarded-Host", t.Host)
 	}
@@ -170,7 +172,12 @@ func (t *Transport) rewriteURL(target *url.URL, sourceURL *url.URL, sourceReques
 	if prepend != "" && (target.Path == prepend || strings.HasPrefix(target.Path, prepend+"/")) {
 		return target.String()
 	}
-	RewritePath(target, t.PathRemove, prepend)
+	RewritePath(target, t.PathRemove, "")
+	// Kubernetes may have prefixed an already external application URL.
+	if prepend != "" && (target.Path == prepend || strings.HasPrefix(target.Path, prepend+"/")) {
+		return target.String()
+	}
+	RewritePath(target, "", prepend)
 
 	return target.String()
 }
