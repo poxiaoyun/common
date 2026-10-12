@@ -130,7 +130,7 @@ func (g *CacheStore) Get(ctx context.Context, name string, obj store.Object, opt
 	if err := store.FromUnstructured(uns, obj); err != nil {
 		return errors.NewInternalError(fmt.Errorf("failed to convert object: %w", err))
 	}
-	return nil
+	return store.ValidatePreconditions(obj, options.Preconditions)
 }
 
 // List implements Store.

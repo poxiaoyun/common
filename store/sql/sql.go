@@ -450,7 +450,11 @@ func (c *core) get(ctx context.Context, scope []store.Scope, id string, into sto
 		db = c.applyLabels(db, options.LabelRequirements)
 	}
 	if len(options.Fields) > 0 {
-		db = db.Select(options.Fields)
+		fields := slices.Clone(options.Fields)
+		if options.Preconditions != nil {
+			fields = append(fields, "id", "uid", "resourceVersion")
+		}
+		db = db.Select(fields)
 	}
 	rows, err := db.WithContext(ctx).Where("id = ?", id).Limit(1).Rows()
 	if err != nil {
@@ -464,7 +468,7 @@ func (c *core) get(ctx context.Context, scope []store.Scope, id string, into sto
 	if err := c.helper.ScanOne(rows, into); err != nil {
 		return mapSQLError(err, resource, id)
 	}
-	return nil
+	return store.ValidatePreconditions(into, options.Preconditions)
 }
 
 func (c *core) count(ctx context.Context, scope []store.Scope, obj store.Object, options store.CountOptions) (int, error) {
@@ -523,6 +527,9 @@ func (c *core) patchBatch(ctx context.Context, scope []store.Scope, list store.O
 
 func (c *core) patch(ctx context.Context, scope []store.Scope, into store.Object, patch store.Patch, status bool, options store.PatchOptions) error {
 	return c.replace(ctx, scope, into, options.LabelRequirements, options.FieldRequirements, status, 0, func(current, desired store.Object) error {
+		if err := store.ValidatePreconditions(current, options.Preconditions); err != nil {
+			return err
+		}
 		if err := store.CopyObject(current, desired); err != nil {
 			return err
 		}
@@ -620,7 +627,7 @@ func (c *core) delete(ctx context.Context, scope []store.Scope, into store.Objec
 		if err := c.get(ctx, scope, id, current, store.GetOptions{}); err != nil {
 			return err
 		}
-		if err := store.ValidateDeletePreconditions(current, options.Preconditions); err != nil {
+		if err := store.ValidatePreconditions(current, options.Preconditions); err != nil {
 			return err
 		}
 		if err := store.ValidateDeleteRequirements(current, options.LabelRequirements, options.FieldRequirements); err != nil {

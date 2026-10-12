@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	jsonpatch "github.com/evanphx/json-patch"
@@ -81,7 +82,7 @@ func (m MapMergePatchBacth) Type() PatchType {
 }
 
 func MergePatchFrom(obj Object) Patch {
-	mergePatchFunc := func(originalJSON, modifiedJSON []byte, dataStruct interface{}) ([]byte, error) {
+	mergePatchFunc := func(originalJSON, modifiedJSON []byte, dataStruct any) ([]byte, error) {
 		return jsonpatch.CreateMergePatch(originalJSON, modifiedJSON)
 	}
 	return &mergeFromPatch{patchType: PatchTypeMergePatch, createPatch: mergePatchFunc, from: obj}
@@ -89,7 +90,7 @@ func MergePatchFrom(obj Object) Patch {
 
 type mergeFromPatch struct {
 	patchType   PatchType
-	createPatch func(originalJSON, modifiedJSON []byte, dataStruct interface{}) ([]byte, error)
+	createPatch func(originalJSON, modifiedJSON []byte, dataStruct any) ([]byte, error)
 	from        Object
 }
 
@@ -145,9 +146,12 @@ func JsonMergePatchObject(obj any, patch []byte) error {
 	if err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
-	if err := json.Unmarshal(patchedData, obj); err != nil {
+	target := reflect.ValueOf(obj).Elem()
+	replacement := reflect.New(target.Type())
+	if err := json.Unmarshal(patchedData, replacement.Interface()); err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
+	target.Set(replacement.Elem())
 	return nil
 }
 
@@ -172,8 +176,11 @@ func JsonPatchObject(obj any, patch []byte) error {
 		}
 		return err
 	}
-	if err := json.Unmarshal(patchedData, obj); err != nil {
+	target := reflect.ValueOf(obj).Elem()
+	replacement := reflect.New(target.Type())
+	if err := json.Unmarshal(patchedData, replacement.Interface()); err != nil {
 		return errors.NewBadRequest(err.Error())
 	}
+	target.Set(replacement.Elem())
 	return nil
 }

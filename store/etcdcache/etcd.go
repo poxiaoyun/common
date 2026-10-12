@@ -316,13 +316,13 @@ func (c *generic) Get(ctx context.Context, name string, obj store.Object, opts .
 	return c.core.on(ctx, obj, func(ctx context.Context, db *resourceDB) error {
 		key := getObjectKey(c.scopes, db.resource.String(), name)
 		uns := &StorageObject{}
-		options := storage.GetOptions{
+		storageOptions := storage.GetOptions{
 			// if resource version is empty, underlying storage will passthrough to etcd
 			// if set to 0, underlying storage will return the cached object
 			// if set to a number, underlying storage will return the object with the same resource version
 			ResourceVersion: formatResourceVersion(options.ResourceVersion),
 		}
-		if err := db.storage.Get(ctx, key, options, uns); err != nil {
+		if err := db.storage.Get(ctx, key, storageOptions, uns); err != nil {
 			err = storeerr.InterpretGetError(err, db.resource, name)
 			return err
 		}
@@ -333,7 +333,10 @@ func (c *generic) Get(ctx context.Context, name string, obj store.Object, opts .
 		if !ok {
 			return apierrors.NewNotFound(db.resource, name)
 		}
-		return ConvertFromUnstructured(uns, obj, db.resource)
+		if err := ConvertFromUnstructured(uns, obj, db.resource); err != nil {
+			return err
+		}
+		return store.ValidatePreconditions(obj, options.Preconditions)
 	})
 }
 
@@ -472,6 +475,9 @@ func (c *generic) Patch(ctx context.Context, obj store.Object, patch store.Patch
 		return err
 	}
 	updatefunc := func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error) {
+		if err := store.ValidatePreconditions(current, options.Preconditions); err != nil {
+			return nil, err
+		}
 		if err := store.ApplyPatch(current, obj, patch); err != nil {
 			return nil, err
 		}
@@ -538,6 +544,9 @@ func (s *status) Patch(ctx context.Context, obj store.Object, patch store.Patch,
 		return err
 	}
 	updatefunc := func(ctx context.Context, current *store.Unstructured) (newObj store.Object, err error) {
+		if err := store.ValidatePreconditions(current, options.Preconditions); err != nil {
+			return nil, err
+		}
 		if err := store.ApplyPatch(current, obj, patch); err != nil {
 			return nil, err
 		}

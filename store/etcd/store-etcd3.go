@@ -275,7 +275,7 @@ func (e *EtcdStore) Delete(ctx context.Context, obj store.Object, opts ...store.
 		if err := e.Get(ctx, obj.GetID(), current); err != nil {
 			return err
 		}
-		if err := store.ValidateDeletePreconditions(current, deleteoptions.Preconditions); err != nil {
+		if err := store.ValidatePreconditions(current, deleteoptions.Preconditions); err != nil {
 			return err
 		}
 		if err := store.ValidateDeleteRequirements(current, deleteoptions.LabelRequirements, deleteoptions.FieldRequirements); err != nil {
@@ -291,7 +291,7 @@ func (e *EtcdStore) Delete(ctx context.Context, obj store.Object, opts ...store.
 			return store.CopyObject(current, obj)
 		}
 		updatefunc := func(latest store.Object) (store.Object, error) {
-			if err := store.ValidateDeletePreconditions(latest, deleteoptions.Preconditions); err != nil {
+			if err := store.ValidatePreconditions(latest, deleteoptions.Preconditions); err != nil {
 				return nil, err
 			}
 			if err := store.ValidateDeleteRequirements(latest, deleteoptions.LabelRequirements, deleteoptions.FieldRequirements); err != nil {
@@ -330,7 +330,7 @@ func (e *EtcdStore) Get(ctx context.Context, name string, obj store.Object, opts
 		!store.MatchUnstructuredFieldRequirments(unstructured, options.FieldRequirements) {
 		return errors.NewNotFound(resource, name)
 	}
-	return nil
+	return store.ValidatePreconditions(obj, options.Preconditions)
 }
 
 const maxLimit = 10000
@@ -496,6 +496,9 @@ func (e *EtcdStore) Patch(ctx context.Context, obj store.Object, patch store.Pat
 		return err
 	}
 	updatefunc := func(current store.Object) (store.Object, error) {
+		if err := store.ValidatePreconditions(current, options.Preconditions); err != nil {
+			return nil, err
+		}
 		desired := store.NewObject(obj)
 		if err := store.CopyObject(current, desired); err != nil {
 			return nil, err
@@ -567,6 +570,9 @@ func (e *EtcdStatusStore) Patch(ctx context.Context, obj store.Object, patch sto
 		return err
 	}
 	updatefunc := func(current store.Object) (store.Object, error) {
+		if err := store.ValidatePreconditions(current, options.Preconditions); err != nil {
+			return nil, err
+		}
 		desired := store.NewObject(obj)
 		if err := store.CopyObject(current, desired); err != nil {
 			return nil, err

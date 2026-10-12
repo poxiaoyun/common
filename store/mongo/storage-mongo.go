@@ -410,7 +410,7 @@ func (m *MongoStorage) Delete(ctx context.Context, obj store.Object, opts ...sto
 			}
 			current.SetResource(col.Name())
 			current.SetScopes(slices.Clone(m.scopes))
-			if err := store.ValidateDeletePreconditions(current, options.Preconditions); err != nil {
+			if err := store.ValidatePreconditions(current, options.Preconditions); err != nil {
 				return err
 			}
 			if err := store.ValidateDeleteRequirements(current, options.LabelRequirements, options.FieldRequirements); err != nil {
@@ -483,6 +483,11 @@ func (m *MongoStorage) Get(ctx context.Context, id string, obj store.Object, opt
 			for _, field := range options.Fields {
 				project[field] = 1
 			}
+			if options.Preconditions != nil {
+				project["id"] = 1
+				project["uid"] = 1
+				project["resourceVersion"] = 1
+			}
 			findopt = findopt.SetProjection(project)
 		}
 		m.core.logger.V(5).
@@ -493,7 +498,7 @@ func (m *MongoStorage) Get(ctx context.Context, id string, obj store.Object, opt
 		}
 		obj.SetResource(col.Name())
 		obj.SetScopes(slices.Clone(m.scopes))
-		return nil
+		return store.ValidatePreconditions(obj, options.Preconditions)
 	})
 }
 
@@ -509,6 +514,9 @@ func (m *MongoStorage) Update(ctx context.Context, obj store.Object, opts ...sto
 func (m *MongoStorage) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
 	options := store.ApplyPatchOptions(opts)
 	return m.replace(ctx, obj, options.LabelRequirements, options.FieldRequirements, false, 0, func(current, desired store.Object) error {
+		if err := store.ValidatePreconditions(current, options.Preconditions); err != nil {
+			return err
+		}
 		if err := store.CopyObject(current, desired); err != nil {
 			return err
 		}
@@ -965,6 +973,9 @@ type MongoStorageStatus struct {
 func (m *MongoStorageStatus) Patch(ctx context.Context, obj store.Object, patch store.Patch, opts ...store.PatchOption) error {
 	options := store.ApplyPatchOptions(opts)
 	return m.replace(ctx, obj, options.LabelRequirements, options.FieldRequirements, true, 0, func(current, desired store.Object) error {
+		if err := store.ValidatePreconditions(current, options.Preconditions); err != nil {
+			return err
+		}
 		if err := store.CopyObject(current, desired); err != nil {
 			return err
 		}

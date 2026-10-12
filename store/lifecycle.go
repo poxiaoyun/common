@@ -29,8 +29,8 @@ func PrepareObjectForCreate(obj Object, resource string, scopes []Scope) {
 	obj.SetScopes(scopes)
 }
 
-// ValidateDeletePreconditions checks caller-supplied object identity and version.
-func ValidateDeletePreconditions(obj Object, preconditions *Preconditions) error {
+// ValidatePreconditions checks exact object identity and version for Get, Patch or Delete.
+func ValidatePreconditions(obj Object, preconditions *Preconditions) error {
 	if preconditions == nil {
 		return nil
 	}

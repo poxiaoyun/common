@@ -175,10 +175,14 @@ func (c Client) Get(ctx context.Context, name string, obj store.Object, opts ...
 	if options.ResourceVersion != nil {
 		queries.Add("resourceVersion", strconv.FormatInt(*options.ResourceVersion, 10))
 	}
+	addPreconditionQueries(queries, options.Preconditions)
 	if options.Fields != nil {
 		queries.Add("fields", strings.Join(options.Fields, ","))
 	}
-	return c.cli.Get(c.getPath(resource, name)).Queries(queries).Return(obj).Send(ctx)
+	return c.cli.Get(c.getPath(resource, name)).
+		Queries(queries).
+		Return(obj).
+		Send(ctx)
 }
 
 // List implements store.Store.
@@ -353,11 +357,13 @@ func (c Client) patch(ctx context.Context, obj store.Object, status bool, patch 
 	if err := addSelectorQueries(queries, options.LabelRequirements, options.FieldRequirements); err != nil {
 		return err
 	}
+	addPreconditionQueries(queries, options.Preconditions)
 	return c.cli.Patch(c.getPath(resource, obj.GetID())).
 		Body(bytes.NewReader(patchdata), string(patchtype)).
 		Query("status", strconv.FormatBool(status)).
 		Queries(queries).
-		Return(obj).Send(ctx)
+		Return(obj).
+		Send(ctx)
 }
 
 func (c Client) getPath(resource, name string) string {
@@ -398,4 +404,16 @@ func (s *statusClient) Patch(ctx context.Context, obj store.Object, patch store.
 // Update implements store.StatusStorage.
 func (s *statusClient) Update(ctx context.Context, obj store.Object, opts ...store.UpdateOption) error {
 	return s.Client.update(ctx, obj, true, opts...)
+}
+
+func addPreconditionQueries(queries url.Values, conditions *store.Preconditions) {
+	if conditions == nil {
+		return
+	}
+	if conditions.UID != nil {
+		queries.Set("preconditionUID", *conditions.UID)
+	}
+	if conditions.ResourceVersion != nil {
+		queries.Set("preconditionResourceVersion", strconv.FormatInt(*conditions.ResourceVersion, 10))
+	}
 }

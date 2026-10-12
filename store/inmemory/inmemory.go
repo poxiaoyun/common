@@ -194,7 +194,7 @@ func (i *InMemory) Get(ctx context.Context, name string, obj store.Object, opts 
 			!store.MatchUnstructuredFieldRequirments(unstructured, options.FieldRequirements) {
 			return errors.NewNotFound(resources, name)
 		}
-		return nil
+		return store.ValidatePreconditions(obj, options.Preconditions)
 	})
 }
 
@@ -718,6 +718,9 @@ func (m *inmemory) patch(
 		!store.MatchUnstructuredFieldRequirments(unstructured, options.FieldRequirements) {
 		return false, errors.NewNotFound(resource, into.GetID())
 	}
+	if err := store.ValidatePreconditions(current, options.Preconditions); err != nil {
+		return false, err
+	}
 	desired := store.NewObject(into)
 	if err := store.CopyObject(current, desired); err != nil {
 		return false, err
@@ -782,7 +785,7 @@ func (m *inmemory) delete(resource string, scopes []store.Scope, desired store.O
 		return false, errors.NewInternalError(err)
 	}
 	current.SetResourceVersion(int64(kv.rev))
-	if err := store.ValidateDeletePreconditions(current, options.Preconditions); err != nil {
+	if err := store.ValidatePreconditions(current, options.Preconditions); err != nil {
 		return false, err
 	}
 	if err := store.ValidateDeleteRequirements(current, options.LabelRequirements, options.FieldRequirements); err != nil {

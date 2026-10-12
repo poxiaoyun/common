@@ -247,8 +247,40 @@ func WithFields(fields ...string) FieldsOption {
 	return FieldsOption(fields)
 }
 
-// PreconditionsOption overlays present Delete preconditions.
+// PreconditionsOption overlays present Get, Patch or Delete preconditions.
 type PreconditionsOption Preconditions
+
+// ApplyToGet overlays non-nil precondition fields.
+func (option PreconditionsOption) ApplyToGet(options *GetOptions) {
+	if option.UID == nil && option.ResourceVersion == nil {
+		return
+	}
+	if options.Preconditions == nil {
+		options.Preconditions = &Preconditions{}
+	}
+	if option.UID != nil {
+		options.Preconditions.UID = option.UID
+	}
+	if option.ResourceVersion != nil {
+		options.Preconditions.ResourceVersion = option.ResourceVersion
+	}
+}
+
+// ApplyToPatch overlays non-nil precondition fields.
+func (option PreconditionsOption) ApplyToPatch(options *PatchOptions) {
+	if option.UID == nil && option.ResourceVersion == nil {
+		return
+	}
+	if options.Preconditions == nil {
+		options.Preconditions = &Preconditions{}
+	}
+	if option.UID != nil {
+		options.Preconditions.UID = option.UID
+	}
+	if option.ResourceVersion != nil {
+		options.Preconditions.ResourceVersion = option.ResourceVersion
+	}
+}
 
 // ApplyToDelete overlays non-nil precondition fields.
 func (option PreconditionsOption) ApplyToDelete(options *DeleteOptions) {
@@ -266,7 +298,7 @@ func (option PreconditionsOption) ApplyToDelete(options *DeleteOptions) {
 	}
 }
 
-// WithPreconditions overlays the supplied Delete preconditions.
+// WithPreconditions overlays the supplied Get, Patch or Delete preconditions.
 func WithPreconditions(preconditions Preconditions) PreconditionsOption {
 	return PreconditionsOption(preconditions)
 }

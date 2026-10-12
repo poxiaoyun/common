@@ -15,6 +15,7 @@ import (
 
 type optionCaptureStore struct {
 	store.Store
+	patchOptions      store.PatchOptions
 	getOptions        store.GetOptions
 	listOptions       store.ListOptions
 	patchBatchOptions store.PatchBatchOptions
@@ -415,5 +416,46 @@ func Test_decodePath(t *testing.T) {
 				t.Errorf("decodePath() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRemoteGetPreservesExactPreconditionsAndReadVersion(t *testing.T) {
+	underlying := &optionCaptureStore{}
+	remote := newCaptureRemoteStore(t, underlying)
+	uid := ""
+	exactVersion := int64(0)
+	object := &store.Unstructured{}
+	object.SetResource("widgets")
+	if err := remote.Get(t.Context(), "one", object,
+		store.WithResourceVersion(7),
+		store.WithPreconditions(store.Preconditions{UID: &uid, ResourceVersion: &exactVersion}),
+	); err != nil {
+		t.Fatal(err)
+	}
+	options := underlying.getOptions
+	if options.ResourceVersion == nil || *options.ResourceVersion != 7 || options.Preconditions == nil || options.Preconditions.UID == nil || *options.Preconditions.UID != "" || options.Preconditions.ResourceVersion == nil || *options.Preconditions.ResourceVersion != 0 {
+		t.Fatalf("read and exact versions were not preserved independently: %#v", options)
+	}
+}
+
+func (s *optionCaptureStore) Patch(_ context.Context, object store.Object, _ store.Patch, options ...store.PatchOption) error {
+	s.patchOptions = store.ApplyPatchOptions(options)
+	return nil
+}
+
+func TestRemotePatchPassesExactPreconditions(t *testing.T) {
+	underlying := &optionCaptureStore{}
+	remote := newCaptureRemoteStore(t, underlying)
+	object := &store.Unstructured{}
+	object.SetResource("widgets")
+	object.SetID("one")
+	zero := int64(0)
+	uid := "expected"
+	if err := remote.Patch(t.Context(), object, store.MapMergePatch{"name": "updated"}, store.WithPreconditions(store.Preconditions{UID: &uid, ResourceVersion: &zero})); err != nil {
+		t.Fatal(err)
+	}
+	conditions := underlying.patchOptions.Preconditions
+	if conditions == nil || conditions.ResourceVersion == nil || *conditions.ResourceVersion != 0 || conditions.UID == nil || *conditions.UID != uid {
+		t.Fatalf("Patch preconditions: %#v", conditions)
 	}
 }

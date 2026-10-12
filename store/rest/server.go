@@ -145,6 +145,11 @@ func (s *Server) List(w http.ResponseWriter, r *http.Request) {
 				}
 				options = append(options, store.WithResourceVersion(parsed))
 			}
+			preconditions, err := decodePreconditions(r)
+			if err != nil {
+				return nil, err
+			}
+			options = append(options, store.WithPreconditions(preconditions))
 			if fields := api.Query(r, "fields", ""); fields != "" {
 				options = append(options, store.WithFields(strings.Split(fields, ",")...))
 			}
@@ -214,6 +219,11 @@ func (s *Server) Patch(w http.ResponseWriter, r *http.Request) {
 			store.WithFieldRequirements(fildsel...),
 		}
 
+		preconditions, err := decodePreconditions(r)
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, store.WithPreconditions(preconditions))
 		obj := &store.Unstructured{}
 		obj.SetResource(ref.Resource)
 		obj.SetID(ref.ID)
@@ -385,4 +395,20 @@ func (s *Server) Group() api.Group {
 			api.PATCH("").
 				To(s.Patch),
 		)
+}
+
+func decodePreconditions(r *http.Request) (store.Preconditions, error) {
+	conditions := store.Preconditions{}
+	query := r.URL.Query()
+	if values, present := query["preconditionUID"]; present {
+		conditions.UID = &values[0]
+	}
+	if values, present := query["preconditionResourceVersion"]; present {
+		version, err := strconv.ParseInt(values[0], 10, 64)
+		if err != nil {
+			return store.Preconditions{}, errors.NewBadRequest("preconditionResourceVersion must be an integer")
+		}
+		conditions.ResourceVersion = &version
+	}
+	return conditions, nil
 }

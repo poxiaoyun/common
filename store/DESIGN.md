@@ -20,6 +20,16 @@ Update 的 `ResourceVersion=0` 表示无条件更新，非零值在 `OptimisticL
 
 Merge Patch 未携带 ResourceVersion 或携带零值时是无条件 Patch；携带非零 ResourceVersion 时必须匹配当前对象，否则返回 Conflict。仓库的 ObjectMeta 使用扁平 JSON，因此条件字段是顶层 `resourceVersion`。JSON Patch 可以通过 `test /resourceVersion` 表达条件，test 失败返回 HTTP 422 且后续操作不执行。条件验证完成后，ResourceVersion 仍由 Store 管理并在成功写入时推进。
 
+## Patch 的精确前置条件
+
+单对象 Patch 和 Status Patch 接受 `WithPreconditions`，与 Get/ Delete 共用 UID 和精确 ResourceVersion 语义。selector 不匹配返回 NotFound，前提不匹配返回 Conflict；显式零版本仍要求精确匹配，不表示无条件。前提检查和补丁写入必须由同一原子操作或 CAS 保护。REST 使用 `preconditionUID`、`preconditionResourceVersion` query，与补丁内容独立；Merge Patch 内原有 resourceVersion 的语义不变。
+
+## Get 的精确前置条件
+
+Get 使用 `WithPreconditions(Preconditions{UID, ResourceVersion})` 限制当前对象的身份和精确版本。不存在或 selector 不匹配返回 NotFound；已选中对象的任一前置条件不匹配返回 Conflict。nil 字段不限制，非 nil 的零值也要求精确匹配。条件基于本次读取的同一对象快照判断；字段投影不得绕过条件。Get 成功只保证本次读取，后续写入仍需 CAS。
+
+`GetOptions.ResourceVersion` 保持读取新鲜度语义，与精确版本前提独立。REST Get 的精确条件使用 `preconditionUID`、`preconditionResourceVersion` query，按参数是否出现保留指针语义。
+
 ## 删除与 Scope
 
 Delete 默认使用 Background。没有 finalizer 时立即物理删除；存在 finalizer 时设置一次不可变的 DeletionTimestamp，对象继续可读。Foreground 和 Orphan 分别添加 `foregroundDeletion` 和 `orphan` finalizer。对象进入删除状态后，普通 Update 或 Patch 清空最后一个 finalizer 必须自动完成物理删除。

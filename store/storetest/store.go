@@ -338,6 +338,83 @@ func Run(t *testing.T, fixture Fixture) {
 			t.Fatalf("Get() = %#v, want created object %q", got, object.ID)
 		}
 	})
+
+	t.Run("patch enforces exact preconditions", func(t *testing.T) {
+		storage := NewStore(t, fixture)
+		object := &Object{ObjectMeta: commonstore.ObjectMeta{ID: "conditional-patch"}, Value: "original"}
+		if err := storage.Create(t.Context(), object); err != nil {
+			t.Fatal(err)
+		}
+		version := object.ResourceVersion
+		patch := commonstore.MapMergePatch{"value": "updated"}
+		target := &Object{ObjectMeta: commonstore.ObjectMeta{ID: object.ID}}
+		if err := storage.Patch(t.Context(), target, patch, commonstore.WithPreconditions(commonstore.Preconditions{ResourceVersion: &version})); err != nil {
+			t.Fatal(err)
+		}
+		if target.Value != "updated" || target.ResourceVersion <= version {
+			t.Fatalf("patch result: %#v", target)
+		}
+		for _, expected := range []int64{version, 0} {
+			if err := storage.Patch(t.Context(), target, commonstore.MapMergePatch{"value": "rejected"}, commonstore.WithPreconditions(commonstore.Preconditions{ResourceVersion: &expected})); !commonerrors.IsConflict(err) {
+				t.Fatalf("stale/zero Patch = %v", err)
+			}
+		}
+		got := &Object{}
+		if err := storage.Get(t.Context(), object.ID, got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Value != "updated" {
+			t.Fatalf("failed patch persisted: %#v", got)
+		}
+		uid := "other"
+		if err := storage.Status().Patch(t.Context(), got, commonstore.MapMergePatch{"status": map[string]any{"phase": "invalid"}}, commonstore.WithPreconditions(commonstore.Preconditions{UID: &uid})); !commonerrors.IsConflict(err) {
+			t.Fatalf("wrong identity Status Patch = %v", err)
+		}
+	})
+	t.Run("get enforces exact preconditions", func(t *testing.T) {
+		storage := NewStore(t, fixture)
+		object := &Object{ObjectMeta: commonstore.ObjectMeta{ID: "observed"}, Value: "original"}
+		if err := storage.Create(t.Context(), object); err != nil {
+			t.Fatal(err)
+		}
+		observedVersion, observedUID := object.ResourceVersion, object.UID
+		condition := commonstore.WithPreconditions(commonstore.Preconditions{UID: &observedUID, ResourceVersion: &observedVersion})
+		if err := storage.Get(t.Context(), object.ID, &Object{}, condition); err != nil {
+			t.Fatal(err)
+		}
+		object.Value = "updated"
+		if err := storage.Update(t.Context(), object); err != nil {
+			t.Fatal(err)
+		}
+		if err := storage.Get(t.Context(), object.ID, &Object{}, condition); !commonerrors.IsConflict(err) {
+			t.Fatalf("stale Get = %v, want Conflict", err)
+		}
+		if err := storage.Get(t.Context(), object.ID, &Object{}, condition, commonstore.WithFields("value")); !commonerrors.IsConflict(err) {
+			t.Fatalf("projected stale Get = %v, want Conflict", err)
+		}
+		currentVersion := object.ResourceVersion
+		if err := storage.Get(t.Context(), object.ID, &Object{}, commonstore.WithPreconditions(commonstore.Preconditions{UID: &observedUID, ResourceVersion: &currentVersion}), commonstore.WithFields("value")); err != nil {
+			t.Fatalf("projected current Get = %v", err)
+		}
+		if err := storage.Get(t.Context(), "missing", &Object{}, condition); !commonerrors.IsNotFound(err) {
+			t.Fatalf("missing Get = %v, want NotFound", err)
+		}
+		if err := storage.Get(t.Context(), object.ID, &Object{}, condition, commonstore.WithFieldRequirements(selector.RequirementEqual("value", "other"))); !commonerrors.IsNotFound(err) {
+			t.Fatalf("unselected Get = %v, want NotFound", err)
+		}
+		zero := int64(0)
+		empty := ""
+		for _, preconditions := range []commonstore.Preconditions{
+			{ResourceVersion: &zero}, {UID: &empty},
+		} {
+			if err := storage.Get(t.Context(), object.ID, &Object{}, commonstore.WithPreconditions(preconditions)); !commonerrors.IsConflict(err) {
+				t.Fatalf("explicit zero/empty condition = %v, want Conflict", err)
+			}
+		}
+		if err := storage.Get(t.Context(), object.ID, &Object{}); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("create preserves explicit ID", func(t *testing.T) {
 		storage := NewStore(t, fixture)
 		object := &Object{ObjectMeta: commonstore.ObjectMeta{ID: "explicit"}}

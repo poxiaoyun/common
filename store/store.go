@@ -12,6 +12,8 @@ const (
 
 type (
 	GetOptions struct {
+		// Preconditions require an exact UID and/or object version on the selected object.
+		Preconditions *Preconditions
 		// ResourceVersion set to 0 to get from cache
 		// ResourceVersion set to a specific value to get the object not older than that version
 		// ResourceVersion set to nil to get from backend
@@ -136,6 +138,8 @@ type (
 	}
 
 	PatchOptions struct {
+		// Preconditions require the identity and version used to compute this atomic patch.
+		Preconditions     *Preconditions
 		FieldRequirements Requirements
 		LabelRequirements Requirements
 		DryRun            bool
@@ -236,7 +240,8 @@ type Store interface {
 	// Capabilities reports the optional behavior implemented by this store.
 	Capabilities() Capabilities
 	// Get loads the object identified by id in the exact current scope into obj.
-	// A selector mismatch is reported as NotFound.
+	// Selectors and exact Preconditions are checked against the same read snapshot.
+	// Missing or unselected objects return NotFound; mismatched Preconditions return Conflict.
 	Get(ctx context.Context, id string, obj Object, opts ...GetOption) error
 	// List loads objects from the current scope into list. Order is unspecified
 	// unless a sort is requested; subscopes are excluded by default.
