@@ -11,7 +11,6 @@ import (
 	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/meta"
 	"xiaoshiai.cn/common/rest/api"
-	"xiaoshiai.cn/common/store"
 )
 
 func TestPageFromPaginationForms(t *testing.T) {
@@ -154,8 +153,17 @@ func TestPageFromListOptionsFollowsContinuationCursor(t *testing.T) {
 	}
 }
 
+type pageStringUIDItem struct {
+	Name string
+	UID  string
+}
+
+func (i pageStringUIDItem) GetName() string { return i.Name }
+
+func (i pageStringUIDItem) GetUID() string { return i.UID }
+
 func TestPageObjectFromListOptionsUsesStoreUIDForContinuationCursor(t *testing.T) {
-	items := []store.ObjectMeta{
+	items := []pageStringUIDItem{
 		{Name: "c", UID: "uid-c"},
 		{Name: "a", UID: "uid-a"},
 		{Name: "b", UID: "uid-b"},

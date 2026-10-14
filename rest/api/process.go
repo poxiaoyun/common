@@ -6,7 +6,6 @@ import (
 
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/log"
-	"xiaoshiai.cn/common/store"
 )
 
 type ResponseStatusOnly int32
@@ -45,24 +44,5 @@ func OnCurrentSubject(w http.ResponseWriter, r *http.Request, fn func(ctx contex
 			return nil, errors.NewBadRequest("require login")
 		}
 		return fn(ctx, authentication.ID)
-	})
-}
-
-type ScopeVar struct {
-	Resource    string
-	PathVarName string
-}
-
-func OnScope(w http.ResponseWriter, r *http.Request, scopeVars []ScopeVar, fn func(ctx context.Context, scopes []store.Scope) (any, error)) {
-	On(w, r, func(ctx context.Context) (any, error) {
-		scopes := make([]store.Scope, 0, len(scopeVars))
-		for _, val := range scopeVars {
-			value := Path(r, val.PathVarName, "")
-			if value == "" {
-				return nil, errors.NewBadRequest(val.PathVarName + " is required")
-			}
-			scopes = append(scopes, store.Scope{Resource: val.Resource, Name: value})
-		}
-		return fn(ctx, scopes)
 	})
 }
