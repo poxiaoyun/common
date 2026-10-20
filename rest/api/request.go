@@ -19,12 +19,14 @@ import (
 	"compress/zlib"
 	"encoding/json"
 	"encoding/xml"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
 	"reflect"
+	"strings"
 
 	yaml "sigs.k8s.io/yaml/goyaml.v2"
 	"xiaoshiai.cn/common/errors"
@@ -138,12 +140,41 @@ func Query[T any](r *http.Request, key string, defaultValue T) T {
 	return ValueOrDefault(val, defaultValue)
 }
 
+// QueryObjectOptions controls validation of the decoded query shape.
+type QueryObjectOptions struct {
+	Strict bool
+}
+
+// QueryObjectOption configures one QueryObject call.
+type QueryObjectOption interface {
+	// ApplyToQueryObject configures this call's query validation.
+	ApplyToQueryObject(options *QueryObjectOptions)
+}
+
+// StrictQueryOption rejects unknown keys and malformed URL query encoding.
+type StrictQueryOption struct{}
+
+// WithStrictQuery makes the decoded structure own the complete query shape.
+func WithStrictQuery() StrictQueryOption { return StrictQueryOption{} }
+
+// ApplyToQueryObject enables strict query-shape validation.
+func (StrictQueryOption) ApplyToQueryObject(options *QueryObjectOptions) { options.Strict = true }
+
+// ApplyQueryObjectOptions applies query options in declaration order.
+func ApplyQueryObjectOptions(options ...QueryObjectOption) QueryObjectOptions {
+	var result QueryObjectOptions
+	for _, option := range options {
+		option.ApplyToQueryObject(&result)
+	}
+	return result
+}
+
 // QueryObject decodes URL query parameters into a struct.
 //
 // Fields use the query tag, falling back to the json tag. Anonymous structs
 // and fields tagged with ",inline" are flattened; named structs use
-// dot-separated paths. Unknown query parameters are ignored.
-func QueryObject[T any](r *http.Request) (T, error) {
+// dot-separated paths. Unknown keys are ignored unless WithStrictQuery is used.
+func QueryObject[T any](r *http.Request, options ...QueryObjectOption) (T, error) {
 	var result T
 	value := reflect.ValueOf(&result).Elem()
 	for value.Kind() == reflect.Pointer {
@@ -154,9 +185,18 @@ func QueryObject[T any](r *http.Request) (T, error) {
 		return result, fmt.Errorf("query object must be a struct, got %s", value.Kind())
 	}
 
-	query := r.URL.Query()
-	err := libreflect.WalkStructFields(value.Type(), func(name string, index []int, _ bool) error {
+	settings := ApplyQueryObjectOptions(options...)
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		if settings.Strict {
+			return result, errors.NewBadRequest(fmt.Sprintf("invalid query encoding: %v", err))
+		}
+	}
+	err = libreflect.WalkStructFields(value.Type(), func(name string, index []int, _ bool) error {
 		values, ok := query[name]
+		if settings.Strict {
+			delete(query, name)
+		}
 		if !ok {
 			return nil
 		}
@@ -171,6 +211,11 @@ func QueryObject[T any](r *http.Request) (T, error) {
 	if err != nil {
 		return result, err
 	}
+	if settings.Strict {
+		for name := range query {
+			return result, errors.NewBadRequest(fmt.Sprintf("unknown query parameter %q", name))
+		}
+	}
 	return result, nil
 }
 
@@ -180,20 +225,73 @@ func ValueOrDefault[T any](val string, defaultValue T) T {
 	return meta.ParseString(val, defaultValue)
 }
 
-func Body(r *http.Request, into any) error {
+// BodyOptions controls request body decoding.
+type BodyOptions struct {
+	StrictJSON bool
+	// JSONMediaType selects the strict decoder media type; empty means application/json.
+	JSONMediaType string
+}
+
+// BodyOption configures request body decoding.
+type BodyOption interface {
+	// ApplyToBody applies this option to the request's decoding settings.
+	ApplyToBody(options *BodyOptions)
+}
+
+// StrictBodyOption requires one JSON value with no unknown struct fields.
+type StrictBodyOption struct{}
+
+// ApplyToBody enables strict JSON decoding.
+func (StrictBodyOption) ApplyToBody(options *BodyOptions) { options.StrictJSON = true }
+
+// WithStrictBody rejects unknown or mistyped JSON fields with 422 and malformed
+// or trailing input with 400. Media defaults to application/json and can be selected
+// with WithJSONMediaType; mismatches return 415.
+func WithStrictBody() StrictBodyOption { return StrictBodyOption{} }
+
+// JSONMediaTypeOption selects the media type accepted by strict JSON decoding.
+type JSONMediaTypeOption string
+
+// ApplyToBody configures the media type; strict decoding remains an explicit option.
+func (option JSONMediaTypeOption) ApplyToBody(options *BodyOptions) {
+	options.JSONMediaType = string(option)
+}
+
+// WithJSONMediaType selects a JSON protocol media type, such as
+// application/cloudevents+json. Strict decoding defaults to application/json.
+func WithJSONMediaType(mediaType string) JSONMediaTypeOption {
+	return JSONMediaTypeOption(mediaType)
+}
+
+// ApplyBodyOptions expands body options in declaration order.
+func ApplyBodyOptions(options []BodyOption) BodyOptions {
+	var result BodyOptions
+	for _, option := range options {
+		option.ApplyToBody(&result)
+	}
+	return result
+}
+
+func Body(r *http.Request, into any, options ...BodyOption) error {
 	contentEncoding := r.Header.Get("Content-Encoding")
 	contentType := r.Header.Get("Content-Type")
 	defer r.Body.Close()
 	if r.ContentLength == 0 {
 		return errors.NewBadRequest("request body is empty")
 	}
-	if err := ReadContent(contentType, contentEncoding, r.Body, into); err != nil {
+	if err := readContent(contentType, contentEncoding, r.Body, into, ApplyBodyOptions(options)); err != nil {
 		return err
 	}
 	return ValidateBody(r, into)
 }
 
-func ReadContent(contentType, contentEncoding string, body io.Reader, into any) error {
+// ReadContent decodes a content stream using the same options as Body. Validation
+// hooks and request-body closure remain with Body.
+func ReadContent(contentType, contentEncoding string, body io.Reader, into any, options ...BodyOption) error {
+	return readContent(contentType, contentEncoding, body, into, ApplyBodyOptions(options))
+}
+
+func readContent(contentType, contentEncoding string, body io.Reader, into any, options BodyOptions) error {
 	// check if the request body needs decompression
 	switch contentEncoding {
 	case "gzip":
@@ -213,16 +311,46 @@ func ReadContent(contentType, contentEncoding string, body io.Reader, into any) 
 	}
 	mediatype, _, err := mime.ParseMediaType(contentType)
 	if err != nil {
+		if options.StrictJSON {
+			return errors.NewBadRequest(err.Error())
+		}
 		return err
+	}
+	if options.StrictJSON {
+		expected := options.JSONMediaType
+		if expected == "" {
+			expected = "application/json"
+		}
+		if mediatype != expected {
+			return errors.NewCustomError(http.StatusUnsupportedMediaType, errors.StatusReasonUnsupported, expected+" is required")
+		}
+		decoder := json.NewDecoder(body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(into); err != nil {
+			var typeError *json.UnmarshalTypeError
+			if stderrors.As(err, &typeError) || strings.HasPrefix(err.Error(), "json: unknown field ") {
+				return errors.NewCustomError(http.StatusUnprocessableEntity, errors.StatusReasonInvalid, err.Error())
+			}
+			return errors.NewBadRequest(err.Error())
+		}
+		var trailing json.RawMessage
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			return errors.NewBadRequest("request body must contain exactly one JSON value")
+		}
+		return nil
 	}
 	switch mediatype {
 	case "application/json":
-		return json.NewDecoder(body).Decode(into)
+		return json.NewDecoder(body).
+			Decode(into)
 	case "application/xml":
-		return xml.NewDecoder(body).Decode(into)
+		return xml.NewDecoder(body).
+			Decode(into)
 	case "application/yaml":
-		return yaml.NewDecoder(body).Decode(into)
+		return yaml.NewDecoder(body).
+			Decode(into)
 	default:
-		return json.NewDecoder(body).Decode(into)
+		return json.NewDecoder(body).
+			Decode(into)
 	}
 }

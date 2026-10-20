@@ -54,6 +54,27 @@ Media selection itself never writes 406 or 415. Responses selected through
 media conditions vary on the corresponding request headers so caches cannot
 reuse a result across incompatible routing decisions.
 
+## Server lifecycle
+
+The server owns listening, context cancellation, and graceful HTTP shutdown.
+Canceling the runtime context stops admission of new connections and allows
+active HTTP requests to finish within the shutdown timeout. Request contexts
+retain runtime values but are not canceled solely by the runtime's cancellation;
+closing their connections or completing shutdown ends their lifetime. A caller's
+explicit BaseContext remains authoritative.
+
+The serving operation returns only after shutdown completes. Normal cancellation
+returns no error; deadline expiry forces remaining connections closed and returns
+the shutdown error. Listen and serve errors remain inspectable with errors.Is.
+Startup failure must not leave a cancellation watcher running. Hijacked
+connections retain net/http's caller-owned shutdown contract.
+An externally initiated graceful shutdown follows the same bounded drain
+contract as runtime cancellation.
+
+`Server` owns this lifecycle around the standard HTTP server configuration.
+`ServeContext`, `API.Serve`, and `API.ServeTLS` share that implementation; services
+must not recreate shutdown goroutines around it.
+
 ## Server TLS lifecycle
 
 `ServeTLS` installs file-backed serving credentials before listening. The
@@ -326,3 +347,29 @@ materialized list and does not provide a cross-request snapshot guarantee.
 `PageFromPreparedList` is the page-only execution seam for callers that have
 already completed filtering and sorting. It applies the same page and size
 normalization without repeating collection preparation.
+
+## Query decoding
+
+QueryObject owns typed query decoding using query/json tags and embedded field
+flattening. Its default permits unknown keys for handlers that compose several
+query readers. WithStrictQuery makes that reader own the complete query shape:
+malformed query encoding and keys outside the decoded structure return BadRequest.
+Field-value decoding follows the same conversion path in both modes. Endpoint
+business defaults, ranges and cross-field validation remain with their owner.
+
+## Body decoding
+
+Body owns content decoding and invokes the configured body validator after
+decoding succeeds. WithStrictBody selects a single JSON document and enables
+the standard decoder's unknown-field checks. JSON syntax and trailing content
+are request-format errors; unknown fields and incompatible field types are
+invalid-content errors. Media selection is explicit for this mode. Compression
+and body lifetime use the existing content reader. The default reader keeps
+its existing media and permissive-field behavior; domain rules stay with the
+owning module.
+
+Strict JSON readers may select a protocol-owned JSON media type explicitly.
+The media choice changes only the accepted representation; framing and field
+checks stay with the common decoder, while custom unmarshallers own their
+protocol structure. Embedded payload decoding uses the same content reader
+and options as HTTP body decoding.

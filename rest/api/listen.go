@@ -17,13 +17,13 @@ package api
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"xiaoshiai.cn/common/log"
 	libtls "xiaoshiai.cn/common/tls"
 )
@@ -48,41 +48,100 @@ func WithDynamicTLSConfig(cert, key string) ServerOption {
 	}
 }
 
-// ServeContext runs an HTTP or HTTPS server until ctx is canceled.
-func ServeContext(ctx context.Context, listen string, handler http.Handler, options ...ServerOption) error {
-	log := log.FromContext(ctx)
-	s := http.Server{
-		Handler:     handler,
-		Addr:        listen,
-		BaseContext: func(_ net.Listener) context.Context { return ctx },
+// Server owns an HTTP server's listening and graceful shutdown lifecycle.
+// Configure it before calling Run, and run each instance only once.
+type Server struct {
+	http.Server
+	// ShutdownTimeout bounds draining active requests; zero selects 30 seconds.
+	ShutdownTimeout time.Duration
+}
+
+// Run serves HTTP or HTTPS until cancellation or a serving failure. It waits for
+// shutdown, returns nil on normal cancellation, and force-closes connections if
+// the shutdown deadline expires. Hijacked connections remain caller-owned.
+func (s *Server) Run(ctx context.Context) error {
+	timeout := s.ShutdownTimeout
+	if timeout < 0 {
+		return fmt.Errorf("shutdown timeout must not be negative")
 	}
-	for _, opt := range options {
-		if err := opt(&s); err != nil {
-			return fmt.Errorf("configure http server: %w", err)
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+
+	requests, cancelRequests := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelRequests()
+	if s.BaseContext == nil {
+		s.BaseContext = func(net.Listener) context.Context { return requests }
+	}
+	if s.Protocols == nil {
+		s.Protocols = &http.Protocols{}
+		s.Protocols.SetHTTP1(true)
+		s.Protocols.SetHTTP2(true)
+		s.Protocols.SetUnencryptedHTTP2(true)
+	}
+	listen := s.Addr
+	if listen == "" {
+		listen = ":http"
+		if s.TLSConfig != nil {
+			listen = ":https"
 		}
 	}
+	var config net.ListenConfig
+	listener, err := config.Listen(ctx, "tcp", listen)
+	if err != nil {
+		return fmt.Errorf("listen HTTP server: %w", err)
+	}
+	defer listener.Close()
+
+	servingDone := make(chan error, 1)
+	shutdownDone := make(chan error, 1)
 	go func() {
-		<-ctx.Done()
-		log.Info("closing http(s) server", "listen", listen)
-		s.Close()
+		select {
+		case <-ctx.Done():
+		case err := <-servingDone:
+			if !errors.Is(err, http.ErrServerClosed) {
+				shutdownDone <- s.Close()
+				return
+			}
+		}
+		// Serve also returns ErrServerClosed when a caller starts Shutdown.
+		// Wait for active requests through the same bounded shutdown path.
+		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+		defer cancel()
+		err := s.Shutdown(shutdown)
+		if err != nil {
+			err = errors.Join(err, s.Close())
+		}
+		shutdownDone <- err
 	}()
+	log.FromContext(ctx).
+		Info("starting HTTP server", "listen", listener.Addr().
+			String(), "tls", s.TLSConfig != nil)
 	if s.TLSConfig != nil {
-		// http2 support with tls enabled
-		http2.ConfigureServer(&s, &http2.Server{})
-		log.Info("starting https server", "listen", listen)
-		if err := s.ListenAndServeTLS("", ""); err != nil {
-			return fmt.Errorf("listen and serve https: %v", err)
-		}
-		return nil
+		err = s.ServeTLS(listener, "", "")
 	} else {
-		// http2 support without https
-		s.Handler = h2c.NewHandler(s.Handler, &http2.Server{})
-		log.Info("starting http server", "listen", listen)
-		if err := s.ListenAndServe(); err != nil {
-			return fmt.Errorf("listen and serve http: %v", err)
-		}
-		return nil
+		err = s.Server.Serve(listener)
 	}
+	servingDone <- err
+	shutdownErr := <-shutdownDone
+	if errors.Is(err, http.ErrServerClosed) {
+		err = nil
+	}
+	return errors.Join(err, shutdownErr)
+}
+
+// ServeContext configures and runs a server with the default shutdown timeout.
+func ServeContext(ctx context.Context, listen string, handler http.Handler, options ...ServerOption) error {
+	server := &Server{Server: http.Server{Handler: handler, Addr: listen}}
+	for _, option := range options {
+		if err := option(&server.Server); err != nil {
+			return fmt.Errorf("configure HTTP server: %w", err)
+		}
+	}
+	return server.Run(ctx)
 }
 
 // GRPCHTTPMux routes gRPC requests to grpchandler and all others to httphandler.

@@ -1,6 +1,8 @@
-package api
+package api_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
@@ -8,7 +10,78 @@ import (
 
 	commonerrors "xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/meta"
+	"xiaoshiai.cn/common/rest/api"
 )
+
+func TestStrictBody(t *testing.T) {
+	type input struct {
+		Name   string `json:"name"`
+		Config struct {
+			Enabled bool `json:"enabled"`
+		} `json:"config"`
+	}
+	for _, test := range []struct {
+		name, body, media string
+		status            int32
+	}{
+		{"valid", `{"name":"account","config":{"enabled":true}} `, "application/json; charset=utf-8", 0},
+		{"unknown", `{"name":"account","organization":"foreign"}`, "application/json", 422},
+		{"nested unknown", `{"config":{"ignored":true}}`, "application/json", 422},
+		{"type mismatch", `{"name":42}`, "application/json", 422},
+		{"syntax", `{"name":`, "application/json", 400},
+		{"empty", ``, "application/json", 400},
+		{"trailing value", `{"name":"account"} {}`, "application/json", 400},
+		{"trailing garbage", `{"name":"account"} x`, "application/json", 400},
+		{"wrong media", `name: account`, "application/yaml", 415},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/", strings.NewReader(test.body))
+			r.Header.Set("Content-Type", test.media)
+			var value input
+			err := api.Body(r, &value, api.WithStrictBody())
+			if test.status != 0 {
+				status, ok := err.(*commonerrors.Status)
+				if !ok || status.Code != test.status {
+					t.Fatalf("error = %v, want status %d", err, test.status)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value.Name != "account" || !value.Config.Enabled {
+				t.Fatalf("decoded = %+v", value)
+			}
+		})
+	}
+	var compressed bytes.Buffer
+	w := gzip.NewWriter(&compressed)
+	if _, err := w.Write([]byte(`{"name":"compressed"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/", &compressed)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Content-Encoding", "gzip")
+	var value input
+	if err := api.Body(r, &value, api.WithStrictBody()); err != nil {
+		t.Fatal(err)
+	}
+	if value.Name != "compressed" {
+		t.Fatalf("decoded = %+v", value)
+	}
+
+	r = httptest.NewRequest("POST", "/", strings.NewReader(`{"name":"permissive","unknown":1}`))
+	r.Header.Set("Content-Type", "application/json")
+	if err := api.Body(r, &value); err != nil {
+		t.Fatal(err)
+	}
+	if value.Name != "permissive" {
+		t.Fatalf("decoded = %+v", value)
+	}
+}
 
 type queryMode string
 
@@ -62,7 +135,7 @@ func TestQueryObject(t *testing.T) {
 		nil,
 	)
 
-	options, err := QueryObject[queryObjectOptions](request)
+	options, err := api.QueryObject[queryObjectOptions](request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +182,7 @@ func TestQueryObject(t *testing.T) {
 
 func TestQueryObjectLeavesMissingPointersNil(t *testing.T) {
 	request := httptest.NewRequest("GET", "/clusters", nil)
-	options, err := QueryObject[queryObjectOptions](request)
+	options, err := api.QueryObject[queryObjectOptions](request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,10 +200,7 @@ func TestQueryObjectRejectsInvalidValues(t *testing.T) {
 	for _, target := range tests {
 		t.Run(target, func(t *testing.T) {
 			request := httptest.NewRequest("GET", target, nil)
-			_, err := QueryObject[queryObjectOptions](request)
-			if err == nil {
-				t.Fatal("expected an error")
-			}
+			_, err := api.QueryObject[queryObjectOptions](request)
 			status, ok := err.(*commonerrors.Status)
 			if !ok || status.Code != 400 {
 				t.Fatalf("error = %#v, want bad request status", err)
@@ -141,7 +211,87 @@ func TestQueryObjectRejectsInvalidValues(t *testing.T) {
 
 func TestQueryObjectRejectsNonStruct(t *testing.T) {
 	request := httptest.NewRequest("GET", "/clusters?value=1", nil)
-	if _, err := QueryObject[int](request); err == nil {
-		t.Fatal("expected an error")
+	if _, err := api.QueryObject[int](request); err != nil {
+		return
+	}
+	t.Fatal("expected an error")
+}
+
+func TestStrictQueryObject(t *testing.T) {
+	type Embedded struct {
+		Limit int `query:"limit"`
+	}
+	type options struct {
+		Embedded
+		Position   *int64             `query:"atPosition"`
+		Dimensions map[string]string  `query:"dimensions"`
+		Filter     *queryObjectFilter `query:"filter"`
+	}
+	request := httptest.NewRequest("GET", "/accounts?limit=2&atPosition=0&dimensions=%7B%22organization%22%3A%22a%22%7D&filter.name=bank", nil)
+	got, err := api.QueryObject[options](request, api.WithStrictQuery())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Limit != 2 || got.Position == nil || *got.Position != 0 || got.Dimensions["organization"] != "a" || got.Filter == nil || got.Filter.Name != "bank" {
+		t.Fatalf("decoded query: %+v", got)
+	}
+	for _, query := range []string{"limt=2", "limit=bad", "filter.missing=x", "limit=%ZZ", "limit=1;bad=2"} {
+		request := httptest.NewRequest("GET", "/accounts?"+query, nil)
+		_, err := api.QueryObject[options](request, api.WithStrictQuery())
+		if !commonerrors.IsCode(err, 400) {
+			t.Fatalf("query %s: %v", query, err)
+		}
+	}
+	empty, err := api.QueryObject[options](httptest.NewRequest("GET", "/accounts", nil), api.WithStrictQuery())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.Position != nil || empty.Filter != nil {
+		t.Fatal("omitted pointers were allocated")
+	}
+}
+
+func TestStrictProtocolJSON(t *testing.T) {
+	type input struct {
+		Value string `json:"value"`
+	}
+	for _, test := range []struct {
+		media, body string
+		code        int32
+	}{
+		{"application/cloudevents+json; charset=utf-8", `{"value":"accepted"}`, 0},
+		{"application/json", `{"value":"accepted"}`, 415},
+		{"application/cloudevents+json", `{"unknown":1}`, 422},
+		{"application/cloudevents+json", `{"value":"accepted"} {}`, 400},
+	} {
+		var got input
+		err := api.ReadContent(test.media, "", strings.NewReader(test.body), &got, api.WithStrictBody(), api.WithJSONMediaType("application/cloudevents+json"))
+		if err != nil {
+			if test.code == 0 || !commonerrors.IsCode(err, int(test.code)) {
+				t.Fatalf("decode: %v", err)
+			}
+			continue
+		}
+		if test.code != 0 || got.Value != "accepted" {
+			t.Fatalf("unexpected acceptance: %+v", test)
+		}
+	}
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write([]byte(`{"value":"compressed"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/events", &compressed)
+	r.Header.Set("Content-Type", "application/cloudevents+json")
+	r.Header.Set("Content-Encoding", "gzip")
+	var got input
+	if err := api.Body(r, &got, api.WithStrictBody(), api.WithJSONMediaType("application/cloudevents+json")); err != nil {
+		t.Fatal(err)
+	}
+	if got.Value != "compressed" {
+		t.Fatal("compressed protocol body was not decoded")
 	}
 }

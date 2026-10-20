@@ -51,6 +51,26 @@ Media-sensitive responses include the corresponding Vary fields, including
 fallback and error responses. Handlers still own response encoding and its
 Content-Type; route declarations do not encode the response.
 
+`ServeContext` and `API.Serve` run until the supplied context is canceled.
+They wait for active HTTP requests to finish, with a default shutdown timeout
+of 30 seconds, and return nil for normal shutdown. If the deadline expires,
+remaining connections are closed and the returned error wraps
+`context.DeadlineExceeded`. Listen and serve failures preserve their error chain.
+Hijacked connections need their own shutdown lifecycle, as with `net/http`.
+
+Use `Server{Server: http.Server{...}, ShutdownTimeout: ...}.Run(ctx)` when a
+service needs explicit HTTP timeouts or a different shutdown timeout. Zero
+ShutdownTimeout selects 30 seconds; negative values are invalid. Run a Server
+once, as with http.Server. Its default request context retains runtime values
+without canceling active requests when shutdown starts. An explicit BaseContext
+is used unchanged. HTTP/1, TLS HTTP/2, and unencrypted HTTP/2 with prior
+knowledge are enabled by default through net/http.Protocols. Set Protocols
+explicitly to restrict the accepted protocols.
+
+Calling the embedded `Shutdown` also makes `Run` drain active requests within
+ShutdownTimeout before returning. Run joins shutdown through net/http.Shutdown;
+registered shutdown callbacks should support repeated invocation.
+
 `ServeTLS` loads its certificate and key before listening and returns any
 configuration error. It re-reads the pair for new TLS handshakes at most once
 per minute; canceling the serving context shuts down the listener, with no
@@ -220,3 +240,20 @@ traversal does not guarantee a stable snapshot across requests.
 Use `PageFromPreparedList` when the input is already filtered and sorted and
 only page/size slicing remains. It preserves the same `page < 1` and `size < 0`
 normalization described above.
+
+`QueryObject[T](request)` decodes query/json-tagged fields and embedded structures.
+Use `QueryObject[T](request, WithStrictQuery())` when T describes every accepted
+query field. Strict mode rejects unknown keys and malformed URL query encoding
+with BadRequest; endpoint-specific ranges and defaults belong to the caller.
+
+`Body(request, &input, WithStrictBody())` requires `application/json` and one
+JSON value. Unknown struct fields and type mismatches return 422; malformed,
+empty or trailing input returns 400, and other media types return 415. Gzip
+and deflate decoding still precede JSON decoding. Domain validation remains
+with the caller; custom JSON unmarshallers own their internal field contract.
+Omitting the option retains the existing permissive body decoder.
+
+`WithJSONMediaType("application/cloudevents+json")` selects a protocol media
+type together with `WithStrictBody()`. Single-document and field checks remain
+active. `ReadContent` accepts the same body options for decoding an embedded
+protocol payload; request validation hooks belong to `Body`.
