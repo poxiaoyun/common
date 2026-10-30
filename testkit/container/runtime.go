@@ -200,6 +200,7 @@ func (r *CommandRuntime) CreateContainer(ctx context.Context, spec ContainerSpec
 			r.executable,
 			"rm",
 			"--force",
+			"--volumes",
 			spec.Name,
 		).CombinedOutput()
 		return "", fmt.Errorf("%s run: %w: %s", r.name, err, stderr.Bytes())
@@ -243,13 +244,16 @@ func (r *CommandRuntime) WaitContainer(ctx context.Context, target Container) (C
 	return ContainerExit{ExitCode: exitCode}, nil
 }
 
-// DestroyContainer implements ContainerRuntime.
+// DestroyContainer implements ContainerRuntime. Anonymous volumes created by
+// the image are removed with the container so repeated test runs do not leak
+// storage.
 func (r *CommandRuntime) DestroyContainer(ctx context.Context, target Container) error {
 	output, err := exec.CommandContext(
 		ctx,
 		r.executable,
 		"rm",
 		"--force",
+		"--volumes",
 		string(target),
 	).CombinedOutput()
 	if err != nil {

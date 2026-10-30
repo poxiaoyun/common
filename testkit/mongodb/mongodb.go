@@ -39,7 +39,7 @@ func RequireURI(t testing.TB) string {
 	name := "mongodb-it-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	target, err := runtime.CreateContainer(t.Context(), container.ContainerSpec{
 		Name:    name,
-		Image:   "mongo:8.0",
+		Image:   "mongo:8.2",
 		Command: []string{"mongod", "--replSet", "rs0", "--bind_ip_all"},
 		Ports: []container.PortMapping{
 			{
