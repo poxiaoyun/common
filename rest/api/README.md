@@ -241,6 +241,15 @@ Use `PageFromPreparedList` when the input is already filtered and sorted and
 only page/size slicing remains. It preserves the same `page < 1` and `size < 0`
 normalization described above.
 
+`Query(request, key, defaultValue)` reads individual parameters. String slices
+collect repeated keys and comma-separated values in request order. Use
+`Route.StrictQuery()` or `Group.StrictQuery()` to reject malformed URL encoding
+and names outside the merged route QueryParam declarations. Group selection
+applies to nested routes. Declare `.Type("integer")` or `.Type("boolean")` to
+validate these values before typed Query reads. Other conversions and business
+ranges remain handler-owned. Query uses the default when conversion fails, so use a string and an explicit parser
+when invalid input must return an error.
+
 `QueryObject[T](request)` decodes query/json-tagged fields and embedded structures.
 Use `QueryObject[T](request, WithStrictQuery())` when T describes every accepted
 query field. Strict mode rejects unknown keys and malformed URL query encoding

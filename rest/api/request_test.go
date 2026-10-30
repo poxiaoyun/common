@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -293,5 +294,19 @@ func TestStrictProtocolJSON(t *testing.T) {
 	}
 	if got.Value != "compressed" {
 		t.Fatal("compressed protocol body was not decoded")
+	}
+}
+
+func TestQueryStringList(t *testing.T) {
+	request := httptest.NewRequest("GET", "/?groupBy=region&groupBy=model,operation&service=cloud&service=s3", nil)
+	values := api.Query(request, "groupBy", []string(nil))
+	if !slices.Equal(values, []string{"region", "model", "operation"}) {
+		t.Fatalf("grouping dimensions: %v", values)
+	}
+	if value := api.Query(request, "service", "default"); value != "cloud" {
+		t.Fatalf("scalar query changed: %q", value)
+	}
+	if values := api.Query(request, "absent", []string{"default"}); !slices.Equal(values, []string{"default"}) {
+		t.Fatalf("missing list: %v", values)
 	}
 }

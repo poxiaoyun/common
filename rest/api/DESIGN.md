@@ -350,6 +350,14 @@ normalization without repeating collection preparation.
 
 ## Query decoding
 
+Route and Group may enable StrictQuery to enforce their declared query names.
+The merged route parameters own the allowlist; malformed URL encoding and
+undeclared keys return BadRequest before the handler. Declared integer and
+boolean parameters also reject invalid text, including empty values. Accepted
+values are cached for Query readers. String-slice Query values combine repeated
+keys and comma separation in request order. Handlers own value conversion, defaults and domain
+inputs.
+
 QueryObject owns typed query decoding using query/json tags and embedded field
 flattening. Its default permits unknown keys for handlers that compose several
 query readers. WithStrictQuery makes that reader own the complete query shape:

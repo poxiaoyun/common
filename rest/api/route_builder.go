@@ -40,12 +40,25 @@ type Route struct {
 	ResponseSample any
 	NotDoc         bool // if true, this route will not be documented in OpenAPI
 	buildError     error
+	strictQuery    bool
 }
 
 func (route Route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if route.strictQuery {
+		if err := validateQuery(r, route.Params); err != nil {
+			Error(w, err)
+			return
+		}
+	}
 	// init filter context
 	r = r.WithContext(SetContextValue(r.Context(), "filter-context-init", struct{}{}))
 	route.Filters.Process(w, r, route.Handler)
+}
+
+// StrictQuery validates query encoding, declared names and integer/boolean text.
+func (route Route) StrictQuery() Route {
+	route.strictQuery = true
+	return route
 }
 
 type ResponseInfo struct {
@@ -281,10 +294,17 @@ type Group struct {
 	SubGroups    []Group // sub groups
 	ContentTypes []string
 	Accepts      []string
+	strictQuery  bool
 }
 
 func NewGroup(path string) Group {
 	return Group{Path: path}
+}
+
+// StrictQuery applies declared-query validation to every route in the group.
+func (g Group) StrictQuery() Group {
+	g.strictQuery = true
+	return g
 }
 
 func (g Group) Tag(name string) Group {
@@ -348,6 +368,7 @@ func buildRoutes(merged Group, group Group, buildError error) []Route {
 			merged.Path = strings.TrimSuffix(merged.Path, "/") + "/" + strings.TrimPrefix(group.Path, "/")
 		}
 	}
+	merged.strictQuery = merged.strictQuery || group.strictQuery
 	merged.Params = append(merged.Params, group.Params...)
 	merged.Tags = append(merged.Tags, group.Tags...)
 	var err error
@@ -365,6 +386,7 @@ func buildRoutes(merged Group, group Group, buildError error) []Route {
 
 	var ret []Route
 	for _, route := range group.Routes {
+		route.strictQuery = route.strictQuery || merged.strictQuery
 		route.Tags = append(merged.Tags, route.Tags...)
 		route.Params = append(merged.Params, route.Params...)
 		prefix := merged.Path

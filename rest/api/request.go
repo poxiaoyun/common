@@ -26,6 +26,8 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 
 	yaml "sigs.k8s.io/yaml/goyaml.v2"
@@ -127,6 +129,33 @@ func Header[T any](r *http.Request, key string, defaultValue T) T {
 	return ValueOrDefault(val, defaultValue)
 }
 
+func validateQuery(r *http.Request, params []Param) error {
+	values, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return errors.NewBadRequest(err.Error())
+	}
+	for name, entries := range values {
+		index := slices.IndexFunc(params, func(p Param) bool { return p.Kind == ParamKindQuery && p.Name == name })
+		if index < 0 {
+			return errors.NewBadRequest("unsupported query parameter: " + name)
+		}
+		for _, value := range entries {
+			var err error
+			switch params[index].DataType {
+			case "integer":
+				_, err = strconv.ParseInt(value, 10, 64)
+			case "boolean":
+				_, err = strconv.ParseBool(value)
+			}
+			if err != nil {
+				return errors.NewBadRequest("query." + name + ": " + err.Error())
+			}
+		}
+	}
+	*r = *r.WithContext(SetContextValue(r.Context(), "queries", &values))
+	return nil
+}
+
 func Query[T any](r *http.Request, key string, defaultValue T) T {
 	cached := GetContextValue[*url.Values](r.Context(), "queries")
 	if cached == nil {
@@ -137,6 +166,9 @@ func Query[T any](r *http.Request, key string, defaultValue T) T {
 		*r = *r.WithContext(ctx)
 	}
 	val := cached.Get(key)
+	if _, ok := any(defaultValue).([]string); ok {
+		val = strings.Join((*cached)[key], ",")
+	}
 	return ValueOrDefault(val, defaultValue)
 }
 

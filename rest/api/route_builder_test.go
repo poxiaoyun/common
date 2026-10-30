@@ -157,3 +157,67 @@ func TestGroupBuildNormalizesRoutePath(t *testing.T) {
 		})
 	}
 }
+
+func TestStrictQueryRouteDeclarations(t *testing.T) {
+	calls := 0
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, api.Query(r, "service", "default"))
+	}
+	server := api.New().
+		Group(api.NewGroup("/strict").
+			StrictQuery().
+			Param(api.QueryParam("service", "Service filter").
+				Optional()).
+			SubGroup(api.NewGroup("/nested").
+				Route(api.GET("").
+					Param(api.QueryParam("state", "State filter").
+						Optional()).
+					Param(api.QueryParam("limit", "Page size").
+						Type("integer").
+						Optional()).
+					Param(api.QueryParam("synchronous", "Wait for completion").
+						Type("boolean").
+						Optional()).
+					Param(api.HeaderParam("Trace", "Request trace")).
+					To(handler)))).
+		Route(api.GET("/route").
+			StrictQuery().
+			To(handler)).
+		Route(api.GET("/permissive").
+			To(handler)).
+		Build()
+	for _, test := range []struct {
+		path   string
+		status int
+		body   string
+	}{
+		{"/strict/nested?service=cloud&state=pending", 200, "cloud"},
+		{"/strict/nested", 200, "default"},
+		{"/strict/nested?serivce=cloud", 400, ""},
+		{"/strict/nested?Trace=x", 400, ""},
+		{"/strict/nested?limit=0&synchronous=false", 200, "default"},
+		{"/strict/nested?limit=", 400, ""},
+		{"/strict/nested?limit=wrong", 400, ""},
+		{"/strict/nested?limit=9223372036854775808", 400, ""},
+		{"/strict/nested?synchronous=maybe", 400, ""},
+		{"/strict/nested?service=%ZZ", 400, ""},
+		{"/strict/nested?service=cloud;state=pending", 400, ""},
+		{"/route", 200, "default"},
+		{"/route?service=cloud", 400, ""},
+		{"/permissive?service=cloud", 200, "cloud"},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			before := calls
+			w := httptest.NewRecorder()
+			server.ServeHTTP(w, httptest.NewRequest(http.MethodGet, test.path, nil))
+			require.Equal(t, test.status, w.Code, w.Body.String())
+			if test.status == 400 {
+				require.Equal(t, before, calls, "invalid query reached handler")
+				return
+			}
+			require.Equal(t, before+1, calls)
+			require.Equal(t, test.body, w.Body.String())
+		})
+	}
+}
