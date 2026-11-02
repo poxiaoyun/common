@@ -14,11 +14,15 @@ import (
 )
 
 var _ store.PingableStore = &CacheStore{}
+var _ store.ClosableStore = &CacheStore{}
 
+// NewCacheStore borrows from and owns its local reflectors and watch streams.
 func NewCacheStore(from store.Store) *CacheStore {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &CacheStore{
 		core: &cacheStoreCore{
-			ctx:       context.Background(),
+			ctx:       ctx,
+			cancel:    cancel,
 			store:     from,
 			resources: map[string]*cachedResource{},
 		},
@@ -28,6 +32,27 @@ func NewCacheStore(from store.Store) *CacheStore {
 type CacheStore struct {
 	scopes []store.Scope
 	core   *cacheStoreCore
+}
+
+// Close stops local reflectors and watch streams, preserving the borrowed Store.
+func (g *CacheStore) Close() error {
+	g.core.lock.Lock()
+	g.core.cancel()
+	resources := make([]*cachedResource, 0, len(g.core.resources))
+	for _, resource := range g.core.resources {
+		resources = append(resources, resource)
+	}
+	g.core.lock.Unlock()
+	for _, resource := range resources {
+		<-resource.done
+		resource.stateLock.Lock()
+		for _, watcher := range resource.watchers {
+			watcher.Stop()
+		}
+		resource.stateLock.Unlock()
+		resource.watchTasks.Wait()
+	}
+	return nil
 }
 
 // Schema implements store.Store.
@@ -250,6 +275,7 @@ func (c *CacheStatusStore) Update(ctx context.Context, obj store.Object, opts ..
 
 type cacheStoreCore struct {
 	ctx       context.Context
+	cancel    context.CancelFunc
 	store     store.Store
 	lock      sync.RWMutex
 	resources map[string]*cachedResource
@@ -263,6 +289,7 @@ func (g *cacheStoreCore) resource(resource string) *cachedResource {
 	}
 	c := &cachedResource{
 		resource: resource,
+		done:     make(chan struct{}),
 		ready:    make(chan struct{}),
 		items:    map[string]*store.Unstructured{},
 		watchers: map[int64]*cachedWatcher{},
@@ -273,7 +300,9 @@ func (g *cacheStoreCore) resource(resource string) *cachedResource {
 }
 
 type cachedResource struct {
-	resource string
+	done       chan struct{}
+	watchTasks sync.WaitGroup
+	resource   string
 
 	stateLock     sync.RWMutex
 	ready         chan struct{}
@@ -352,6 +381,7 @@ func (c *cachedResource) waitUntilReady(ctx context.Context) error {
 }
 
 func (c *cachedResource) run(ctx context.Context, storage store.Store) {
+	defer close(c.done)
 	log.Info("start syncing cache resource", "resource", c.resource)
 	list := &store.List[store.Unstructured]{Resource: c.resource}
 	reflector := NewReflector(storage, list, store.WithSubScopes())

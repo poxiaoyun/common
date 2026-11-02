@@ -113,8 +113,9 @@ func TestResourceRegistryClosesResourcesWhenContextEnds(t *testing.T) {
 				},
 			}, nil
 		},
-		func() {
+		func() error {
 			ownerCloses.Add(1)
+			return nil
 		},
 	)
 
@@ -182,7 +183,10 @@ func TestResourceRegistryCloseWaitsForResourceConstruction(t *testing.T) {
 				destroy:  func() { resourceCloses.Add(1) },
 			}, nil
 		},
-		func() { ownerCloses.Add(1) },
+		func() error {
+			ownerCloses.Add(1)
+			return nil
+		},
 	)
 
 	getDone := make(chan error, 1)

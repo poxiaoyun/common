@@ -11,6 +11,7 @@ import (
 	"xiaoshiai.cn/common/errors"
 	"xiaoshiai.cn/common/store"
 	"xiaoshiai.cn/common/store/etcd"
+	"xiaoshiai.cn/common/store/inmemory"
 )
 
 func TestCacheStoreRebuildsFromInitialWatchAfterDisconnect(t *testing.T) {
@@ -204,5 +205,39 @@ func TestCacheStore_Create(t *testing.T) {
 			t.Fatalf("failed to get object: %v", err)
 		}
 		t.Fatalf("failed to get object: %v", err)
+	}
+}
+
+type closeObservingStore struct {
+	store.Store
+	closed bool
+}
+
+func (s *closeObservingStore) Close() error { s.closed = true; return nil }
+
+func TestCloseStopsCacheAndPreservesBackingStore(t *testing.T) {
+	root, err := inmemory.New(store.NewSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	borrowed := &closeObservingStore{Store: root}
+	cached := NewCacheStore(borrowed)
+	watcher, err := cached.Watch(t.Context(), &store.List[store.Unstructured]{Resource: "widgets"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cached.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if borrowed.closed {
+		t.Fatal("Close closed the borrowed backing Store")
+	}
+	select {
+	case _, open := <-watcher.Events():
+		if open {
+			t.Fatal("watch remained open after Close")
+		}
+	default:
+		t.Fatal("Close returned before local watch stopped")
 	}
 }

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -322,6 +323,16 @@ type Pinger interface {
 type PingableStore interface {
 	Store
 	Pinger
+}
+
+// ClosableStore combines data operations with creator-owned resource cleanup.
+// Finish operations and stop watches before closing; do not use the Store afterward.
+// Scope shares root resources, so close the root once, not each derived handle.
+// Borrowed clients and wrapped Stores remain owned by their original creator.
+// Business consumers should depend on Store; resource owners may use io.Closer.
+type ClosableStore interface {
+	Store
+	io.Closer
 }
 
 type StatusStorage interface {

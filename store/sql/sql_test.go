@@ -64,3 +64,28 @@ func RunSQLStoreConformance(t *testing.T, driver, uri string) {
 		},
 	})
 }
+
+func TestPostgreSQLStoreCloseDisconnectsPool(t *testing.T) {
+	address, err := url.Parse(testpostgresql.RequireURI(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, _ := address.User.Password()
+	storage, err := NewGormStorage(t.Context(), store.NewSchema(), &Options{
+		Addr:     address.Host,
+		Driver:   DBDriverPostgres,
+		Username: address.User.Username(),
+		Password: password,
+		Database: strings.TrimPrefix(address.Path, "/"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Ping(t.Context()); err != nil {
+		return
+	}
+	t.Fatal("connection pool remained usable after Close")
+}

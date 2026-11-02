@@ -26,6 +26,7 @@ import (
 )
 
 var _ store.PingableStore = &Storage{}
+var _ store.ClosableStore = &Storage{}
 
 const (
 	DBDriverPostgres = "postgres"
@@ -107,7 +108,7 @@ func NewGormStorage(ctx context.Context, schema *store.Schema, options *Options)
 	}
 	storage := &Storage{core: core, schema: schema}
 	if err := storage.ensureSchema(ctx); err != nil {
-		return nil, err
+		return nil, stderrors.Join(err, storage.Close())
 	}
 	return storage, nil
 }
@@ -172,6 +173,15 @@ type Storage struct {
 	conditions []store.Scope
 	core       *core
 	schema     *store.Schema
+}
+
+// Close releases the SQL connection pool shared by all scoped handles.
+func (s *Storage) Close() error {
+	db, err := s.core.db.DB()
+	if err != nil {
+		return err
+	}
+	return db.Close()
 }
 
 // Schema implements store.Store.

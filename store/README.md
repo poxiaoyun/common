@@ -4,6 +4,15 @@
 
 本文档面向 Store 调用方。直接 Store 实现必须遵守的完整行为、并发、删除、查询和 Watch 契约见 [DESIGN.md](./DESIGN.md)。
 
+## 资源关闭
+
+拥有连接或后台任务的具体实现提供可选的 `io.Closer` / `store.ClosableStore` 能力。
+创建者登记 `defer storage.Close()`；业务模块继续依赖 `store.Store`。
+关闭前结束正在进行的操作和 Watch，关闭后停止使用该 Store。
+需要处理关闭错误时，在 defer 函数中检查返回值。
+Scope 和事务借用根 Store 的资源，由根 Store 的创建者统一关闭。
+接收外部 client 或 Store 的构造函数借用其依赖，底层依赖由原创建者关闭。
+
 ## 作用域与调用位置
 
 先定义本次操作使用的 `store.Store`，一次性应用完整 Scope，再通过该变量执行 `Get`、`List`、`Create`、`Update`、`Patch` 或 `Delete`。不要把 `Store.Scope(...)` 内联到具体存储操作中；显式变量使有效作用域可以被直接检查和复用。

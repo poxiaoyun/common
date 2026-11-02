@@ -27,9 +27,14 @@ func TestStoreConformance(t *testing.T) {
 		Capabilities: capabilities,
 		New: func(t testing.TB, schema *store.Schema) (store.Store, error) {
 			storage, err := NewEtcdCacherFromClient(t.Context(), client, schema, "/store-conformance/"+uuid.NewString())
-			if err == nil {
-				t.Cleanup(storage.Close)
+			if err != nil {
+				return nil, err
 			}
+			t.Cleanup(func() {
+				if err := storage.Close(); err != nil {
+					t.Errorf("close store: %v", err)
+				}
+			})
 			return storage, err
 		},
 	})
@@ -423,7 +428,11 @@ func newTestStoreAtPrefix(t *testing.T, ctx context.Context, client *kubernetes.
 	if err != nil {
 		t.Fatalf("NewEtcdCacherFromClient() error = %v", err)
 	}
-	t.Cleanup(storage.Close)
+	t.Cleanup(func() {
+		if err := storage.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	return storage
 }
 
@@ -478,5 +487,30 @@ func assertEventually(t *testing.T, timeout time.Duration, check func() error) {
 			t.Fatalf("condition not met within %s: %v", timeout, lastErr)
 		case <-ticker.C:
 		}
+	}
+}
+
+func TestClosePreservesBorrowedClient(t *testing.T) {
+	client := testserver.RunEtcd(t, nil)
+	storage, err := NewEtcdCacherFromClient(t.Context(), client, store.NewSchema(), "/close-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Client.Get(t.Context(), "close-test"); err != nil {
+		t.Fatalf("borrowed client was closed: %v", err)
+	}
+}
+
+func TestCloseReturnsOwnerFailureAfterContextCancellation(t *testing.T) {
+	failure := stderrors.New("owner close failed")
+	ctx, cancel := context.WithCancel(t.Context())
+	registry := newResourceRegistry(ctx, nil, nil, func() error { return failure })
+	storage := &generic{core: &core{resources: registry}}
+	cancel()
+	if err := storage.Close(); !stderrors.Is(err, failure) {
+		t.Fatalf("Close = %v", err)
 	}
 }

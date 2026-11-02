@@ -50,6 +50,7 @@ func NewDefaultMongoOptions(dbname string) *MongoDBOptions {
 
 var _ store.TransactionStore = &MongoStorage{}
 var _ store.PingableStore = &MongoStorage{}
+var _ store.ClosableStore = &MongoStorage{}
 
 var GlobalBsonRegistry = bson.NewRegistry()
 
@@ -155,10 +156,10 @@ func NewMongoStorage(ctx context.Context, schema *store.Schema, options *MongoDB
 		logger: log.FromContext(ctx).
 			WithName("mongo-storage"),
 	}
-	if err := core.initCollections(ctx); err != nil {
-		return nil, err
-	}
 	storage := &MongoStorage{core: core}
+	if err := core.initCollections(ctx); err != nil {
+		return nil, stderrors.Join(err, storage.Close())
+	}
 	return storage, nil
 }
 
@@ -185,7 +186,7 @@ func NewMongoDB(ctx context.Context,
 		return nil, errors.NewInternalError(err)
 	}
 	if err := cli.Ping(ctx, nil); err != nil {
-		return nil, errors.NewInternalError(err)
+		return nil, stderrors.Join(errors.NewInternalError(err), closeClient(cli))
 	}
 	return cli.Database(opts.Database), nil
 }
@@ -250,6 +251,18 @@ func PartialFilterExpression(fields []string) bson.M {
 type MongoStorage struct {
 	core   *MongoStorageCore
 	scopes []store.Scope
+}
+
+// Close disconnects the owned MongoDB client shared by all scoped handles.
+// Cleanup has an independent deadline because operation contexts may be canceled.
+func (m *MongoStorage) Close() error {
+	return closeClient(m.core.db.Client())
+}
+
+func closeClient(client *mongo.Client) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return client.Disconnect(ctx)
 }
 
 // Capabilities implements store.Store.

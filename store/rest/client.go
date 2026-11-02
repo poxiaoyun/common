@@ -18,12 +18,14 @@ import (
 )
 
 var _ store.PingableStore = &Client{}
+var _ store.ClosableStore = &Client{}
 
 // NewRemoteStore creates a REST-backed Store using schema as its local resource
 // contract.
 func NewRemoteStore(server *url.URL, schema *store.Schema) *Client {
 	return &Client{
 		cli: &httpclient.Client{
+			Client: &http.Client{Transport: httpclient.NewDefaultHTTPTransport()},
 			Server: server,
 			OnResponse: func(req *http.Request, resp *http.Response) error {
 				if resp.StatusCode < 400 {
@@ -45,6 +47,12 @@ type Client struct {
 	cli          *httpclient.Client
 	schema       *store.Schema
 	scopesPrefix string
+}
+
+// Close releases idle connections in this client's owned HTTP transport.
+func (c *Client) Close() error {
+	c.cli.Client.CloseIdleConnections()
+	return nil
 }
 
 // Schema implements store.Store.

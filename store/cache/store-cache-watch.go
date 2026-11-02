@@ -85,7 +85,9 @@ func (c *cachedResource) watch(
 		c.watchers[watcher.id] = watcher
 		c.stateLock.Unlock()
 
-		go watcher.run(watchCtx, initial, options.SendInitialEvents)
+		c.watchTasks.Go(func() {
+			watcher.run(watchCtx, initial, options.SendInitialEvents)
+		})
 		return watcher, nil
 	}
 }

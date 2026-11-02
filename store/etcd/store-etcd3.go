@@ -102,11 +102,17 @@ func NewEtcdStore(ctx context.Context, schema *store.Schema, c *Options) (*EtcdS
 	log := log.FromContext(ctx)
 	log.Info("checking etcd server health")
 	if _, err := client.Get(timeouts, "health", kubernetes.GetOptions{}); err != nil {
-		return nil, fmt.Errorf("etcd server is not reachable: %v", err)
+		return nil, stderrors.Join(fmt.Errorf("etcd server is not reachable: %w", err), client.Close())
 	}
-	return NewEtcdStoreFromClient(client, schema, c.KeyPrefix)
+	storage, err := NewEtcdStoreFromClient(client, schema, c.KeyPrefix)
+	if err != nil {
+		return nil, stderrors.Join(err, client.Close())
+	}
+	storage.close = client.Close
+	return storage, nil
 }
 
+// NewEtcdStoreFromClient borrows client; its owner retains responsibility for closing it.
 func NewEtcdStoreFromClient(client *kubernetes.Client, schema *store.Schema, keyPrefix string) (*EtcdStore, error) {
 	schema, err := schema.Clone()
 	if err != nil {
@@ -144,10 +150,20 @@ func validateSchema(schema *store.Schema) error {
 }
 
 var _ store.PingableStore = &EtcdStore{}
+var _ store.ClosableStore = &EtcdStore{}
 
 type EtcdStore struct {
 	scopes []store.Scope
 	core   *etcdStoreCore
+	close  func() error
+}
+
+// Close releases a client created by NewEtcdStore. Borrowed clients remain open.
+func (e *EtcdStore) Close() error {
+	if e.close != nil {
+		return e.close()
+	}
+	return nil
 }
 
 // Schema implements store.Store.

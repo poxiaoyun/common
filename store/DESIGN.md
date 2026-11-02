@@ -4,6 +4,11 @@
 
 ## 基础契约
 
+拥有连接或后台任务的适配器可通过独立的 `io.Closer` / `ClosableStore` 能力释放资源。
+基础 Store 和 StatusStorage 保持业务操作契约；具体适配器按资源所有权提供关闭能力，
+无自有资源的实现无需增加 Close。构造失败时释放已创建的资源。
+创建者在操作结束后关闭根 Store，Scope 和事务借用根资源。关闭只释放自有资源，保留借用依赖和持久化数据。
+
 `Store` 的 CRUD、Count、精确 Scope、服务端元数据、Status 隔离、finalizer 删除流程和 `id` 排序属于基础能力，不能通过 `Capabilities` 关闭。
 
 `Schema()` 返回 Store 构建时使用的资源定义快照。调用方可以读取或修改该快照，但修改不能影响 Store；`Scope()` 派生出的 Store 必须返回相同内容的独立快照。Schema 是本地契约，不通过 REST 动态推断，因此 REST Store 的构造方也必须显式提供 Schema。

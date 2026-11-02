@@ -2,7 +2,9 @@ package mongo
 
 import (
 	"context"
+	stderrors "errors"
 	"net"
+	"net/url"
 	"reflect"
 	"slices"
 	"sort"
@@ -815,4 +817,31 @@ func TestMongoWatcherStopDoesNotCloseProducerChannel(t *testing.T) {
 		}
 	}()
 	watcher.results <- store.WatchEvent{Type: store.WatchEventBookmark}
+}
+
+func TestMongoStorageCloseDisconnectsOwnedClient(t *testing.T) {
+	address, err := url.Parse(testmongodb.RequireURI(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := NewDefaultMongoOptions("close_test")
+	options.Address = address.Host
+	options.Username = ""
+	if address.User != nil {
+		options.Username = address.User.Username()
+		options.Password, _ = address.User.Password()
+	}
+	query := address.Query()
+	options.ReplicaSet = query.Get("replicaSet")
+	options.Direct = query.Get("directConnection") == "true"
+	storage, err := NewMongoStorage(t.Context(), store.NewSchema(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Ping(t.Context()); !stderrors.Is(err, mongo.ErrClientDisconnected) {
+		t.Fatalf("Ping after Close = %v", err)
+	}
 }

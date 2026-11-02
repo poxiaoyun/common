@@ -97,9 +97,7 @@ func NewEtcdCacher(ctx context.Context, schema *store.Schema, options *Options) 
 		Client: cli,
 	}
 	kubernetescli.Kubernetes = &kubernetescli
-	result, err := newEtcdCacherFromClient(ctx, &kubernetescli, schema, options.KeyPrefix, func() {
-		_ = cli.Close()
-	})
+	result, err := newEtcdCacherFromClient(ctx, &kubernetescli, schema, options.KeyPrefix, cli.Close)
 	if err != nil {
 		_ = cli.Close()
 		return nil, err
@@ -116,7 +114,7 @@ func newEtcdCacherFromClient(
 	cli *kubernetes.Client,
 	schema *store.Schema,
 	storagePrefix string,
-	onClose func(),
+	onClose func() error,
 ) (*generic, error) {
 	if cli == nil || cli.Client == nil {
 		return nil, fmt.Errorf("etcd client is nil")
@@ -171,6 +169,7 @@ func newEtcdCacherFromClient(
 }
 
 var _ store.PingableStore = &generic{}
+var _ store.ClosableStore = &generic{}
 
 type generic struct {
 	core   *core
@@ -201,8 +200,9 @@ func (c *generic) Capabilities() store.Capabilities {
 
 // Close stops all resource reflectors and caches. It does not close a client
 // supplied to NewEtcdCacherFromClient; NewEtcdCacher closes the client it owns.
-func (c *generic) Close() {
+func (c *generic) Close() error {
 	c.core.resources.Close()
+	return c.core.resources.closeErr
 }
 
 func (c *generic) Ping(ctx context.Context) error {
