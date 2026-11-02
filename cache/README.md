@@ -24,8 +24,14 @@ or another authoritative source must therefore remain able to satisfy every
 miss. Values passed across the interface are treated as immutable, including
 maps, slices, pointers, and objects containing them.
 
-Read-through loading and database invalidation belong to the module that owns
-the authoritative source and its keys. They are not backend cache operations.
+LoadingCache wraps a Cache backend with read-through loading and per-key
+singleflight merging. Construct it with NewLoadingCache(backend, ttl, loader).
+GetOrLoad returns cached values or loads and caches successful results. Errors are
+not cached. The first caller’s context controls a shared load; all participants
+share its result and error. Each caller can cancel its own wait. Set accepts an
+immutable value using the configured TTL; an in-flight load may later replace it.
+
+Loader policy, keys and database invalidation belong to the source owner.
 
 The process-local adapter requires an explicit capacity and evicts the least
 recently used value when full:

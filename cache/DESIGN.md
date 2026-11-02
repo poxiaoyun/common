@@ -9,8 +9,9 @@ must not advertise a capability whose guarantees it cannot provide.
 
 `Cache[T]` is the seam for best-effort expiring values. It owns the observable
 semantics of a cache hit, replacement, expiration, and deletion. Key
-construction, read-through loading, database invalidation, negative caching,
-and failure policy remain with higher-level modules.
+construction, database invalidation, negative caching and loader policy remain
+with higher-level modules. LoadingCache owns read-through execution and per-key
+concurrent load merging over a Cache backend.
 
 `WindowedAccumulator` is the seam for atomically accumulating positive weighted
 amounts. Its window is bound when an adapter is constructed. A missing or
@@ -75,6 +76,6 @@ background lifecycle.
 - A remote error may leave an operation's commit status unknown. The interfaces
   do not promise exactly-once retries.
 
-Batch access, conditional writes, comparison-and-swap, read-through loading,
+Batch access, conditional writes, comparison-and-swap,
 and cache clearing are not part of the current interface. They should be added
 only when a higher-level module requires their exact semantics.
