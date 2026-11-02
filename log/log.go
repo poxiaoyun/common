@@ -11,10 +11,6 @@ var (
 	FromContext = klog.FromContext
 )
 
-func init() {
-	klog.EnableContextualLogging(true)
-}
-
 var (
 	Info  = DefaultLogger.Info
 	Error = DefaultLogger.Error

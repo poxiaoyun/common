@@ -441,7 +441,7 @@ func TestStoreConformance(t *testing.T) {
 			core := &MongoStorageCore{
 				schema:       schema,
 				db:           database,
-				bsonRegistry: GlobalBsonRegistry,
+				bsonRegistry: newTestRegistry().Registry,
 				bsonOptions: &mongooptions.BSONOptions{
 					UseJSONStructTags: true,
 					OmitZeroStruct:    true,
@@ -489,6 +489,12 @@ func TestMongoStorageBatchPatchAdvancesResourceVersion(t *testing.T) {
 	}
 }
 
+func newTestRegistry() *Registry {
+	registry := NewRegistry()
+	RegisterCodecs(registry)
+	return registry
+}
+
 // RequireIntegrationDatabase creates an isolated database with the store's BSON codecs.
 func RequireIntegrationDatabase(t testing.TB, uri string) *mongo.Database {
 	t.Helper()
@@ -500,7 +506,7 @@ func RequireIntegrationDatabase(t testing.TB, uri string) *mongo.Database {
 				UseJSONStructTags: true,
 				OmitZeroStruct:    true,
 			}).
-			SetRegistry(GlobalBsonRegistry),
+			SetRegistry(newTestRegistry().Registry),
 	)
 }
 
@@ -516,7 +522,7 @@ func NewIntegrationStorage(t testing.TB, database *mongo.Database, objects ...st
 	core := &MongoStorageCore{
 		schema:       schema,
 		db:           database,
-		bsonRegistry: GlobalBsonRegistry,
+		bsonRegistry: newTestRegistry().Registry,
 		bsonOptions: &mongooptions.BSONOptions{
 			UseJSONStructTags: true,
 			OmitZeroStruct:    true,
